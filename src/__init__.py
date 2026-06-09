@@ -1,0 +1,1 @@
+"""football-jc-analysis package."""
