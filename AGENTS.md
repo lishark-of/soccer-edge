@@ -36,6 +36,9 @@ It must not implement wagering, payment, order placement, account management, or
 - No external LLM calls may occur during tests or validation unless explicitly authorized.
 - API keys must never be committed, logged, displayed, or written to reports/artifacts.
 - LLM outputs must pass safety filtering and fallback to local explanations on violation.
+- Release packaging must remain local-only and must not add a remote or push tags.
+- Onboarding docs must keep read-only and no-wagering safety boundaries visible.
+- Generated release rehearsal outputs under reports, artifacts, and data/normalized must not be committed.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.

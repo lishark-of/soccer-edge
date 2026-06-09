@@ -73,9 +73,13 @@ function switchView(name) {
 }
 
 function renderOverview(healthPayload = null) {
+  const health = healthPayload?.data || {};
   const cards = [
-    { label: "服务状态", value: healthPayload?.data?.status || "待检查", help: "本地 API 健康状态。" },
-    { label: "运行模式", value: "只读", help: "API 和 App 默认不写文件。" },
+    { label: "Version", value: health.version || "0.1.0-local", help: "当前本地 release 版本。" },
+    { label: "Mode", value: "local read-only", help: "API 和 App 默认不写文件。" },
+    { label: "Remote", value: "none", help: "当前本地仓库未配置 GitHub remote。" },
+    { label: "服务状态", value: health.status || "待检查", help: "本地 API 健康状态。" },
+    { label: "Release phase", value: health.release_phase || "phase2i", help: "当前 release packaging 阶段。" },
     { label: "分析能力", value: state.analysisView ? "已加载" : "待运行", help: "运行分析后会更新候选信号和组合风险。" },
     { label: "回测诊断", value: state.backtestView ? "已加载" : "待运行", help: "运行回测后会更新概率诊断。" },
     { label: "校准 artifact", value: state.calibrationView ? "已验证" : "待验证", help: "校准只是诊断辅助。" },
@@ -260,6 +264,9 @@ document.querySelector("#importBtn").addEventListener("click", previewImport);
 document.querySelector("#calibrationBtn").addEventListener("click", validateCalibration);
 document.querySelector("#qaBtn").addEventListener("click", runQa);
 document.querySelector("#clearBtn").addEventListener("click", clearOutput);
+document.querySelector("#quickAnalyzeBtn").addEventListener("click", runAnalysis);
+document.querySelector("#quickBacktestBtn").addEventListener("click", runBacktest);
+document.querySelector("#quickQaBtn").addEventListener("click", runQa);
 
 renderGlossary();
 renderOverview();

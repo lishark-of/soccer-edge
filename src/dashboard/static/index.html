@@ -101,6 +101,18 @@
 
         <section id="view-overview" class="view isVisible">
           <h2>总览</h2>
+          <div class="quickStartPanel">
+            <div>
+              <p class="eyebrow">Quick Start / 快速启动</p>
+              <h3>本地只读 release：Version 0.1.0-local</h3>
+              <p>建议顺序：先看 mock 分析，再看概率回测，最后查看 QA 状态。整个流程不写业务数据、不连接远程仓库、不默认调用 DeepSeek。</p>
+            </div>
+            <div class="quickActions">
+              <button id="quickAnalyzeBtn">先看 mock 分析</button>
+              <button id="quickBacktestBtn">再看概率回测</button>
+              <button id="quickQaBtn">查看 QA 状态</button>
+            </div>
+          </div>
           <div id="overviewCards" class="contentBox"></div>
           <div class="guideGrid">
             <article><h3>如何使用</h3><p>先检查状态，再运行指定日期分析；如果要看历史诊断，运行概率回测；导入预检只读取本地文件并保持 dry-run。</p></article>

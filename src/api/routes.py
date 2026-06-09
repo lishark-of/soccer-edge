@@ -14,6 +14,8 @@ from src.explain.deepseek_config import llm_status_payload
 from src.explain.deepseek_explainer import explain_with_optional_deepseek
 from src.exports.report_exporter import summarize_report
 from src.ingestion.importer import import_historical_file
+from src.release.metadata import build_release_metadata
+from src.version import get_build_info
 from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
 from src.view_models.calibration_view import build_calibration_view
@@ -21,25 +23,29 @@ from src.view_models.import_view import build_import_preview_view
 from src.view_models.qa_view import build_qa_view
 
 
-VERSION = "phase2g_user_app_probability_backtest"
+VERSION = "0.1.0-local"
 DISABLED_CAPABILITIES = ["betting", "payment", "order_placement", "proxy_purchase", "automation"]
 
 
 def dispatch_route(path: str, query: dict[str, str]) -> dict:
     if path == "/api/health":
+        build_info = get_build_info()
         return success_response(
             {
                 "status": "ok",
                 "service": "football-jc-analysis",
                 "mode": "read_only",
-                "version": VERSION,
+                "version": build_info["version"],
+                "release_phase": build_info["release_phase"],
             }
         )
     if path == "/api/info":
+        metadata = build_release_metadata()
         return success_response(
             {
+                **metadata,
                 "project": "football-jc-analysis",
-                "mode": "read_only",
+                "mode": metadata["mode"],
                 "capabilities": [
                     "matches",
                     "analyze",
@@ -56,6 +62,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "explain_candidate",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
+                "version": metadata["version"],
+                "release_phase": metadata["release_phase"],
                 "disclaimer": "For research and entertainment reference only. No betting, payment, or order placement.",
             }
         )

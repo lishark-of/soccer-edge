@@ -1,8 +1,93 @@
 # football-jc-analysis
 
-`football-jc-analysis` is a research-oriented tool for China Sporttery football analysis. It turns match odds into implied probabilities, removes margin, applies a conservative placeholder model, detects positive EV directions, and builds single / `2串1` / `3串1` candidate combinations.
+本地只读的竞彩足球概率分析与回测工具。
+
+它可以：
+- 查看 mock / sporttery provider 数据；
+- 计算市场去水概率；
+- 生成模型概率基线；
+- 进行概率回测；
+- 导入历史 CSV；
+- 生成校准 artifact；
+- 打开本地 Dashboard；
+- 使用本地解释器解释候选信号和风险；
+- 可选接入 DeepSeek 做自然语言解释，但默认关闭。
+
+它不可以：
+- 不投注；
+- 不下单；
+- 不支付；
+- 不代购；
+- 不自动化购彩；
+- 不承诺命中；
+- 不保证收益。
+
+## Quick Start
+
+启动本地 App：
+
+```bash
+python3 -m src.cli.launch_app
+```
+
+打开：
+
+```text
+http://127.0.0.1:8766
+```
+
+本地验证：
+
+```bash
+python3 -m src.cli.validate_local --format text
+```
+
+Sample workflow：
+
+```bash
+python3 -m src.cli.sample_workflow --format json
+```
+
+## Release
+
+- version: `0.1.0-local`
+- mode: local read-only
+- remote: none
+- tag: `v0.1.0-local`
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
+
+## Phase 2-I: Release Packaging + Onboarding
+
+Status: implemented
+
+新增：
+- project version metadata
+- CHANGELOG
+- RELEASE_NOTES
+- onboarding guide
+- local app quickstart
+- release checklist
+- sample workflow guide
+- launch_app CLI
+- validate_local CLI
+- sample_workflow CLI
+- local release tag support
+
+示例：
+
+```bash
+python3 -m src.cli.launch_app
+python3 -m src.cli.validate_local --format json
+python3 -m src.cli.sample_workflow --write-report reports/sample_workflow.md --format json
+```
+
+限制：
+- local release only；
+- 不提供投注、下单、支付、代购或任何自动化购彩能力；
+- DeepSeek optional and disabled by default；
+- no GitHub remote attached；
+- no push performed。
 
 ## Phase 2-H: Optional DeepSeek Explainer
 

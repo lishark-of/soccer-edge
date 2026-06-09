@@ -68,6 +68,7 @@ h1 {
 .warningPanel,
 .statusPanel,
 .metricCard,
+.quickStartPanel,
 .guideGrid article {
   border: 1px solid var(--line);
   background: rgba(255, 253, 246, 0.92);
@@ -184,6 +185,20 @@ h2 { margin: 0 0 14px; font-size: 24px; }
 h3 { margin: 18px 0 10px; }
 .sectionHint { color: var(--muted); margin-top: -4px; }
 
+.quickStartPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  margin-bottom: 14px;
+  border-left: 5px solid var(--blue);
+}
+
+.quickStartPanel h3 { margin-top: 0; }
+.quickStartPanel p { color: var(--muted); }
+.quickActions { display: grid; gap: 8px; }
+
 .cardGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -236,6 +251,7 @@ pre {
   .hero,
   .workspace,
   .cardGrid,
-  .guideGrid { grid-template-columns: 1fr; }
+  .guideGrid,
+  .quickStartPanel { grid-template-columns: 1fr; }
   .sidebar { position: static; }
 }
