@@ -14,4 +14,6 @@ window.FootballGlossary = {
   calibration: "校准：比较预测概率与实际发生频率是否匹配，只是诊断，不保证未来表现。",
   explanationMode: "解释模式：本地解释默认启用；DeepSeek 仅作为可选自然语言增强，默认关闭且不参与概率计算。",
   deepseek: "DeepSeek：可选 LLM 解释层。只有本机环境变量显式启用且 API Key 存在时才会尝试调用。",
+  sporttery: "Sporttery / 中国体育彩票竞彩足球：可尝试读取公开数据；失败时 auto 会回退到 mock 示例。",
+  observationList: "观察清单：临时保存想继续研究的候选信号，不代表购买建议，不写文件。",
 };

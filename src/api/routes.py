@@ -23,6 +23,8 @@ from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
 from src.view_models.calibration_view import build_calibration_view
 from src.view_models.import_view import build_import_preview_view
+from src.view_models.matches_view import build_matches_view, build_sporttery_status_view
+from src.view_models.onboarding_view import build_onboarding_view
 from src.view_models.qa_view import build_qa_view
 
 
@@ -65,6 +67,9 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "explain_candidate",
                     "user_workflow_preview",
                     "view_user_workflow",
+                    "view_matches",
+                    "view_onboarding",
+                    "view_sporttery_status",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -131,6 +136,17 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             payload = build_analysis_payload(target_date=query.get("date"), provider_name=query.get("provider", "mock"))
             return success_response(summarize_report(payload))
         raise ApiError("bad_request", "type must be analysis or backtest")
+    if path == "/api/view/matches":
+        payload = build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto"))
+        view = build_matches_view(payload)
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/onboarding":
+        view = build_onboarding_view()
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/sporttery-status":
+        payload = build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto"))
+        view = build_sporttery_status_view(payload)
+        return success_response(view, view.get("warnings", []))
     if path == "/api/view/analyze":
         _reject_write_params(query, {"export", "report_md", "report-md"})
         payload = build_analysis_payload(

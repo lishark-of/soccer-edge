@@ -3,50 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>竞彩足球概率分析台</title>
+  <title>JC Edge</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
   <div class="appShell">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">football-jc-analysis</p>
-        <h1>竞彩足球概率分析台</h1>
-        <p class="subtitle">把赔率、模型概率、回测诊断和导入预检整理成普通使用者也能看懂的本地只读 App。</p>
+    <header class="hero heroApple">
+      <div class="brandBlock">
+        <p class="eyebrow">Sporttery probability lab</p>
+        <h1>JC Edge</h1>
+        <p class="subtitle">竞彩足球概率分析与回测 · 本地只读</p>
+        <p class="heroCopy">用更清晰的路径查看竞彩足球比赛、候选信号、理论期望 EV、组合风险和概率回测诊断。</p>
+        <div class="heroActions">
+          <button id="heroAnalyzeBtn" class="primary">开始体验 mock 分析</button>
+          <button id="heroMatchesBtn" class="secondary">查看竞彩足球比赛</button>
+          <button id="heroImportBtn" class="secondary">导入历史 CSV</button>
+        </div>
       </div>
-      <div class="modeCard">
-        <strong>Read-only local analysis mode</strong>
-        <span>默认连接 http://127.0.0.1:8765，本页面不写文件、不导出、不创建 artifact。</span>
-      </div>
+      <aside class="modeCard glassCard">
+        <span class="badge blue">Read-only local</span>
+        <strong>本地只读 · 不提供投注/下单/支付/代购</strong>
+        <p>实际购彩请用户自行遵守当地法律法规并通过合法官方渠道独立判断。</p>
+      </aside>
     </header>
 
-    <section class="safetyStrip" aria-label="安全声明">
-      <strong>非投注声明：</strong>
-      仅供数据研究与娱乐参考。 不提供投注、下单、支付、代购或任何自动化购彩能力。 概率模型不保证结果。 回测结果不保证未来表现。 串关会显著放大风险。
+    <section class="safetyStrip glassCard" aria-label="安全声明">
+      <strong>重要说明</strong>
+      <span>本工具只做本地概率分析与回测诊断，不提供投注、下单、支付、代购或自动化购彩能力。概率模型不保证结果，回测结果不保证未来表现，串关会显著放大风险。</span>
     </section>
 
     <main class="workspace">
-      <aside class="sidebar">
+      <aside class="sidebar glassCard">
+        <div class="sideHeader">
+          <span class="badge green">Local API</span>
+          <strong>操作面板</strong>
+        </div>
         <label>API Base
           <input id="apiBase" value="http://127.0.0.1:8765">
         </label>
-        <label>分析日期
+        <label>日期
           <input id="date" value="2026-06-09">
         </label>
-        <label>Provider
+        <label>数据源模式
           <select id="provider">
-            <option value="mock">mock</option>
-            <option value="auto">auto</option>
-            <option value="sporttery">sporttery</option>
+            <option value="mock">mock：本地示例数据</option>
+            <option value="auto">auto：优先 Sporttery，失败回退 mock</option>
+            <option value="sporttery">sporttery：只尝试公开数据</option>
           </select>
         </label>
         <label>历史数据路径
           <input id="historicalData" value="data/fixtures/historical_matches_backtest_sample.csv">
         </label>
-        <label>导入预检路径
+        <label>导入 CSV 路径
           <input id="importInput" value="data/fixtures/user_onboarding_sample.csv">
         </label>
-        <label>校准 artifact 路径
+        <label>Mapping 路径
+          <input id="mappingPath" value="data/fixtures/user_onboarding_mapping_example.json">
+        </label>
+        <label>校准文件路径
           <input id="calibrationPath" value="artifacts/calibration/sample_calibration.json">
         </label>
         <label>Adapter
@@ -66,26 +82,27 @@
         </label>
         <div class="actions">
           <button id="healthBtn">检查状态</button>
-          <button id="llmStatusBtn">检查解释模式</button>
-          <button id="analyzeBtn">运行分析</button>
-          <button id="backtestBtn">运行回测</button>
-          <button id="importBtn">预检导入</button>
-          <button id="calibrationBtn">验证校准</button>
-          <button id="qaBtn">运行 QA</button>
+          <button id="matchesBtn">查看竞彩足球比赛</button>
+          <button id="sportteryStatusBtn">刷新数据源状态</button>
+          <button id="analyzeBtn">运行概率分析</button>
+          <button id="backtestBtn">运行概率回测</button>
+          <button id="importBtn">预检字段</button>
+          <button id="calibrationBtn">验证校准文件</button>
+          <button id="qaBtn">查看 QA 状态</button>
           <button id="clearBtn" class="ghost">清空输出</button>
         </div>
       </aside>
 
-      <section class="mainPanel">
+      <section class="mainPanel glassCard">
         <nav class="tabs" aria-label="页面导航">
           <button class="tab isActive" data-view="overview">总览</button>
-          <button class="tab" data-view="analysis">指定日期分析</button>
-          <button class="tab" data-view="candidates">候选买点</button>
+          <button class="tab" data-view="matches">竞彩足球</button>
+          <button class="tab" data-view="signals">候选信号</button>
           <button class="tab" data-view="parlay">组合风险</button>
           <button class="tab" data-view="backtest">概率回测</button>
-          <button class="tab" data-view="import">数据导入预检</button>
+          <button class="tab" data-view="import">数据导入</button>
           <button class="tab" data-view="calibration">校准状态</button>
-          <button class="tab" data-view="qa">QA 健康检查</button>
+          <button class="tab" data-view="qa">QA</button>
           <button class="tab" data-view="raw">原始 JSON</button>
         </nav>
 
@@ -94,72 +111,96 @@
           <span id="lastAction">等待操作</span>
         </section>
 
-        <section id="warningsPanel" class="warningPanel">
-          <h2>Warnings</h2>
-          <div id="warningsList">当前没有新的 warning。</div>
+        <section id="warningsPanel" class="warningPanel softPanel">
+          <h2>数据源提醒</h2>
+          <div id="warningsList">当前没有新的提醒。</div>
         </section>
 
-        <section id="view-overview" class="view isVisible">
-          <h2>总览</h2>
-          <div class="quickStartPanel">
-            <div>
-              <p class="eyebrow">Quick Start / 快速启动</p>
-              <h3>本地只读 release：Version 0.1.0-local</h3>
-              <p>建议顺序：按 6 步完成体验。整个 App 默认只读，不连接远程仓库，不默认调用 DeepSeek。</p>
-            </div>
-            <div class="quickActions">
-              <button id="quickAnalyzeBtn">体验 mock 分析</button>
-              <button id="quickImportBtn">导入预检</button>
-              <button id="quickBacktestBtn">运行概率回测</button>
-              <button id="quickQaBtn">查看 QA 状态</button>
-            </div>
-          </div>
-          <div class="onboardingSteps">
-            <article><strong>1. 使用 mock 数据体验</strong><span>先用内置 mock provider 看完整分析结构。</span></article>
-            <article><strong>2. 导入历史 CSV</strong><span>选择本地 CSV，只做 dry-run 预检。</span></article>
-            <article><strong>3. 查看字段识别结果</strong><span>确认日期、赛事、主队、客队、比分和赔率列。</span></article>
-            <article><strong>4. 运行概率回测</strong><span>用标准化历史数据查看命中率、ROI 和风险指标。</span></article>
-            <article><strong>5. 生成 calibration artifact</strong><span>完整生成流程通过 CLI 执行，App 默认不写文件。</span></article>
-            <article><strong>6. 查看明日分析与候选风险解释</strong><span>查看候选信号、EV、风险等级和本地解释。</span></article>
+        <section id="view-overview" class="view isVisible pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Start here</p>
+            <h2>今天你可以这样开始</h2>
+            <p>不需要记命令。先体验 mock，再查看竞彩足球数据源，最后导入自己的 CSV 做回测诊断。</p>
           </div>
           <div id="overviewCards" class="contentBox"></div>
+          <div class="staticSteps onboardingSteps" aria-label="6 步使用路径">
+            <article class="stepCard"><span class="stepIndex">1</span><strong>先用 mock 数据体验</strong><p>不用准备文件，先看完整概率分析流程。</p></article>
+            <article class="stepCard"><span class="stepIndex">2</span><strong>查看竞彩足球比赛</strong><p>查看 Sporttery / mock / auto 数据源状态。</p></article>
+            <article class="stepCard"><span class="stepIndex">3</span><strong>导入自己的历史 CSV</strong><p>预检字段识别结果和中文修复建议。</p></article>
+            <article class="stepCard"><span class="stepIndex">4</span><strong>运行概率回测</strong><p>查看命中率、ROI、回撤和概率校准。</p></article>
+            <article class="stepCard"><span class="stepIndex">5</span><strong>生成校准文件</strong><p>通过 CLI 生成，App 中查看校准状态。</p></article>
+            <article class="stepCard"><span class="stepIndex">6</span><strong>查看候选信号与组合风险</strong><p>形成临时观察清单，阅读风险解释。</p></article>
+          </div>
+          <div id="onboardingSteps" class="onboardingSteps"></div>
           <div class="guideGrid">
-            <article><h3>如何使用</h3><p>先检查状态，再运行指定日期分析；如果要看历史诊断，运行概率回测；导入预检只读取本地文件并保持 dry-run。</p></article>
-            <article><h3>风险边界</h3><p>所有结果都是研究观察项。单场有随机性，组合会叠加不确定性，回测也不能代表未来表现。</p></article>
-            <article><h3>解释层</h3><p>当前使用本地 deterministic explainer。LLM/DeepSeek 占位默认关闭，不会发起外部请求。</p></article>
+            <article><h3>中国体育彩票竞彩足球</h3><p>可尝试读取 Sporttery / 中国体育彩票竞彩足球公开数据。接口或网络不可用时，会显示数据源提醒并回退 mock。</p><button id="overviewMatchesBtn" class="secondary">查看竞彩足球比赛</button></article>
+            <article><h3>如何使用候选信号</h3><p>先看比赛与方向，再看去水概率、模型概率、Edge、EV、风险等级和解释。这不是操作指令，只是研究观察项。</p><button id="overviewSignalsBtn" class="secondary">查看候选信号</button></article>
+            <article><h3>重要说明</h3><p>本工具不会告诉你“必买哪场”，也不会自动下单。它只展示概率、EV、回测和风险解释。</p><button id="overviewBacktestBtn" class="secondary">运行概率回测</button></article>
           </div>
           <h3>DeepSeek 可选解释状态</h3>
           <div id="llmStatusCards" class="contentBox"></div>
-          <p class="sectionHint">DeepSeek 只用于自然语言解释，不参与概率计算、EV、候选筛选或回测指标。默认关闭；如不可用会回退到本地解释。</p>
         </section>
 
-        <section id="view-analysis" class="view">
-          <h2>指定日期分析</h2>
-          <div id="analysisCards" class="contentBox"></div>
-          <h3>模型组件说明</h3>
-          <div id="componentNotes"></div>
+        <section id="view-matches" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Sporttery / mock / auto</p>
+            <h2>中国体育彩票竞彩足球</h2>
+            <p>查看公开数据源返回的比赛与赔率。若 Sporttery 不可用，系统会回退到 mock 并明确标记 provider_used。</p>
+          </div>
+          <div id="matchesCards" class="contentBox"></div>
+          <div class="inlineActions">
+            <button id="matchesToSignalsBtn" class="secondary">一键跳到候选信号</button>
+            <button id="providerWarningBtn" class="ghost">查看 provider warning</button>
+          </div>
+          <div id="matchesNotes" class="noteBox"></div>
+          <div id="matchesTable"></div>
         </section>
 
-        <section id="view-candidates" class="view">
-          <h2>候选买点</h2>
-          <p class="sectionHint">这里显示的是模型信号和市场分歧，不是确定性操作建议。</p>
+        <section id="view-signals" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Signals, not instructions</p>
+            <h2>候选信号</h2>
+            <p>候选信号表示模型与市场存在分歧，可加入观察清单继续研究，不代表购买建议。</p>
+          </div>
+          <div class="howToPanel">
+            <h3>如何使用候选信号</h3>
+            <ol>
+              <li>先看比赛与玩法方向。</li>
+              <li>再看市场去水概率和模型概率。</li>
+              <li>再看概率差 Edge 与理论期望 EV。</li>
+              <li>再看风险等级和本地解释。</li>
+              <li>如果是组合观察，重点看命中概率和风险放大说明。</li>
+            </ol>
+            <p>这不是操作指令，不保证结果，也不是技巧建议，只是概率研究与风险展示。</p>
+          </div>
+          <h3>单场候选信号</h3>
           <div id="singleTable"></div>
+          <h3>观察清单</h3>
+          <p class="sectionHint">观察清单只保存在当前浏览器内存，刷新后会清空，不写文件。</p>
+          <div id="observationList"></div>
         </section>
 
-        <section id="view-parlay" class="view">
-          <h2>组合风险</h2>
-          <p class="sectionHint">组合会把多个不确定事件相乘，命中概率和波动都需要单独观察。</p>
-          <h3>2串1组合</h3>
+        <section id="view-parlay" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Parlay risk</p>
+            <h2>组合风险</h2>
+            <p>串关会显著放大风险。组合赔率变高时，组合命中概率通常会下降，不确定性会叠加。</p>
+          </div>
+          <h3>2串1组合观察</h3>
           <div id="parlay2Table"></div>
-          <h3>3串1组合</h3>
+          <h3>3串1组合观察</h3>
           <div id="parlay3Table"></div>
-          <div id="riskNotes"></div>
+          <div id="riskNotes" class="noteBox"></div>
         </section>
 
-        <section id="view-backtest" class="view">
-          <h2>概率回测</h2>
+        <section id="view-backtest" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Probability backtest</p>
+            <h2>概率回测</h2>
+            <p>按时间顺序重放历史样本，观察概率与候选规则在过去数据中的表现。回测不代表未来表现。</p>
+          </div>
           <div id="backtestCards" class="contentBox"></div>
-          <h3>指标解释</h3>
+          <h3>指标怎么读</h3>
           <div id="metricExplanations"></div>
           <h3>Calibration / 校准表</h3>
           <div id="calibrationTable"></div>
@@ -167,50 +208,64 @@
           <div id="betsTable"></div>
         </section>
 
-        <section id="view-import" class="view">
-          <h2>数据导入预检</h2>
-          <p class="sectionHint">预检只读取本地文件并返回质量报告、字段识别结果和修复建议，不写 normalized output。</p>
+        <section id="view-import" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">CSV onboarding</p>
+            <h2>数据导入</h2>
+            <p>先做字段预检，系统会告诉你哪些列识别成功、哪些列缺失，以及 mapping JSON 应该怎么写。</p>
+          </div>
           <div id="importCards" class="contentBox"></div>
           <h3>字段识别结果</h3>
           <div id="fieldReportTable"></div>
-          <h3>缺字段与修复建议</h3>
+          <h3>缺字段与中文修复建议</h3>
           <div id="repairSuggestionTable"></div>
           <h3>质量报告</h3>
           <div id="importQuality"></div>
-          <p class="sectionHint">下一步：如果字段识别通过，可在终端运行 user_data_workflow CLI 生成 normalized CSV、回测报告和 calibration artifact。</p>
+          <p class="sectionHint">字段 OK 后，可通过 CLI 完整生成 normalized CSV、概率回测报告和校准文件；App 默认只做只读预览。</p>
         </section>
 
-        <section id="view-calibration" class="view">
-          <h2>校准状态</h2>
+        <section id="view-calibration" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Calibration</p>
+            <h2>校准状态</h2>
+            <p>校准文件用于诊断概率是否接近历史频率，不保证未来表现。</p>
+          </div>
           <div id="calibrationCards" class="contentBox"></div>
-          <div id="calibrationNotes"></div>
+          <div id="calibrationNotes" class="noteBox"></div>
         </section>
 
-        <section id="view-qa" class="view">
-          <h2>QA 健康检查</h2>
+        <section id="view-qa" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Quality gate</p>
+            <h2>QA</h2>
+            <p>查看本地检查状态，包括 generated files、Dashboard safety、API envelope 和 DeepSeek 默认关闭。</p>
+          </div>
           <div id="qaCards" class="contentBox"></div>
           <div id="qaChecks"></div>
         </section>
 
-        <section id="view-raw" class="view">
-          <h2>原始 JSON</h2>
+        <section id="view-raw" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Debug fallback</p>
+            <h2>原始 JSON</h2>
+            <p>如果你想看完整结构化返回，可在这里查看最近一次 API 响应。</p>
+          </div>
           <pre id="jsonOutput">{}</pre>
         </section>
       </section>
     </main>
 
-    <section class="glossaryPanel">
+    <section class="glossaryPanel glassCard">
       <h2>术语速查</h2>
       <div id="glossaryList"></div>
     </section>
 
     <footer class="footerNote">
-      Read-only local analysis mode. No betting, payment, order placement, or proxy purchase features are implemented.
+      JC Edge · Read-only local analysis. 本工具只做本地概率分析与回测诊断，不提供投注、下单、支付、代购或自动化购彩能力。
     </footer>
   </div>
   <script src="/glossary.js"></script>
   <script src="/components.js"></script>
   <script src="/app.js"></script>
-  <div class="footer safety-strip">本工具只做本地概率分析与回测诊断，不提供投注、下单、支付、代购或自动化购彩能力。概率模型不保证结果，回测结果不保证未来表现，串关会显著放大风险。</div>
 </body>
 </html>

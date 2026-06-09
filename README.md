@@ -57,6 +57,39 @@ python3 -m src.cli.sample_workflow --format json
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+
+## Phase 2-K: App Polish + Sporttery UX
+
+Status: implemented
+
+新增：
+- App 名称改为 JC Edge
+- Apple-style 本地 UI
+- 竞彩足球数据源体验页
+- Sporttery / mock / auto provider 状态说明
+- 使用者 6 步操作路径
+- 候选信号解释
+- 观察清单
+- 组合风险解释
+- 概率回测产品化展示
+- 数据导入字段识别展示
+- 中文错误与修复建议
+- 本地 App 自动打开交付
+
+启动：
+
+```bash
+python3 -m src.cli.launch_app
+```
+
+打开：
+
+```text
+http://127.0.0.1:8766
+```
+
+JC Edge 是 football-jc-analysis 的本地只读 App 名称。它只展示概率、EV、回测和风险解释，不提供投注、下单、支付、代购或自动化购彩能力。
+
 ## Phase 2-J: User Dataset Onboarding + App Usability Hardening
 
 Status: implemented

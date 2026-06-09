@@ -50,6 +50,10 @@ It must not implement wagering, payment, order placement, account management, or
 - Add tests for API health, read-only guard, and dashboard static disclaimers.
 - Add tests for QA harness, disclaimer scanning, model sanity, and generated-file hygiene.
 - Add tests for user-facing dashboard, local explainer, view models, and probability backtest UX.
+- App UI must use JC Edge as the concise local dashboard name.
+- Sporttery views must describe provider fallback clearly and must not imply official partnership.
+- User-facing buttons must use observation, signal, probability, risk, preview, or analysis language rather than purchase or order language.
+- Observation lists are temporary research aids and must not become wagering slips or persisted purchase plans.
 - Run tests before final response.
 
 ## Testing
