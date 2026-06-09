@@ -4,6 +4,36 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-F: QA Harness + Real-Data Rehearsal
+
+Status: implemented
+
+新增：
+- QA harness
+- model probability sanity checks
+- report/disclaimer QA
+- API envelope QA
+- dashboard static safety QA
+- generated-file / git hygiene QA
+- sample real-data import rehearsal
+- end-to-end rehearsal runner
+- QA CLI
+- QA Markdown report
+
+示例：
+
+```bash
+python3 -m src.cli.run_qa --format json
+python3 -m src.cli.run_qa --rehearsal --format json
+python3 -m src.cli.run_qa --rehearsal --write-report reports/qa_report.md --format json
+```
+
+限制：
+- QA rehearsal 使用 fixture，不代表真实生产数据；
+- QA 通过不代表预测准确；
+- 回测结果不保证未来表现；
+- 不提供投注、下单、支付、代购或自动化购彩能力。
+
 ## Phase 2-E: Local Read-Only API + Dashboard
 
 Status: implemented
