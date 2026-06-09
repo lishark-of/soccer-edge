@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+from src.api.errors import ApiError
+from src.api.read_only import ensure_read_only_operation
+from src.api.schemas import success_response
+from src.application import build_analysis_payload, build_matches_payload
+from src.backtesting.backtest_engine import run_backtest
+from src.backtesting.historical_loader import load_historical_matches_with_warnings
+from src.backtesting.report import build_backtest_report
+from src.backtesting.schema import validate_historical_dataset
+from src.calibration.persistence import load_calibration_artifact
+from src.calibration.store import validate_calibration_artifact
+from src.exports.report_exporter import summarize_report
+from src.ingestion.importer import import_historical_file
+
+
+VERSION = "phase2e_local_api_dashboard"
+DISABLED_CAPABILITIES = ["betting", "payment", "order_placement", "proxy_purchase", "automation"]
+
+
+def dispatch_route(path: str, query: dict[str, str]) -> dict:
+    if path == "/api/health":
+        return success_response(
+            {
+                "status": "ok",
+                "service": "football-jc-analysis",
+                "mode": "read_only",
+                "version": VERSION,
+            }
+        )
+    if path == "/api/info":
+        return success_response(
+            {
+                "project": "football-jc-analysis",
+                "mode": "read_only",
+                "capabilities": ["matches", "analyze", "backtest", "import_preview", "calibration_validate", "report_summary"],
+                "disabled_capabilities": DISABLED_CAPABILITIES,
+                "disclaimer": "For research and entertainment reference only. No betting, payment, or order placement.",
+            }
+        )
+    if path == "/api/matches":
+        return success_response(build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto")))
+    if path == "/api/analyze":
+        _reject_write_params(query, {"export", "report_md", "report-md"})
+        payload = build_analysis_payload(
+            target_date=query.get("date"),
+            provider_name=query.get("provider", "auto"),
+            historical_data_path=query.get("historical_data"),
+            use_fixture_historical=_truthy(query.get("no_historical_fixture")) is False,
+            calibration_artifact_path=query.get("calibration_artifact"),
+        )
+        return success_response(payload, payload.get("warnings", []))
+    if path == "/api/backtest":
+        _reject_write_params(query, {"export", "save_calibration", "save-calibration", "report_md", "report-md"})
+        return success_response(_run_backtest_from_query(query))
+    if path == "/api/import/preview":
+        _reject_write_params(query, {"output"})
+        input_path = _required(query, "input")
+        payload = import_historical_file(
+            input_path=input_path,
+            adapter_name=query.get("adapter", "auto"),
+            mapping_path=query.get("mapping"),
+            dry_run=True,
+        )
+        return success_response(payload, payload.get("warnings", []))
+    if path == "/api/calibration/validate":
+        artifact_path = _required(query, "path")
+        try:
+            artifact = load_calibration_artifact(artifact_path)
+            issues = validate_calibration_artifact(artifact)
+            return success_response({"path": artifact_path, "valid": not issues, "issues": issues})
+        except Exception as exc:
+            return success_response({"path": artifact_path, "valid": False, "issues": [str(exc)[:180]]})
+    if path == "/api/report/summary":
+        report_type = query.get("type", "analysis")
+        if report_type == "backtest":
+            return success_response(summarize_report(_run_backtest_from_query(query)))
+        if report_type == "analysis":
+            payload = build_analysis_payload(target_date=query.get("date"), provider_name=query.get("provider", "mock"))
+            return success_response(summarize_report(payload))
+        raise ApiError("bad_request", "type must be analysis or backtest")
+    raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
+
+
+def _run_backtest_from_query(query: dict[str, str]) -> dict:
+    historical_data = _required(query, "historical_data")
+    matches, warnings = load_historical_matches_with_warnings(historical_data)
+    data_summary = validate_historical_dataset(matches)
+    result = run_backtest(
+        matches,
+        start_date=query.get("start_date"),
+        end_date=query.get("end_date"),
+        min_train_matches=_int_param(query, "min_train_matches", 20),
+        strategy_config={
+            "min_ev": _float_param(query, "min_ev", 0.04),
+            "min_edge": _float_param(query, "min_edge", 0.025),
+        },
+    )
+    result["data_summary"] = data_summary
+    result["warnings"] = list(dict.fromkeys(warnings + data_summary.get("warnings", []) + result.get("warnings", [])))
+    return build_backtest_report(result)
+
+
+def _reject_write_params(query: dict[str, str], names: set[str]) -> None:
+    for name in names:
+        if name in query:
+            ensure_read_only_operation(name, write_requested=True)
+
+
+def _required(query: dict[str, str], name: str) -> str:
+    value = query.get(name)
+    if not value:
+        raise ApiError("bad_request", f"missing required parameter: {name}")
+    return value
+
+
+def _int_param(query: dict[str, str], name: str, default: int) -> int:
+    try:
+        return int(query.get(name, default))
+    except ValueError as exc:
+        raise ApiError("validation_error", f"{name} must be an integer") from exc
+
+
+def _float_param(query: dict[str, str], name: str, default: float) -> float:
+    try:
+        return float(query.get(name, default))
+    except ValueError as exc:
+        raise ApiError("validation_error", f"{name} must be a number") from exc
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").lower() in {"1", "true", "yes", "on"}

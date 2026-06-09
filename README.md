@@ -4,6 +4,45 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-E: Local Read-Only API + Dashboard
+
+Status: implemented
+
+新增：
+- local read-only REST API
+- local static dashboard
+- health/info endpoints
+- analyze endpoint
+- backtest endpoint
+- import preview endpoint
+- calibration artifact validation endpoint
+- standardized JSON response envelope
+- read-only guard
+- API and dashboard docs
+
+示例：
+
+```bash
+python3 -m src.cli.serve_api --host 127.0.0.1 --port 8765
+python3 -m src.cli.serve_dashboard --host 127.0.0.1 --port 8766 --api-base http://127.0.0.1:8765
+```
+
+API 示例：
+
+```text
+http://127.0.0.1:8765/api/health
+http://127.0.0.1:8765/api/analyze?provider=mock&date=2026-06-09
+http://127.0.0.1:8765/api/backtest?historical_data=data/fixtures/historical_matches_backtest_sample.csv
+```
+
+限制：
+- API 默认只监听 127.0.0.1；
+- API 和 dashboard 默认只读；
+- 不提供投注、下单、支付、代购或自动化购彩能力；
+- 不做公网部署；
+- 不保证预测结果；
+- 回测结果不保证未来表现。
+
 ## Phase 2-D: Import Adapters + Calibration Persistence + Report Hardening
 
 Status: implemented

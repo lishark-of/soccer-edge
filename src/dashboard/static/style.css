@@ -1,0 +1,188 @@
+:root {
+  --bg: #f3f0e8;
+  --ink: #17201b;
+  --muted: #657069;
+  --panel: #fffdf8;
+  --line: #d8d2c4;
+  --green: #126d4f;
+  --blue: #274c77;
+  --red: #9b3d30;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Songti SC", serif;
+  background: linear-gradient(180deg, #faf8f1, var(--bg));
+  color: var(--ink);
+}
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 18px 44px;
+}
+
+.topbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 42px;
+  line-height: 1.05;
+}
+
+.badge {
+  padding: 9px 12px;
+  border: 1px solid var(--green);
+  color: var(--green);
+  background: #e8f4ee;
+  font-weight: 700;
+}
+
+.notice {
+  margin: 16px 0 20px;
+  padding: 14px 16px;
+  border-left: 4px solid var(--green);
+  background: #fffdf8;
+  color: var(--muted);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.controls,
+.output section,
+.summary {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.controls {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+input,
+select,
+button {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+
+.buttonGrid {
+  display: grid;
+  gap: 8px;
+}
+
+button {
+  cursor: pointer;
+  border-color: var(--green);
+  background: var(--green);
+  color: white;
+  font-weight: 700;
+}
+
+button.secondary {
+  background: white;
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+.output {
+  display: grid;
+  gap: 14px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tile {
+  padding: 16px;
+  border-right: 1px solid var(--line);
+}
+
+.tile:last-child {
+  border-right: 0;
+}
+
+.tile span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tile strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+}
+
+.output section {
+  padding: 16px;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+pre {
+  overflow: auto;
+  max-height: 560px;
+  margin: 0;
+  padding: 14px;
+  background: #111713;
+  color: #d7f6e3;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+}
+
+li {
+  margin: 4px 0;
+}
+
+@media (max-width: 860px) {
+  .layout,
+  .summary,
+  .topbar {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  h1 {
+    font-size: 32px;
+  }
+}

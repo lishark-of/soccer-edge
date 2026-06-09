@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>football-jc-analysis Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">football-jc-analysis</p>
+        <h1>Local Analysis Console</h1>
+      </div>
+      <span class="badge">Read-only local analysis mode</span>
+    </header>
+
+    <section class="notice">
+      No betting, payment, order placement, or proxy purchase features are implemented.
+      Probability models and backtests do not guarantee outcomes.
+    </section>
+
+    <section class="layout">
+      <aside class="controls">
+        <label>API Base
+          <input id="apiBase" value="http://127.0.0.1:8765">
+        </label>
+        <label>Date
+          <input id="date" value="2026-06-09">
+        </label>
+        <label>Provider
+          <select id="provider">
+            <option value="mock">mock</option>
+            <option value="auto">auto</option>
+            <option value="sporttery">sporttery</option>
+          </select>
+        </label>
+        <label>Historical Data
+          <input id="historicalData" value="data/fixtures/historical_matches_backtest_sample.csv">
+        </label>
+        <label>Import Input
+          <input id="importInput" value="data/fixtures/import_sample_generic.csv">
+        </label>
+        <label>Calibration Artifact
+          <input id="calibrationPath" value="artifacts/calibration/sample_calibration.json">
+        </label>
+        <div class="buttonGrid">
+          <button id="healthBtn">Check Health</button>
+          <button id="analyzeBtn">Analyze</button>
+          <button id="backtestBtn">Run Backtest</button>
+          <button id="importBtn">Preview Import</button>
+          <button id="calibrationBtn">Validate Calibration</button>
+          <button id="clearBtn" class="secondary">Clear Output</button>
+        </div>
+      </aside>
+
+      <section class="output">
+        <div class="summary" id="summary">
+          <div class="tile"><span>Status</span><strong id="statusText">Idle</strong></div>
+          <div class="tile"><span>Mode</span><strong>Read-only</strong></div>
+          <div class="tile"><span>Network</span><strong>Local API</strong></div>
+        </div>
+        <section class="warnings">
+          <h2>Warnings</h2>
+          <ul id="warningsList"><li>None</li></ul>
+        </section>
+        <section>
+          <h2>JSON Viewer</h2>
+          <pre id="jsonOutput">{}</pre>
+        </section>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

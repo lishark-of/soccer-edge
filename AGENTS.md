@@ -25,10 +25,14 @@ It must not implement wagering, payment, order placement, account management, or
 - Backtest results must be framed as diagnostics, not guarantees.
 - User-provided raw datasets must not be committed.
 - Generated artifacts, reports, normalized outputs, and calibration files must not be committed unless they are explicit fixtures.
+- Local API and dashboard must default to read-only mode.
+- Local API must bind to 127.0.0.1 by default.
+- Do not add betting, payment, order placement, or proxy purchase UI controls.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.
 - Add tests for import adapters, calibration persistence, and report export.
+- Add tests for API health, read-only guard, and dashboard static disclaimers.
 - Run tests before final response.
 
 ## Testing
