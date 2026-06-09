@@ -18,4 +18,7 @@ window.FootballGlossary = {
   observationList: "观察清单：临时保存想继续研究的候选信号，不代表购买建议，不写文件。",
   paperOperation: "模拟走盘：使用历史数据按时间顺序做纸面复盘，只更新模拟本金，不涉及真实资金。",
   maxDrawdownOperation: "模拟最大回撤：纸面本金从历史高点到低点的最大跌幅，用于观察风险。",
+  optimizer: "赛前组合优化：在纸面本金和风险约束下，从候选信号中生成观察组合，不构成真实操作建议。",
+  bankrollReturn: "本金收益率：纸面盈亏除以初始模拟本金，用来区别于模拟投入 ROI。",
+  stakeRoi: "模拟投入 ROI：纸面盈亏除以总模拟投入，反映投入部分的历史效率。",
 };

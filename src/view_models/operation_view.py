@@ -11,8 +11,10 @@ def build_operation_view(report: dict) -> dict:
         "summary_cards": [
             {"label": "初始模拟本金", "value": _rmb(report.get("initial_bankroll")), "help": "默认从 10,000 元纸面本金开始。"},
             {"label": "最终模拟本金", "value": _rmb(report.get("final_bankroll")), "help": "历史复盘结束后的纸面本金。"},
-            {"label": "总盈亏", "value": _signed_rmb(report.get("total_profit")), "help": "纸面模拟盈亏，不代表未来表现。"},
-            {"label": "ROI", "value": _pct(report.get("roi")), "help": "纸面盈亏 / 纸面总投入。"},
+            {"label": "纸面盈亏", "value": _signed_rmb(report.get("total_profit")), "help": "最终模拟本金减初始模拟本金。"},
+            {"label": "本金收益率", "value": _signed_pct(report.get("bankroll_return")), "help": "纸面盈亏 / 初始模拟本金。"},
+            {"label": "总模拟投入", "value": _rmb(report.get("total_staked")), "help": "历史复盘中所有纸面观察金额合计。"},
+            {"label": "模拟投入 ROI", "value": _pct(report.get("stake_roi", report.get("roi"))), "help": "纸面盈亏 / 总模拟投入。"},
             {"label": "命中率", "value": _pct(report.get("hit_rate")), "help": "已结算观察项中命中的比例。"},
             {"label": "最大回撤", "value": _signed_pct(-float(report.get("max_drawdown") or 0.0)), "help": "纸面本金曲线从高点到低点的最大跌幅。"},
         ],

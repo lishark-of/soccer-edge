@@ -4,8 +4,15 @@ DISCLAIMER = "本工具只做本地概率分析、纸面模拟和回测诊断。
 
 
 def build_paper_operation_report(simulation: dict) -> dict:
+    initial = float(simulation.get("initial_bankroll") or 0.0)
+    profit = float(simulation.get("total_profit") or 0.0)
+    total_staked = float(simulation.get("total_staked") or 0.0)
+    bankroll_return = profit / initial if initial > 0 else 0.0
+    stake_roi = profit / total_staked if total_staked > 0 else 0.0
     return {
         **simulation,
+        "bankroll_return": round(bankroll_return, 6),
+        "stake_roi": round(stake_roi, 6),
         "walk_log_table": build_walk_log_table(simulation),
         "equity_curve": build_daily_equity_curve(simulation),
         "disclaimer": simulation.get("disclaimer") or DISCLAIMER,

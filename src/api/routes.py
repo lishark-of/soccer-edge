@@ -19,6 +19,8 @@ from src.ingestion.importer import import_historical_file
 from src.ingestion.repair_suggestions import build_repair_suggestions
 from src.release.metadata import build_release_metadata
 from src.paper_trading.walkforward import run_paper_operation_walkforward
+from src.optimizer.candidate_pool import build_candidate_pool
+from src.optimizer.portfolio_optimizer import optimize_portfolio
 from src.version import get_build_info
 from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
@@ -27,6 +29,7 @@ from src.view_models.import_view import build_import_preview_view
 from src.view_models.matches_view import build_matches_view, build_sporttery_status_view
 from src.view_models.onboarding_view import build_onboarding_view
 from src.view_models.operation_view import build_operation_view
+from src.view_models.optimizer_view import build_optimizer_view
 from src.view_models.qa_view import build_qa_view
 
 
@@ -74,6 +77,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_sporttery_status",
                     "operation_simulate",
                     "view_operation",
+                    "optimizer_pre_match",
+                    "view_optimizer",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -151,6 +156,13 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         payload = build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto"))
         view = build_sporttery_status_view(payload)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/optimizer/pre-match":
+        result = _run_optimizer_from_query(query)
+        return success_response(result, result.get("warnings", []))
+    if path == "/api/view/optimizer":
+        result = _run_optimizer_from_query(query)
+        view = build_optimizer_view(result)
+        return success_response(view, view.get("warnings", []))
     if path == "/api/operation/simulate":
         report = _run_operation_from_query(query)
         return success_response(report, report.get("warnings", []))
@@ -197,6 +209,25 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         return success_response(view, view.get("warnings", []))
     raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
 
+
+
+def _run_optimizer_from_query(query: dict[str, str]) -> dict:
+    payload = build_analysis_payload(target_date=query.get("date"), provider_name=query.get("provider", "mock"))
+    candidates = build_candidate_pool(payload)
+    bankroll = _float_param(query, "bankroll", 10000.0)
+    result = optimize_portfolio(
+        candidates,
+        bankroll=bankroll,
+        config={"enable_3x1": _truthy(query.get("enable_3x1"))},
+    )
+    result.update({
+        "provider": query.get("provider", "mock"),
+        "date": payload.get("date") or query.get("date"),
+        "matches_analyzed": payload.get("matches_analyzed", 0),
+        "candidate_pool_count": len(candidates),
+        "warnings": list(dict.fromkeys(list(payload.get("warnings", []) or []) + list(payload.get("provider_warnings", []) or []))),
+    })
+    return result
 
 
 def _run_operation_from_query(query: dict[str, str]) -> dict:

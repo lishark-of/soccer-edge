@@ -10,6 +10,7 @@ const state = {
   matchesView: null,
   onboardingView: null,
   operationView: null,
+  optimizerView: null,
   llmStatus: null,
   observationList: [],
 };
@@ -209,6 +210,36 @@ function renderLlmStatus(status) {
   ]);
 }
 
+function renderOptimizer(view) {
+  state.optimizerView = view;
+  document.querySelector("#optimizerCards").innerHTML = C.cards(view.summary_cards || []);
+  const columns = [
+    { key: "type", label: "类型" },
+    { key: "match", label: "比赛 / 组合" },
+    { key: "legs", label: "组成" },
+    { key: "odds", label: "赔率" },
+    { key: "model_prob", label: "模型概率" },
+    { key: "market_prob", label: "市场概率" },
+    { key: "ev", label: "EV" },
+    { key: "edge", label: "Edge" },
+    { key: "paper_stake", label: "建议纸面投入" },
+    { key: "risk_level", label: "风险" },
+    { key: "reason", label: "入选原因" },
+  ];
+  document.querySelector("#optimizerSingles").innerHTML = C.table(view.singles_table || [], columns);
+  document.querySelector("#optimizerParlay2").innerHTML = C.table(view.parlay_2x1_table || [], columns);
+  document.querySelector("#optimizerParlay3").innerHTML = C.table(view.parlay_3x1_table || [], columns);
+  document.querySelector("#optimizerRejected").innerHTML = C.table(view.rejected_table || [], [
+    { key: "type", label: "类型" },
+    { key: "match", label: "候选" },
+    { key: "ev", label: "EV" },
+    { key: "edge", label: "Edge" },
+    { key: "risk_level", label: "风险" },
+    { key: "reason", label: "放弃原因" },
+  ]);
+  document.querySelector("#optimizerExplanations").innerHTML = C.list(view.explanations || []);
+}
+
 function renderBacktest(view) {
   state.backtestView = view;
   document.querySelector("#backtestCards").innerHTML = C.cards(view.summary_cards || []);
@@ -357,6 +388,12 @@ async function checkLlmStatus() {
   }
 }
 
+async function runOptimizer() {
+  const payload = await request("/api/view/optimizer", { provider: value("#provider"), date: value("#date"), bankroll: value("#initialBankroll") }, "生成观察组合");
+  if (payload.ok) renderOptimizer(payload.data);
+  switchView("optimizer");
+}
+
 async function runBacktest() {
   const payload = await request("/api/view/backtest", { historical_data: value("#historicalData") }, "运行概率回测");
   if (payload.ok) renderBacktest(payload.data);
@@ -416,6 +453,7 @@ document.querySelector("#healthBtn").addEventListener("click", checkHealth);
 document.querySelector("#matchesBtn").addEventListener("click", loadMatches);
 document.querySelector("#sportteryStatusBtn").addEventListener("click", loadSportteryStatus);
 document.querySelector("#analyzeBtn").addEventListener("click", runAnalysis);
+document.querySelector("#optimizerBtn").addEventListener("click", runOptimizer);
 document.querySelector("#backtestBtn").addEventListener("click", runBacktest);
 document.querySelector("#operationBtn").addEventListener("click", runOperation);
 document.querySelector("#importBtn").addEventListener("click", previewImport);

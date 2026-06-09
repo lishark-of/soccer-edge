@@ -59,6 +59,33 @@ This project is not a betting platform. It does not place orders, handle payment
 
 
 
+
+## Phase 2-M: Pre-match Portfolio Optimizer
+
+Status: implemented
+
+新增：
+- 赛前组合优化器
+- 候选池构建
+- 单关与 2串1 观察组合评分
+- 相关性折扣：不同联赛 1.00，同联赛 0.95，同队 0.85，同场互斥禁止
+- 纸面本金约束：默认 10,000 元，每日暴露 3%
+- 1/4 Kelly 参考纸面投入，并受单项 cap 限制
+- 3串1 默认关闭
+- App 赛前优化页面
+- 模拟经营指标修正：本金收益率 与 模拟投入 ROI 分开显示
+
+示例：
+
+```bash
+python3 -m src.cli.optimize_today --provider mock --date 2026-06-09 --bankroll 10000 --format json
+```
+
+说明：
+- 这是赛前观察组合优化，不是真实投注；
+- 不提供投注、下单、支付、代购或自动化购彩能力；
+- 提高纸面收益通常意味着更高风险暴露和更大回撤。
+
 ## Phase 2-L: Simulated Operation Walk-Forward
 
 Status: implemented

@@ -91,6 +91,7 @@
           <button id="matchesBtn">查看竞彩足球比赛</button>
           <button id="sportteryStatusBtn">刷新数据源状态</button>
           <button id="analyzeBtn">运行概率分析</button>
+          <button id="optimizerBtn">生成观察组合</button>
           <button id="backtestBtn">运行概率回测</button>
           <button id="operationBtn">运行模拟走盘</button>
           <button id="importBtn">预检字段</button>
@@ -105,6 +106,7 @@
           <button class="tab isActive" data-view="overview">总览</button>
           <button class="tab" data-view="matches">竞彩足球</button>
           <button class="tab" data-view="signals">候选信号</button>
+          <button class="tab" data-view="optimizer">赛前优化</button>
           <button class="tab" data-view="parlay">组合风险</button>
           <button class="tab" data-view="backtest">概率回测</button>
           <button class="tab" data-view="operation">模拟走盘</button>
@@ -186,6 +188,28 @@
           <h3>观察清单</h3>
           <p class="sectionHint">观察清单只保存在当前浏览器内存，刷新后会清空，不写文件。</p>
           <div id="observationList"></div>
+        </section>
+
+
+        <section id="view-optimizer" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Pre-match optimizer</p>
+            <h2>今日赛前组合优化</h2>
+            <p>综合赔率、模型概率、市场去水概率、EV、Edge、风险等级、相关性和纸面本金约束，生成赛前观察组合。结果仅供概率研究，不构成任何真实操作建议。</p>
+          </div>
+          <div class="metricPreview">默认本金 10,000 元；每日纸面暴露上限 3%；单关上限 1%；2串1 上限 0.5%；3串1 默认关闭。</div>
+          <div id="optimizerCards" class="contentBox"></div>
+          <h3>单关观察</h3>
+          <div id="optimizerSingles"></div>
+          <h3>2串1观察</h3>
+          <div id="optimizerParlay2"></div>
+          <h3>可选3串1观察</h3>
+          <div id="optimizerParlay3"></div>
+          <h3>放弃的候选</h3>
+          <div id="optimizerRejected"></div>
+          <h3>风险解释</h3>
+          <div id="optimizerExplanations" class="noteBox"></div>
+          <p class="sectionHint">如果想提高纸面收益，需要提高风险暴露或放宽风险等级，但这会增加回撤和连续亏损概率。</p>
         </section>
 
         <section id="view-parlay" class="view pageLift">

@@ -57,6 +57,9 @@ It must not implement wagering, payment, order placement, account management, or
 - Paper operation simulations must remain paper-only and must never become real wagering workflows.
 - Use 模拟走盘, 纸面本金, 候选信号, 观察清单, 组合观察, 风险诊断, 模拟结算, and 回测复盘 language for operation UX.
 - Do not use wagering, purchase, payment, order, proxy purchase, martingale, chase, guaranteed win, or capital preservation language as app controls.
+- Pre-match optimizer outputs must be observation portfolios only, never wagering instructions.
+- Optimizer stake values are paper-only and must be constrained by bankroll exposure caps.
+- Fractional Kelly may be displayed only as a conservative paper reference and must not become real staking automation.
 - Run tests before final response.
 
 ## Testing
