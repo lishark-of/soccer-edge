@@ -25,6 +25,7 @@ def analyze_market_outcomes(
     risk_score: float,
     risk_reasons: list[str],
     model_reasons: list[str],
+    model_components: dict | None = None,
 ) -> list[MatchAnalysis]:
     analyses: list[MatchAnalysis] = []
     for outcome_key, outcome_odds in odds.items():
@@ -56,6 +57,7 @@ def analyze_market_outcomes(
             risks=risks,
             supports_single=match.supports_single,
             correlation_group=match.correlation_group,
+            model_components=dict(model_components or {}),
         )
         analyses.append(
             MatchAnalysis(

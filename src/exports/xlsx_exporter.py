@@ -13,6 +13,7 @@ def export_analysis_xlsx(report: DailyAnalysisReport, output_dir: str = "exports
     path = target_dir / f"analysis_{report.date}.xlsx"
     rows = [
         [
+            "model_version",
             "match_no",
             "league",
             "home_team",
@@ -20,8 +21,8 @@ def export_analysis_xlsx(report: DailyAnalysisReport, output_dir: str = "exports
             "play_type",
             "direction",
             "odds",
-            "fair_prob",
-            "model_prob",
+            "market_probability",
+            "model_probability",
             "edge",
             "ev",
             "risk_level",
@@ -32,6 +33,7 @@ def export_analysis_xlsx(report: DailyAnalysisReport, output_dir: str = "exports
         selection = item.selection
         rows.append(
             [
+                report.model_version,
                 selection.match_no,
                 selection.league,
                 selection.home_team,

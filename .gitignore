@@ -22,6 +22,9 @@ env/
 output/
 *.xlsx
 *.csv
+!data/
+!data/fixtures/
+!data/fixtures/*.csv
 
 # OS / editor
 .DS_Store

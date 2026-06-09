@@ -20,8 +20,10 @@ It must not implement wagering, payment, order placement, account management, or
 - Use type hints.
 - Keep provider logic separate from probability/modeling logic.
 - Keep probability/modeling logic separate from presentation.
+- Historical features must use only data strictly before target match date.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
+- Add tests for no-future-leakage guards.
 - Run tests before final response.
 
 ## Testing

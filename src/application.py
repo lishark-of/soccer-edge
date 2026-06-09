@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from src.backtesting.historical_loader import load_historical_matches_with_warnings
 from src.domain.analysis_result import DailyAnalysisReport
 from src.exports.csv_exporter import export_analysis_csv
 from src.exports.xlsx_exporter import export_analysis_xlsx
 from src.providers.base import ProviderError
 from src.providers.factory import create_provider
-from src.strategy.portfolio_builder import build_daily_analysis
+from src.strategy.portfolio_builder import HISTORICAL_FIXTURE_WARNING, MODEL_VERSION, build_daily_analysis
 
 
 DISCLAIMER_BLOCK = [
@@ -17,6 +19,7 @@ DISCLAIMER_BLOCK = [
     "串关会显著放大风险",
     "请勿投入无法承受损失的资金",
 ]
+FIXTURE_PATH = Path(__file__).resolve().parent.parent / "data" / "fixtures" / "historical_matches_sample.csv"
 
 
 def default_target_date() -> str:
@@ -28,14 +31,27 @@ def build_analysis_payload(
     target_date: str | None = None,
     provider_name: str = "auto",
     export_format: str | None = None,
+    historical_data_path: str | None = None,
+    use_fixture_historical: bool = True,
 ) -> dict[str, object]:
     date = target_date or default_target_date()
     provider = create_provider(provider_name)
+    historical_matches, historical_status, historical_warnings = _resolve_historical_inputs(
+        historical_data_path=historical_data_path,
+        use_fixture_historical=use_fixture_historical,
+    )
     try:
-        report = build_daily_analysis(provider, date)
+        report = build_daily_analysis(
+            provider,
+            date,
+            historical_matches=historical_matches,
+            historical_data_status=historical_status,
+            historical_warnings=historical_warnings,
+        )
     except Exception as exc:
         _record_provider_warning(provider, provider_name, exc)
-        report = _empty_report(date)
+        report = _empty_report(date, historical_status)
+        report.warnings.extend(historical_warnings)
     payload = report.to_dict()
     payload.update(_provider_meta(provider, provider_name))
     if export_format == "csv":
@@ -105,6 +121,26 @@ def build_odds_history_payload(
     return payload
 
 
+def _resolve_historical_inputs(
+    *,
+    historical_data_path: str | None,
+    use_fixture_historical: bool,
+) -> tuple[list, str, list[str]]:
+    if historical_data_path:
+        matches, warnings = load_historical_matches_with_warnings(historical_data_path)
+        if matches:
+            return matches, "loaded", warnings
+        return [], "unavailable", warnings or [f"historical data unavailable: {historical_data_path}"]
+    if not use_fixture_historical:
+        return [], "disabled", []
+    matches, warnings = load_historical_matches_with_warnings(str(FIXTURE_PATH))
+    if matches:
+        return matches, "fixture", warnings
+    fallback_warnings = [f"fixture historical data unavailable: {FIXTURE_PATH}"]
+    fallback_warnings.extend(warnings)
+    return [], "unavailable", fallback_warnings
+
+
 def _provider_meta(provider, requested: str) -> dict[str, object]:
     warnings = list(dict.fromkeys(list(getattr(provider, "warnings", [])) + list(getattr(provider, "messages", []))))
     provider_used = getattr(
@@ -139,11 +175,15 @@ def _record_provider_warning(provider, requested: str, exc: Exception) -> None:
         messages.append(message)
 
 
-def _empty_report(date: str) -> DailyAnalysisReport:
+def _empty_report(date: str, historical_status: str) -> DailyAnalysisReport:
+    components = ["market", "poisson", "elo"] if historical_status in {"fixture", "loaded"} else ["market"]
     return DailyAnalysisReport(
         date=date,
         matches_analyzed=0,
         disclaimers=list(DISCLAIMER_BLOCK),
+        model_version=MODEL_VERSION,
+        model_components_available=components,
+        historical_data_status=historical_status,
     )
 
 

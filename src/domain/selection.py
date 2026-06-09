@@ -27,6 +27,7 @@ class Selection:
     supports_single: bool = True
     correlation_group: str = ""
     recommendation: str = ""
+    model_components: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

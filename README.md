@@ -4,6 +4,34 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-B: Historical + Poisson/Elo Baseline
+
+Status: implemented
+
+新增：
+- historical CSV loader
+- fixture historical dataset
+- team strength baseline
+- Poisson scoreline model
+- simplified Elo model
+- market / poisson / elo ensemble
+- CLI model_components output
+- no-future-leakage tests
+
+运行示例：
+
+```bash
+python3 -m src.cli.analyze_tomorrow --provider mock --date 2026-06-09 --format json
+python3 -m src.cli.analyze_tomorrow --provider mock --date 2026-06-09 --historical-data data/fixtures/historical_matches_sample.csv --format json
+python3 -m src.cli.analyze_tomorrow --provider mock --date 2026-06-09 --no-historical-fixture --format json
+```
+
+限制：
+- fixture 历史数据只用于开发与测试，不适合生产推断；
+- 当前模型是 baseline，不构成投注建议；
+- 概率不保证结果；
+- 串关风险显著高于单关。
+
 ## Phase 2-A: Provider Layer
 
 Status: implemented
@@ -14,54 +42,6 @@ Status: implemented
 - auto fallback provider
 - CLI `--provider mock|sporttery|auto`
 - `provider_used` / `provider_warnings` JSON output
-
-运行示例：
-
-```bash
-python3 -m src.cli.analyze_tomorrow --provider auto --date 2026-06-09 --format json
-python3 -m src.cli.analyze_tomorrow --provider mock --date 2026-06-09 --format json
-python3 -m src.cli.analyze_tomorrow --provider sporttery --date 2026-06-09 --format json
-```
-
-## Phase 1 MVP
-
-Phase 1 includes:
-
-- provider abstraction with a built-in mock provider
-- implied probability and no-vig probability
-- placeholder ensemble probability model
-- EV and edge calculation
-- single / `2串1` / `3串1` candidate generation
-- CLI output
-- CSV/XLSX export
-- tests
-
-## Structure
-
-```text
-football-jc-analysis/
-  README.md
-  AGENTS.md
-  pyproject.toml
-  .env.example
-  docs/
-  src/
-  tests/
-```
-
-## Run
-
-From `/Users/shark-li/Documents/足球⚽️/football-jc-analysis`:
-
-```bash
-python3 -m src.cli.analyze_tomorrow
-python3 -m src.cli.analyze_tomorrow --date 2026-06-09
-python3 -m src.cli.analyze_tomorrow --format json
-python3 -m src.cli.analyze_tomorrow --export xlsx
-python3 -m src.cli.analyze_tomorrow --provider auto
-python3 -m src.cli.analyze_tomorrow --provider mock
-python3 -m src.cli.analyze_tomorrow --provider sporttery
-```
 
 ## Development
 
@@ -113,16 +93,9 @@ The tool must never output:
 
 ## Known limitations
 
-- project is local-only and not attached to Git/GitHub
+- baseline model only
+- fixture historical data is not production data
 - `sporttery` live API may fail depending on network/API availability
-- model remains a conservative placeholder
-- Poisson / Elo are not implemented in this phase
-- REST API is not implemented in this phase
-
-## Optional local preview
-
-A local preview server already exists, but it is not the focus of Phase 2-A:
-
-```bash
-python3 -m src.api.app
-```
+- no REST API yet
+- project is local-only and not attached to Git/GitHub
+- no GitHub remote attached

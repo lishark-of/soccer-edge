@@ -28,6 +28,9 @@ class DailyAnalysisReport:
     excluded_matches: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     disclaimers: list[str] = field(default_factory=list)
+    model_version: str = "phase2b_market_poisson_elo_v0"
+    model_components_available: list[str] = field(default_factory=lambda: ["market"])
+    historical_data_status: str = "unavailable"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,4 +42,7 @@ class DailyAnalysisReport:
             "excluded_matches": list(self.excluded_matches),
             "warnings": list(self.warnings),
             "disclaimers": list(self.disclaimers),
+            "model_version": self.model_version,
+            "model_components_available": list(self.model_components_available),
+            "historical_data_status": self.historical_data_status,
         }

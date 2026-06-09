@@ -3,6 +3,8 @@ from src.backtesting.backtest_engine import (
     features_use_only_past_matches,
     rolling_feature_shift,
 )
+from src.backtesting.historical_loader import HistoricalMatch
+from src.probability.elo_model import build_elo_ratings
 
 
 def test_features_use_only_past_matches():
@@ -32,3 +34,15 @@ def test_train_test_split_chronological():
 
     assert [item["date"] for item in split.train] == ["2026-06-01", "2026-06-02"]
     assert [item["date"] for item in split.test] == ["2026-06-03", "2026-06-04"]
+
+
+def test_no_future_leakage_in_elo_build():
+    matches = [
+        HistoricalMatch("2026-06-01", "Mock", "Alpha", "Beta", 1, 0, "H"),
+        HistoricalMatch("2026-06-12", "Mock", "Alpha", "Beta", 9, 0, "H"),
+    ]
+
+    ratings = build_elo_ratings(matches, before_date="2026-06-09")
+
+    assert ratings["Alpha"] > 1500.0
+    assert ratings["Alpha"] < 1520.0

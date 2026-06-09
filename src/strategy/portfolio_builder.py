@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from itertools import combinations
 
+from src.backtesting.historical_loader import HistoricalMatch
 from src.domain.analysis_result import DailyAnalysisReport, MatchAnalysis
 from src.domain.match import Match
 from src.domain.odds import MatchOdds, OddsHistory, MarketOdds
 from src.domain.parlay import ParlayCandidate
+from src.modeling.team_strength import build_team_strengths
+from src.probability.elo_model import build_elo_ratings
 from src.providers.base import BaseProvider
 from src.probability.ensemble import build_model_probabilities
 from src.probability.implied_probability import calculate_implied_probabilities
@@ -25,15 +28,40 @@ DISCLAIMERS = [
 ]
 
 
-def build_daily_analysis(provider: BaseProvider, target_date: str) -> DailyAnalysisReport:
+HISTORICAL_FIXTURE_WARNING = "historical fixture used; not suitable for production inference"
+MODEL_VERSION = "phase2b_market_poisson_elo_v0"
+
+
+def build_daily_analysis(
+    provider: BaseProvider,
+    target_date: str,
+    *,
+    historical_matches: list[HistoricalMatch] | None = None,
+    historical_data_status: str = "unavailable",
+    historical_warnings: list[str] | None = None,
+) -> DailyAnalysisReport:
     matches = provider.get_matches(target_date)
+    component_list = ["market", "poisson", "elo"] if historical_data_status in {"fixture", "loaded"} and historical_matches else ["market"]
     report = DailyAnalysisReport(
         date=target_date,
         matches_analyzed=len(matches),
         disclaimers=list(DISCLAIMERS),
+        model_version=MODEL_VERSION,
+        model_components_available=component_list,
+        historical_data_status=historical_data_status,
     )
-    parlay_pool: list[MatchAnalysis] = []
+    if historical_data_status == "fixture":
+        report.warnings.append(HISTORICAL_FIXTURE_WARNING)
+    if historical_warnings:
+        report.warnings.extend(historical_warnings)
 
+    team_strengths = None
+    elo_ratings = None
+    if historical_matches and historical_data_status in {"fixture", "loaded"}:
+        team_strengths = build_team_strengths(historical_matches, before_date=target_date)
+        elo_ratings = build_elo_ratings(historical_matches, before_date=target_date)
+
+    parlay_pool: list[MatchAnalysis] = []
     for match in matches:
         try:
             odds = provider.get_match_odds(match.match_id)
@@ -64,7 +92,13 @@ def build_daily_analysis(provider: BaseProvider, target_date: str) -> DailyAnaly
             history = provider.get_odds_history(match.match_id)
         except Exception:
             history = OddsHistory(match_id=match.match_id, history={})
-        match_analyses = _analyze_match(match, filtered_odds, history)
+        match_analyses = _analyze_match(
+            match,
+            filtered_odds,
+            history,
+            team_strengths=team_strengths,
+            elo_ratings=elo_ratings,
+        )
         positive = [item for item in match_analyses if item.selection.ev > 0]
         if positive:
             best = max(positive, key=lambda item: (item.selection.ev, item.selection.edge))
@@ -94,12 +128,26 @@ def build_daily_analysis(provider: BaseProvider, target_date: str) -> DailyAnaly
     return report
 
 
-def _analyze_match(match: Match, odds: MatchOdds, history: OddsHistory) -> list[MatchAnalysis]:
+def _analyze_match(
+    match: Match,
+    odds: MatchOdds,
+    history: OddsHistory,
+    *,
+    team_strengths: dict | None,
+    elo_ratings: dict[str, float] | None,
+) -> list[MatchAnalysis]:
     analyses: list[MatchAnalysis] = []
     for market_key, market in odds.markets.items():
         implied = calculate_implied_probabilities(market.outcomes)
         fair = remove_vig(implied)
-        model, confidence, model_reasons = build_model_probabilities(match, market, fair, history)
+        model, confidence, model_reasons, model_components = build_model_probabilities(
+            match,
+            market,
+            fair,
+            history,
+            team_strengths=team_strengths,
+            elo_ratings=elo_ratings,
+        )
         reference_odds = min(value for value in market.outcomes.values() if isinstance(value, (int, float)))
         risk_score, risk_level, risk_reasons = score_selection_risk(match, reference_odds, confidence, history)
         analyses.extend(
@@ -114,6 +162,7 @@ def _analyze_match(match: Match, odds: MatchOdds, history: OddsHistory) -> list[
                 risk_score=risk_score,
                 risk_reasons=risk_reasons,
                 model_reasons=model_reasons,
+                model_components=model_components,
             )
         )
     return analyses
