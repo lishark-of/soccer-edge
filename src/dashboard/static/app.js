@@ -9,6 +9,7 @@ const state = {
   qaView: null,
   matchesView: null,
   onboardingView: null,
+  operationView: null,
   llmStatus: null,
   observationList: [],
 };
@@ -234,6 +235,40 @@ function renderBacktest(view) {
   ]);
 }
 
+function renderOperation(view) {
+  state.operationView = view;
+  document.querySelector("#operationCards").innerHTML = C.cards(view.summary_cards || []);
+  document.querySelector("#operationEquityTable").innerHTML = C.table(view.equity_curve || [], [
+    { key: "date", label: "日期" },
+    { key: "bankroll", label: "纸面本金" },
+    { key: "daily_profit", label: "当日盈亏" },
+    { key: "observations", label: "观察项数" },
+  ]);
+  document.querySelector("#operationComboTable").innerHTML = C.table(view.combo_summary || [], [
+    { key: "type", label: "类型" },
+    { key: "count", label: "观察数" },
+    { key: "settled", label: "已结算" },
+    { key: "hits", label: "命中" },
+    { key: "hit_rate", label: "命中率" },
+    { key: "paper_staked", label: "纸面投入" },
+    { key: "profit", label: "盈亏" },
+    { key: "roi", label: "ROI" },
+  ]);
+  document.querySelector("#operationWalkLog").innerHTML = C.table(view.walk_log_table || [], [
+    { key: "date", label: "日期" },
+    { key: "type", label: "类型" },
+    { key: "match", label: "比赛 / 组合" },
+    { key: "direction", label: "方向" },
+    { key: "paper_stake", label: "纸面金额" },
+    { key: "odds", label: "赔率" },
+    { key: "hit", label: "模拟结算" },
+    { key: "profit", label: "盈亏" },
+    { key: "bankroll_after", label: "结算后本金" },
+  ]);
+  const issues = (view.diagnostics || []).map((item) => `问题：${item.title}；影响：${item.detail}；建议调整：${item.suggestion}`);
+  document.querySelector("#operationDiagnostics").innerHTML = C.list(issues.length ? issues : ["当前未发现严重问题，但仍需更多真实历史数据验证。"]);
+}
+
 function renderImport(view) {
   state.importView = view;
   document.querySelector("#importCards").innerHTML = C.cards(view.summary_cards || []);
@@ -328,6 +363,12 @@ async function runBacktest() {
   switchView("backtest");
 }
 
+async function runOperation() {
+  const payload = await request("/api/view/operation", { historical_data: value("#operationData"), initial_bankroll: value("#initialBankroll") }, "运行模拟走盘");
+  if (payload.ok) renderOperation(payload.data);
+  switchView("operation");
+}
+
 async function previewImport() {
   const payload = await request("/api/view/import/preview", { input: value("#importInput"), adapter: value("#adapter"), mapping: value("#mappingPath") }, "预检字段");
   if (payload.ok) renderImport(payload.data);
@@ -376,6 +417,7 @@ document.querySelector("#matchesBtn").addEventListener("click", loadMatches);
 document.querySelector("#sportteryStatusBtn").addEventListener("click", loadSportteryStatus);
 document.querySelector("#analyzeBtn").addEventListener("click", runAnalysis);
 document.querySelector("#backtestBtn").addEventListener("click", runBacktest);
+document.querySelector("#operationBtn").addEventListener("click", runOperation);
 document.querySelector("#importBtn").addEventListener("click", previewImport);
 document.querySelector("#calibrationBtn").addEventListener("click", validateCalibration);
 document.querySelector("#qaBtn").addEventListener("click", runQa);
@@ -387,6 +429,9 @@ document.querySelector("#overviewMatchesBtn").addEventListener("click", loadMatc
 document.querySelector("#overviewSignalsBtn").addEventListener("click", runAnalysis);
 document.querySelector("#overviewBacktestBtn").addEventListener("click", runBacktest);
 document.querySelector("#matchesToSignalsBtn").addEventListener("click", runAnalysis);
+document.querySelector("#operationDetailBtn").addEventListener("click", () => switchView("operation"));
+document.querySelector("#operationDiagBtn").addEventListener("click", () => switchView("operation"));
+document.querySelector("#operationRawBtn").addEventListener("click", () => switchView("raw"));
 document.querySelector("#providerWarningBtn").addEventListener("click", () => renderWarnings(state.matchesView?.warnings || []));
 
 renderGlossary();

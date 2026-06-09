@@ -56,6 +56,12 @@
         <label>历史数据路径
           <input id="historicalData" value="data/fixtures/historical_matches_backtest_sample.csv">
         </label>
+        <label>模拟走盘数据路径
+          <input id="operationData" value="data/fixtures/operation_walkforward_sample.csv">
+        </label>
+        <label>初始模拟本金
+          <input id="initialBankroll" value="10000">
+        </label>
         <label>导入 CSV 路径
           <input id="importInput" value="data/fixtures/user_onboarding_sample.csv">
         </label>
@@ -86,6 +92,7 @@
           <button id="sportteryStatusBtn">刷新数据源状态</button>
           <button id="analyzeBtn">运行概率分析</button>
           <button id="backtestBtn">运行概率回测</button>
+          <button id="operationBtn">运行模拟走盘</button>
           <button id="importBtn">预检字段</button>
           <button id="calibrationBtn">验证校准文件</button>
           <button id="qaBtn">查看 QA 状态</button>
@@ -100,6 +107,7 @@
           <button class="tab" data-view="signals">候选信号</button>
           <button class="tab" data-view="parlay">组合风险</button>
           <button class="tab" data-view="backtest">概率回测</button>
+          <button class="tab" data-view="operation">模拟走盘</button>
           <button class="tab" data-view="import">数据导入</button>
           <button class="tab" data-view="calibration">校准状态</button>
           <button class="tab" data-view="qa">QA</button>
@@ -206,6 +214,31 @@
           <div id="calibrationTable"></div>
           <h3>模拟收益明细</h3>
           <div id="betsTable"></div>
+        </section>
+
+
+        <section id="view-operation" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Paper operation</p>
+            <h2>模拟走盘</h2>
+            <p>使用历史数据按时间顺序进行纸面复盘，从 10,000 元模拟本金开始，记录每日候选信号、组合观察、模拟结算和问题诊断。模拟走盘不代表未来表现。</p>
+          </div>
+          <div class="inlineActions">
+            <button id="operationDetailBtn" class="secondary">查看走盘明细</button>
+            <button id="operationDiagBtn" class="secondary">查看问题诊断</button>
+            <button id="operationRawBtn" class="ghost">查看原始 JSON</button>
+          </div>
+          <div class="metricPreview">运行后会展示：初始模拟本金、最终模拟本金、总盈亏、ROI、命中率、最大回撤。</div>
+          <div id="operationCards" class="contentBox"></div>
+          <h3>盈亏曲线</h3>
+          <div id="operationEquityTable"></div>
+          <h3>组合表现</h3>
+          <div id="operationComboTable"></div>
+          <h3>走盘明细</h3>
+          <div id="operationWalkLog"></div>
+          <h3>问题诊断</h3>
+          <div id="operationDiagnostics" class="noteBox"></div>
+          <p class="sectionHint">本页面只做纸面模拟和回测复盘，不处理真实资金，不提供任何自动化购彩能力。</p>
         </section>
 
         <section id="view-import" class="view pageLift">

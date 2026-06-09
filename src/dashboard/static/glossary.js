@@ -16,4 +16,6 @@ window.FootballGlossary = {
   deepseek: "DeepSeek：可选 LLM 解释层。只有本机环境变量显式启用且 API Key 存在时才会尝试调用。",
   sporttery: "Sporttery / 中国体育彩票竞彩足球：可尝试读取公开数据；失败时 auto 会回退到 mock 示例。",
   observationList: "观察清单：临时保存想继续研究的候选信号，不代表购买建议，不写文件。",
+  paperOperation: "模拟走盘：使用历史数据按时间顺序做纸面复盘，只更新模拟本金，不涉及真实资金。",
+  maxDrawdownOperation: "模拟最大回撤：纸面本金从历史高点到低点的最大跌幅，用于观察风险。",
 };

@@ -58,6 +58,36 @@ python3 -m src.cli.sample_workflow --format json
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
 
+
+## Phase 2-L: Simulated Operation Walk-Forward
+
+Status: implemented
+
+新增：
+- 10,000 RMB paper bankroll simulation
+- walk-forward simulated operation
+- daily observation selection
+- single / 2x1 / optional 3x1 combo tracking
+- simulated settlement
+- walk log
+- equity curve
+- final profit/loss
+- hit rate
+- combo performance
+- operation diagnostics
+- App 模拟走盘页面
+
+示例：
+
+```bash
+python3 -m src.cli.simulate_operation --historical-data data/fixtures/operation_walkforward_sample.csv --initial-bankroll 10000 --format json
+```
+
+说明：
+- 这是模拟走盘，不是真实投注；
+- 模拟盈利不代表未来表现；
+- 不提供投注、下单、支付、代购或自动化购彩能力。
+
 ## Phase 2-K: App Polish + Sporttery UX
 
 Status: implemented

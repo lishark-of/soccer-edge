@@ -18,6 +18,7 @@ from src.ingestion.field_report import build_field_recognition_report
 from src.ingestion.importer import import_historical_file
 from src.ingestion.repair_suggestions import build_repair_suggestions
 from src.release.metadata import build_release_metadata
+from src.paper_trading.walkforward import run_paper_operation_walkforward
 from src.version import get_build_info
 from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
@@ -25,6 +26,7 @@ from src.view_models.calibration_view import build_calibration_view
 from src.view_models.import_view import build_import_preview_view
 from src.view_models.matches_view import build_matches_view, build_sporttery_status_view
 from src.view_models.onboarding_view import build_onboarding_view
+from src.view_models.operation_view import build_operation_view
 from src.view_models.qa_view import build_qa_view
 
 
@@ -70,6 +72,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_matches",
                     "view_onboarding",
                     "view_sporttery_status",
+                    "operation_simulate",
+                    "view_operation",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -147,6 +151,13 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         payload = build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto"))
         view = build_sporttery_status_view(payload)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/operation/simulate":
+        report = _run_operation_from_query(query)
+        return success_response(report, report.get("warnings", []))
+    if path == "/api/view/operation":
+        report = _run_operation_from_query(query)
+        view = build_operation_view(report)
+        return success_response(view, view.get("warnings", []))
     if path == "/api/view/analyze":
         _reject_write_params(query, {"export", "report_md", "report-md"})
         payload = build_analysis_payload(
@@ -186,6 +197,26 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         return success_response(view, view.get("warnings", []))
     raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
 
+
+
+def _run_operation_from_query(query: dict[str, str]) -> dict:
+    historical_data = _required(query, "historical_data")
+    matches, warnings = load_historical_matches_with_warnings(historical_data)
+    if not matches:
+        raise ApiError("validation_error", "未能读取可用历史比赛。请检查 CSV 路径、字段和比分信息。")
+    report = run_paper_operation_walkforward(
+        matches,
+        initial_bankroll=_float_param(query, "initial_bankroll", 10000.0),
+        start_date=query.get("start_date"),
+        end_date=query.get("end_date"),
+        strategy_config={
+            "max_single_per_day": _int_param(query, "max_single_per_day", 2),
+            "max_parlay_2x1_per_day": _int_param(query, "max_parlay_2x1_per_day", 1),
+            "max_parlay_3x1_per_day": 1 if _truthy(query.get("enable_3x1")) else 0,
+        },
+    )
+    report["warnings"] = list(dict.fromkeys(list(warnings or []) + list(report.get("warnings", []) or [])))
+    return report
 
 def _run_backtest_from_query(query: dict[str, str]) -> dict:
     historical_data = _required(query, "historical_data")
