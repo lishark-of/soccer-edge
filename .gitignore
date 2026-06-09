@@ -17,6 +17,7 @@ env/
 # Local env
 .env
 .env.local
+*.env
 
 # Output / generated files
 output/

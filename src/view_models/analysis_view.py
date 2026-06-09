@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from src.explain.deepseek_explainer import explain_with_optional_deepseek
 from src.explain.local_explainer import explain_candidate, explain_model_components, explain_risk_level
 from src.explain.safety import DISCLAIMER_TEXT
 
 
-def build_analysis_view(analysis: dict) -> dict:
+def build_analysis_view(analysis: dict, explain_mode: str = "local") -> dict:
     singles = list(analysis.get("single_candidates", []) or [])
     parlay_2 = list(analysis.get("parlay_2x1_candidates", []) or [])
     parlay_3 = list(analysis.get("parlay_3x1_candidates", []) or [])
-    warnings = _warnings(analysis)
+    single_rows = [_selection_row(item, explain_mode) for item in singles]
+    warnings = list(dict.fromkeys(_warnings(analysis) + _explanation_warnings(single_rows)))
     return {
         "title": "指定日期概率分析",
         "summary_cards": [
@@ -20,10 +22,12 @@ def build_analysis_view(analysis: dict) -> dict:
             {"label": "校准状态", "value": analysis.get("calibration_status", "not_provided"), "help": "校准 artifact 只是诊断辅助，不保证未来表现。"},
         ],
         "candidate_tables": {
-            "single": [_selection_row(item) for item in singles],
+            "single": single_rows,
             "parlay_2x1": [_parlay_row(item) for item in parlay_2],
             "parlay_3x1": [_parlay_row(item) for item in parlay_3],
         },
+        "explanation_mode": explain_mode,
+        "explanation_status": _explanation_status(single_rows, explain_mode),
         "component_notes": _component_notes(singles),
         "risk_notes": [
             "单场概率只是模型对不确定事件的量化，不代表结果确定。",
@@ -35,8 +39,9 @@ def build_analysis_view(analysis: dict) -> dict:
     }
 
 
-def _selection_row(item: dict) -> dict:
-    row = {
+def _selection_row(item: dict, explain_mode: str) -> dict:
+    explanation = _explanation(item, explain_mode)
+    return {
         "match": _match_label(item),
         "league": item.get("league", ""),
         "play_type": item.get("play_type", ""),
@@ -48,10 +53,12 @@ def _selection_row(item: dict) -> dict:
         "ev": _signed_pct(item.get("ev")),
         "risk_level": item.get("risk_level", "unknown"),
         "risk_label": _risk_label(item.get("risk_level")),
-        "explanation": explain_candidate(item),
+        "explanation": explanation.get("text", ""),
+        "explanation_provider": explanation.get("provider", "local"),
+        "explanation_status": explanation.get("status", "loaded"),
+        "explanation_warnings": list(explanation.get("warnings", []) or []),
         "model_components": item.get("model_components", {}),
     }
-    return row
 
 
 def _parlay_row(item: dict) -> dict:
@@ -77,6 +84,31 @@ def _component_notes(singles: list[dict]) -> list[str]:
         if notes:
             return notes
     return ["当前候选较少，暂无可展开的模型组件说明。"]
+
+
+def _explanation(item: dict, explain_mode: str) -> dict:
+    mode = explain_mode if explain_mode in {"local", "deepseek", "auto"} else "local"
+    if mode == "local":
+        return {"provider": "local", "status": "loaded", "text": explain_candidate(item), "warnings": []}
+    return explain_with_optional_deepseek("candidate", item, {"provider": mode, "language": "zh-CN", "audience": "general"})
+
+
+def _explanation_warnings(rows: list[dict]) -> list[str]:
+    warnings: list[str] = []
+    for row in rows:
+        warnings.extend(row.get("explanation_warnings", []) or [])
+    return warnings
+
+
+def _explanation_status(rows: list[dict], explain_mode: str) -> dict:
+    if not rows:
+        return {"requested": explain_mode, "provider": "local", "status": "no_candidates"}
+    first = rows[0]
+    return {
+        "requested": explain_mode,
+        "provider": first.get("explanation_provider", "local"),
+        "status": first.get("explanation_status", "loaded"),
+    }
 
 
 def _match_label(item: dict) -> str:

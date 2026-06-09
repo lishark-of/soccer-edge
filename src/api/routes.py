@@ -10,6 +10,8 @@ from src.backtesting.report import build_backtest_report
 from src.backtesting.schema import validate_historical_dataset
 from src.calibration.persistence import load_calibration_artifact
 from src.calibration.store import validate_calibration_artifact
+from src.explain.deepseek_config import llm_status_payload
+from src.explain.deepseek_explainer import explain_with_optional_deepseek
 from src.exports.report_exporter import summarize_report
 from src.ingestion.importer import import_historical_file
 from src.view_models.analysis_view import build_analysis_view
@@ -50,11 +52,31 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_import_preview",
                     "view_calibration_validate",
                     "view_qa",
+                    "llm_status",
+                    "explain_candidate",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "disclaimer": "For research and entertainment reference only. No betting, payment, or order placement.",
             }
         )
+    if path == "/api/llm/status":
+        return success_response(llm_status_payload())
+    if path == "/api/explain/candidate":
+        mode = query.get("provider", "local")
+        sample = {
+            "home_team": query.get("home_team", "Alpha FC"),
+            "away_team": query.get("away_team", "Beta United"),
+            "play_type": query.get("play_type", "had"),
+            "outcome_label": query.get("outcome_label", "主胜"),
+            "odds": _float_param(query, "odds", 2.1),
+            "fair_prob": _float_param(query, "fair_prob", 0.45),
+            "model_prob": _float_param(query, "model_prob", 0.52),
+            "edge": _float_param(query, "edge", 0.07),
+            "ev": _float_param(query, "ev", 0.092),
+            "risk_level": query.get("risk_level", "medium"),
+        }
+        result = explain_with_optional_deepseek("candidate", sample, {"provider": mode, "language": "zh-CN"})
+        return success_response(result, result.get("warnings", []))
     if path == "/api/matches":
         return success_response(build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto")))
     if path == "/api/analyze":
@@ -99,7 +121,7 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             use_fixture_historical=_truthy(query.get("no_historical_fixture")) is False,
             calibration_artifact_path=query.get("calibration_artifact"),
         )
-        view = build_analysis_view(payload)
+        view = build_analysis_view(payload, explain_mode=query.get("explain", "local"))
         return success_response(view, view.get("warnings", []))
     if path == "/api/view/backtest":
         _reject_write_params(query, {"export", "save_calibration", "save-calibration", "report_md", "report-md"})

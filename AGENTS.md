@@ -32,6 +32,10 @@ It must not implement wagering, payment, order placement, account management, or
 - Do not add betting, payment, order placement, or proxy purchase UI controls.
 - Dashboard must not include betting, payment, order placement, proxy purchase, martingale, or chase controls.
 - LLM/DeepSeek integration must be disabled by default and must not make external calls without explicit user authorization.
+- LLM/DeepSeek integration must be disabled by default.
+- No external LLM calls may occur during tests or validation unless explicitly authorized.
+- API keys must never be committed, logged, displayed, or written to reports/artifacts.
+- LLM outputs must pass safety filtering and fallback to local explanations on violation.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.

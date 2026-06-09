@@ -15,7 +15,9 @@ from src.qa.checks import QaCheckResult, results_to_dicts, summarize_checks
 from src.qa.dashboard_sanity import check_dashboard_static_files
 from src.qa.disclaimers import scan_project_disclaimers
 from src.qa.git_hygiene import check_generated_paths_not_tracked, check_git_remote_absent, check_worktree_clean_or_expected
+from src.qa.llm_sanity import check_deepseek_status_response, check_llm_disabled_by_default
 from src.qa.model_sanity import check_analysis_output, check_backtest_output
+from src.qa.network_safety import check_no_default_external_calls
 from src.qa.rehearsal import run_end_to_end_rehearsal
 from src.qa.report_sanity import check_report_structure
 
@@ -39,6 +41,11 @@ def run_qa(project_root: str, rehearsal: bool = False, strict: bool = False) -> 
     checks.extend(scan_project_disclaimers([str(root / "README.md"), str(root / "docs/qa_guide.md"), str(root / "docs/real_data_rehearsal_guide.md")]))
     checks.extend(check_api_envelope(dispatch_route("/api/health", {}), "health"))
     checks.extend(check_api_envelope(dispatch_route("/api/info", {}), "info"))
+    llm_status = dispatch_route("/api/llm/status", {})
+    checks.extend(check_api_envelope(llm_status, "llm_status"))
+    checks.extend(check_deepseek_status_response(llm_status.get("data", {})))
+    checks.extend(check_llm_disabled_by_default())
+    checks.extend(check_no_default_external_calls())
     try:
         dispatch_route("/api/analyze", {"export": "xlsx"})
     except ApiError as exc:

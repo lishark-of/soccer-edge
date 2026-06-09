@@ -57,8 +57,16 @@
             <option value="football_data">football_data</option>
           </select>
         </label>
+        <label>解释模式
+          <select id="explainMode">
+            <option value="local">本地解释（默认）</option>
+            <option value="deepseek">DeepSeek 增强解释（可选）</option>
+            <option value="auto">自动回退</option>
+          </select>
+        </label>
         <div class="actions">
           <button id="healthBtn">检查状态</button>
+          <button id="llmStatusBtn">检查解释模式</button>
           <button id="analyzeBtn">运行分析</button>
           <button id="backtestBtn">运行回测</button>
           <button id="importBtn">预检导入</button>
@@ -99,6 +107,9 @@
             <article><h3>风险边界</h3><p>所有结果都是研究观察项。单场有随机性，组合会叠加不确定性，回测也不能代表未来表现。</p></article>
             <article><h3>解释层</h3><p>当前使用本地 deterministic explainer。LLM/DeepSeek 占位默认关闭，不会发起外部请求。</p></article>
           </div>
+          <h3>DeepSeek 可选解释状态</h3>
+          <div id="llmStatusCards" class="contentBox"></div>
+          <p class="sectionHint">DeepSeek 只用于自然语言解释，不参与概率计算、EV、候选筛选或回测指标。默认关闭；如不可用会回退到本地解释。</p>
         </section>
 
         <section id="view-analysis" class="view">

@@ -4,6 +4,47 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-H: Optional DeepSeek Explainer
+
+Status: implemented
+
+新增：
+- DeepSeek config loader
+- DeepSeek client with injectable transport
+- prompt builder
+- safety filter
+- optional DeepSeek explainer
+- fallback to local explainer
+- `/api/llm/status` endpoint
+- dashboard DeepSeek status panel
+- LLM safety QA
+
+默认行为：
+- DeepSeek 默认关闭；
+- 默认不发外部请求；
+- 不需要 API Key 也能完整使用本地 App；
+- DeepSeek 只用于自然语言解释；
+- DeepSeek 不参与概率计算、候选筛选、EV、回测指标；
+- DeepSeek 不保证结果。
+
+启用方式：
+
+```bash
+export FOOTBALL_JC_LLM_ENABLED=true
+export FOOTBALL_JC_LLM_PROVIDER=deepseek
+export DEEPSEEK_API_KEY=<your-api-key>
+export DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+然后启动本地 API / Dashboard。
+
+安全说明：
+- 不要把 API Key 写入 Git；
+- 不要把 API Key 写入报告；
+- 不要在浏览器中输入 API Key；
+- 任何 LLM 输出都会经过安全过滤；
+- 不安全输出会 fallback 到本地解释。
+
 ## Phase 2-G: User-Facing App + Probability Backtest UX
 
 Status: implemented

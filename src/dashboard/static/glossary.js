@@ -12,4 +12,6 @@ window.FootballGlossary = {
   logLoss: "Log Loss：对错误且过度自信的概率预测惩罚更重，越低越好。",
   drawdown: "最大回撤：回测资金曲线从高点到低点的最大跌幅，用于衡量风险。",
   calibration: "校准：比较预测概率与实际发生频率是否匹配，只是诊断，不保证未来表现。",
+  explanationMode: "解释模式：本地解释默认启用；DeepSeek 仅作为可选自然语言增强，默认关闭且不参与概率计算。",
+  deepseek: "DeepSeek：可选 LLM 解释层。只有本机环境变量显式启用且 API Key 存在时才会尝试调用。",
 };

@@ -7,6 +7,7 @@ const state = {
   importView: null,
   calibrationView: null,
   qaView: null,
+  llmStatus: null,
 };
 
 const selectors = {
@@ -81,12 +82,24 @@ function renderOverview(healthPayload = null) {
     { label: "QA", value: state.qaView ? "已运行" : "待运行", help: "质量检查不代表预测准确。" },
   ];
   document.querySelector("#overviewCards").innerHTML = C.cards(cards);
+  renderLlmStatus(state.llmStatus);
 }
 
 function renderAnalysis(view) {
   state.analysisView = view;
   document.querySelector("#analysisCards").innerHTML = C.cards(view.summary_cards || []);
   document.querySelector("#componentNotes").innerHTML = C.list(view.component_notes || []);
+  if (view.explanation_status) {
+    state.llmStatus = {
+      provider: view.explanation_status.provider || "local",
+      enabled: view.explanation_status.provider === "deepseek",
+      status: view.explanation_status.status || "loaded",
+      model: "see API status",
+      api_key_present: false,
+      external_calls_default: false,
+    };
+    renderLlmStatus(state.llmStatus);
+  }
   const singleColumns = [
     { key: "match", label: "比赛" },
     { key: "play_type", label: "玩法" },
@@ -113,6 +126,20 @@ function renderAnalysis(view) {
   document.querySelector("#parlay2Table").innerHTML = C.table(view.candidate_tables?.parlay_2x1 || [], parlayColumns);
   document.querySelector("#parlay3Table").innerHTML = C.table(view.candidate_tables?.parlay_3x1 || [], parlayColumns);
   document.querySelector("#riskNotes").innerHTML = C.list(view.risk_notes || []);
+}
+
+function renderLlmStatus(status) {
+  const target = document.querySelector("#llmStatusCards");
+  if (!target) return;
+  const data = status || { provider: "deepseek", enabled: false, api_key_present: false, model: "deepseek-v4-flash", status: "disabled", external_calls_default: false };
+  target.innerHTML = C.cards([
+    { label: "解释 provider", value: data.provider || "deepseek", help: "DeepSeek 仅作为可选解释层。"},
+    { label: "enabled", value: String(Boolean(data.enabled)), help: "默认 false；未启用时不发外部请求。"},
+    { label: "API key present", value: String(Boolean(data.api_key_present)), help: "只显示布尔值，不暴露 key。"},
+    { label: "model", value: data.model || "deepseek-v4-flash", help: "默认使用非废弃模型。"},
+    { label: "status", value: data.status || "disabled", help: "disabled / missing_api_key / ready / fallback_local。"},
+    { label: "默认外部调用", value: String(Boolean(data.external_calls_default)), help: "验证流程中必须为 false。"},
+  ]);
 }
 
 function renderBacktest(view) {
@@ -179,9 +206,18 @@ async function checkHealth() {
 }
 
 async function runAnalysis() {
-  const payload = await request("/api/view/analyze", { provider: value("#provider"), date: value("#date") }, "运行分析");
+  const payload = await request("/api/view/analyze", { provider: value("#provider"), date: value("#date"), explain: value("#explainMode") }, "运行分析");
   if (payload.ok) renderAnalysis(payload.data);
   switchView("analysis");
+}
+
+async function checkLlmStatus() {
+  const payload = await request("/api/llm/status", {}, "检查解释模式");
+  if (payload.ok) {
+    state.llmStatus = payload.data;
+    renderLlmStatus(payload.data);
+  }
+  switchView("overview");
 }
 
 async function runBacktest() {
@@ -217,6 +253,7 @@ function clearOutput() {
 
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
 document.querySelector("#healthBtn").addEventListener("click", checkHealth);
+document.querySelector("#llmStatusBtn").addEventListener("click", checkLlmStatus);
 document.querySelector("#analyzeBtn").addEventListener("click", runAnalysis);
 document.querySelector("#backtestBtn").addEventListener("click", runBacktest);
 document.querySelector("#importBtn").addEventListener("click", previewImport);
@@ -227,3 +264,4 @@ document.querySelector("#clearBtn").addEventListener("click", clearOutput);
 renderGlossary();
 renderOverview();
 checkHealth();
+checkLlmStatus();
