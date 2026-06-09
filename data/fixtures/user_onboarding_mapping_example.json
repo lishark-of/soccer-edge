@@ -1,0 +1,10 @@
+{
+  "date": "比赛日期",
+  "league": "赛事",
+  "home_team": "主队",
+  "away_team": "客队",
+  "score": "比分",
+  "odds_home": "胜赔",
+  "odds_draw": "平赔",
+  "odds_away": "负赔"
+}

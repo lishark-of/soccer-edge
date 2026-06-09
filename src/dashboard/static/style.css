@@ -69,6 +69,7 @@ h1 {
 .statusPanel,
 .metricCard,
 .quickStartPanel,
+.onboardingSteps article,
 .guideGrid article {
   border: 1px solid var(--line);
   background: rgba(255, 253, 246, 0.92);
@@ -199,6 +200,29 @@ h3 { margin: 18px 0 10px; }
 .quickStartPanel p { color: var(--muted); }
 .quickActions { display: grid; gap: 8px; }
 
+.onboardingSteps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.onboardingSteps article {
+  padding: 14px;
+  border-left: 4px solid var(--green);
+}
+
+.onboardingSteps strong,
+.onboardingSteps span {
+  display: block;
+}
+
+.onboardingSteps span {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .cardGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -252,6 +276,7 @@ pre {
   .workspace,
   .cardGrid,
   .guideGrid,
+  .onboardingSteps,
   .quickStartPanel { grid-template-columns: 1fr; }
   .sidebar { position: static; }
 }

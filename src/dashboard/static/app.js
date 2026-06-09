@@ -175,6 +175,20 @@ function renderBacktest(view) {
 function renderImport(view) {
   state.importView = view;
   document.querySelector("#importCards").innerHTML = C.cards(view.summary_cards || []);
+  const fieldReport = view.field_report || {};
+  document.querySelector("#fieldReportTable").innerHTML = C.table(fieldReport.recognized_fields || [], [
+    { key: "canonical", label: "系统字段" },
+    { key: "label_zh", label: "中文含义" },
+    { key: "source", label: "CSV 列名" },
+    { key: "status", label: "状态" },
+  ]);
+  document.querySelector("#repairSuggestionTable").innerHTML = C.table(view.repair_suggestions || [], [
+    { key: "severity", label: "级别" },
+    { key: "field", label: "字段" },
+    { key: "message_zh", label: "问题" },
+    { key: "suggestion_zh", label: "怎么修" },
+    { key: "mapping_example", label: "mapping 示例" },
+  ]);
   document.querySelector("#importQuality").innerHTML = `<h3>质量报告</h3><pre>${C.escapeHtml(JSON.stringify(view.quality || {}, null, 2))}</pre>`;
 }
 
@@ -265,6 +279,7 @@ document.querySelector("#calibrationBtn").addEventListener("click", validateCali
 document.querySelector("#qaBtn").addEventListener("click", runQa);
 document.querySelector("#clearBtn").addEventListener("click", clearOutput);
 document.querySelector("#quickAnalyzeBtn").addEventListener("click", runAnalysis);
+document.querySelector("#quickImportBtn").addEventListener("click", previewImport);
 document.querySelector("#quickBacktestBtn").addEventListener("click", runBacktest);
 document.querySelector("#quickQaBtn").addEventListener("click", runQa);
 

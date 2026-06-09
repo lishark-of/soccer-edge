@@ -57,6 +57,40 @@ python3 -m src.cli.sample_workflow --format json
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-J: User Dataset Onboarding + App Usability Hardening
+
+Status: implemented
+
+新增：
+- user CSV onboarding workflow
+- field recognition report
+- Chinese repair suggestions
+- user_data_workflow CLI
+- App homepage 6-step guide
+- App import field report view
+- App probability backtest view
+- App candidate signal and risk explanation view
+- Chinese user-facing errors
+- final local App display handoff
+
+一键用户数据流程：
+
+```bash
+python3 -m src.cli.user_data_workflow --input data/fixtures/user_onboarding_sample.csv --mapping data/fixtures/user_onboarding_mapping_example.json --format json
+```
+
+启动 App：
+
+```bash
+python3 -m src.cli.launch_app
+```
+
+打开：
+
+```text
+http://127.0.0.1:8766
+```
+
 ## Phase 2-I: Release Packaging + Onboarding
 
 Status: implemented

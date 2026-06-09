@@ -10,10 +10,13 @@ from src.backtesting.report import build_backtest_report
 from src.backtesting.schema import validate_historical_dataset
 from src.calibration.persistence import load_calibration_artifact
 from src.calibration.store import validate_calibration_artifact
+from src.cli.user_data_workflow import preview_user_data_workflow
 from src.explain.deepseek_config import llm_status_payload
 from src.explain.deepseek_explainer import explain_with_optional_deepseek
 from src.exports.report_exporter import summarize_report
+from src.ingestion.field_report import build_field_recognition_report
 from src.ingestion.importer import import_historical_file
+from src.ingestion.repair_suggestions import build_repair_suggestions
 from src.release.metadata import build_release_metadata
 from src.version import get_build_info
 from src.view_models.analysis_view import build_analysis_view
@@ -60,6 +63,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_qa",
                     "llm_status",
                     "explain_candidate",
+                    "user_workflow_preview",
+                    "view_user_workflow",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -109,7 +114,13 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             mapping_path=query.get("mapping"),
             dry_run=True,
         )
+        _attach_field_guidance(payload)
         return success_response(payload, payload.get("warnings", []))
+    if path == "/api/user-workflow/preview":
+        payload = preview_user_data_workflow(_required(query, "input"), mapping_path=query.get("mapping"))
+        return success_response(payload, payload.get("warnings", []))
+    if path == "/api/user-workflow/run":
+        ensure_read_only_operation("user-workflow/run", write_requested=True)
     if path == "/api/calibration/validate":
         return success_response(_validate_calibration_from_query(query))
     if path == "/api/report/summary":
@@ -143,8 +154,12 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             mapping_path=query.get("mapping"),
             dry_run=True,
         )
+        _attach_field_guidance(payload)
         view = build_import_preview_view(payload)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/view/user-workflow":
+        payload = preview_user_data_workflow(_required(query, "input"), mapping_path=query.get("mapping"))
+        return success_response(payload.get("user_view", {}), payload.get("warnings", []))
     if path == "/api/view/calibration/validate":
         view = build_calibration_view(_validate_calibration_from_query(query))
         return success_response(view, view.get("warnings", []))
@@ -189,6 +204,13 @@ def _validate_calibration_from_query(query: dict[str, str]) -> dict:
         return {"path": artifact_path, "valid": not issues, "issues": issues}
     except Exception as exc:
         return {"path": artifact_path, "valid": False, "issues": [str(exc)[:180]]}
+
+
+def _attach_field_guidance(payload: dict) -> None:
+    field_report = build_field_recognition_report(payload.get("preview", {}).get("columns", []), payload.get("mapping", {}))
+    payload["field_report"] = field_report
+    payload["repair_suggestions"] = build_repair_suggestions(field_report)
+    payload["warnings"] = list(dict.fromkeys(list(payload.get("warnings", []) or []) + list(field_report.get("warnings", []) or [])))
 
 
 def _required(query: dict[str, str], name: str) -> str:

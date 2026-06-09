@@ -17,6 +17,8 @@ def build_import_preview_view(import_result: dict) -> dict:
             {"label": "Dry-run", "value": str(import_result.get("dry_run", True)), "help": "预检模式不会写 normalized 文件。"},
         ],
         "quality": quality,
+        "field_report": import_result.get("field_report", {}) or {},
+        "repair_suggestions": import_result.get("repair_suggestions", []) or [],
         "manifest_summary": {
             "input_sha256": manifest.get("input_sha256"),
             "created_at": manifest.get("created_at"),

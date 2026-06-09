@@ -26,6 +26,7 @@ window.FootballComponents = (() => {
   function valueFor(row, key) {
     const value = key.split(".").reduce((acc, part) => (acc && acc[part] !== undefined ? acc[part] : ""), row);
     if (Array.isArray(value)) return value.map((item) => typeof item === "object" ? Object.values(item).filter(Boolean).join(" / ") : item).join("；");
+    if (value && typeof value === "object") return JSON.stringify(value);
     return value;
   }
 

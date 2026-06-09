@@ -39,6 +39,10 @@ It must not implement wagering, payment, order placement, account management, or
 - Release packaging must remain local-only and must not add a remote or push tags.
 - Onboarding docs must keep read-only and no-wagering safety boundaries visible.
 - Generated release rehearsal outputs under reports, artifacts, and data/normalized must not be committed.
+- User-facing workflows must provide Chinese, actionable errors instead of raw Python tracebacks.
+- Dashboard onboarding must guide users through mock analysis, CSV import, field report, backtest, calibration, and analysis.
+- API/dashboard remain read-only by default.
+- Full user data workflow that writes normalized/calibration/report files must be CLI-only unless explicitly authorized.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.
