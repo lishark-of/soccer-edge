@@ -4,6 +4,37 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-C: Backtesting + Calibration Diagnostics
+
+Status: implemented
+
+新增：
+- flexible historical ingestion
+- historical schema validation
+- single-match 1X2 backtest engine
+- value-bet baseline strategy
+- flat stake ROI / PnL / hit rate metrics
+- Brier score and log loss
+- max drawdown
+- calibration / reliability bins
+- backtest CLI
+- backtest CSV/XLSX export
+
+示例：
+
+```bash
+python3 -m src.cli.backtest --historical-data data/fixtures/historical_matches_backtest_sample.csv --format json
+python3 -m src.cli.backtest --historical-data data/fixtures/historical_matches_backtest_sample.csv --start-date 2026-05-15 --end-date 2026-06-09 --format json
+python3 -m src.cli.backtest --historical-data data/fixtures/historical_matches_backtest_sample.csv --export xlsx
+```
+
+限制：
+- backtest fixture 仅用于流程测试；
+- 回测结果不保证未来表现；
+- calibration 只是诊断，不保证未来表现；
+- 当前策略是 baseline；
+- 不提供自动投注、支付、下单或代购能力。
+
 ## Phase 2-B: Historical + Poisson/Elo Baseline
 
 Status: implemented

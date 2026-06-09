@@ -21,6 +21,8 @@ It must not implement wagering, payment, order placement, account management, or
 - Keep provider logic separate from probability/modeling logic.
 - Keep probability/modeling logic separate from presentation.
 - Historical features must use only data strictly before target match date.
+- Backtests must use chronological evaluation only.
+- Backtest results must be framed as diagnostics, not guarantees.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.
