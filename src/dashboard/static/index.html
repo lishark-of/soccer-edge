@@ -1,32 +1,36 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>football-jc-analysis Dashboard</title>
+  <title>竞彩足球概率分析台</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
+  <div class="appShell">
+    <header class="hero">
       <div>
         <p class="eyebrow">football-jc-analysis</p>
-        <h1>Local Analysis Console</h1>
+        <h1>竞彩足球概率分析台</h1>
+        <p class="subtitle">把赔率、模型概率、回测诊断和导入预检整理成普通使用者也能看懂的本地只读 App。</p>
       </div>
-      <span class="badge">Read-only local analysis mode</span>
+      <div class="modeCard">
+        <strong>Read-only local analysis mode</strong>
+        <span>默认连接 http://127.0.0.1:8765，本页面不写文件、不导出、不创建 artifact。</span>
+      </div>
     </header>
 
-    <section class="notice">
-      No betting, payment, order placement, or proxy purchase features are implemented.
-      Probability models and backtests do not guarantee outcomes.
+    <section class="safetyStrip" aria-label="安全声明">
+      <strong>非投注声明：</strong>
+      仅供数据研究与娱乐参考。 不提供投注、下单、支付、代购或任何自动化购彩能力。 概率模型不保证结果。 回测结果不保证未来表现。 串关会显著放大风险。
     </section>
 
-    <section class="layout">
-      <aside class="controls">
+    <main class="workspace">
+      <aside class="sidebar">
         <label>API Base
           <input id="apiBase" value="http://127.0.0.1:8765">
         </label>
-        <label>Date
+        <label>分析日期
           <input id="date" value="2026-06-09">
         </label>
         <label>Provider
@@ -36,42 +40,138 @@
             <option value="sporttery">sporttery</option>
           </select>
         </label>
-        <label>Historical Data
+        <label>历史数据路径
           <input id="historicalData" value="data/fixtures/historical_matches_backtest_sample.csv">
         </label>
-        <label>Import Input
+        <label>导入预检路径
           <input id="importInput" value="data/fixtures/import_sample_generic.csv">
         </label>
-        <label>Calibration Artifact
+        <label>校准 artifact 路径
           <input id="calibrationPath" value="artifacts/calibration/sample_calibration.json">
         </label>
-        <div class="buttonGrid">
-          <button id="healthBtn">Check Health</button>
-          <button id="analyzeBtn">Analyze</button>
-          <button id="backtestBtn">Run Backtest</button>
-          <button id="importBtn">Preview Import</button>
-          <button id="calibrationBtn">Validate Calibration</button>
-          <button id="clearBtn" class="secondary">Clear Output</button>
+        <label>Adapter
+          <select id="adapter">
+            <option value="auto">auto</option>
+            <option value="generic_csv">generic_csv</option>
+            <option value="sporttery_export">sporttery_export</option>
+            <option value="football_data">football_data</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button id="healthBtn">检查状态</button>
+          <button id="analyzeBtn">运行分析</button>
+          <button id="backtestBtn">运行回测</button>
+          <button id="importBtn">预检导入</button>
+          <button id="calibrationBtn">验证校准</button>
+          <button id="qaBtn">运行 QA</button>
+          <button id="clearBtn" class="ghost">清空输出</button>
         </div>
       </aside>
 
-      <section class="output">
-        <div class="summary" id="summary">
-          <div class="tile"><span>Status</span><strong id="statusText">Idle</strong></div>
-          <div class="tile"><span>Mode</span><strong>Read-only</strong></div>
-          <div class="tile"><span>Network</span><strong>Local API</strong></div>
-        </div>
-        <section class="warnings">
-          <h2>Warnings</h2>
-          <ul id="warningsList"><li>None</li></ul>
+      <section class="mainPanel">
+        <nav class="tabs" aria-label="页面导航">
+          <button class="tab isActive" data-view="overview">总览</button>
+          <button class="tab" data-view="analysis">指定日期分析</button>
+          <button class="tab" data-view="candidates">候选买点</button>
+          <button class="tab" data-view="parlay">组合风险</button>
+          <button class="tab" data-view="backtest">概率回测</button>
+          <button class="tab" data-view="import">数据导入预检</button>
+          <button class="tab" data-view="calibration">校准状态</button>
+          <button class="tab" data-view="qa">QA 健康检查</button>
+          <button class="tab" data-view="raw">原始 JSON</button>
+        </nav>
+
+        <section id="statusPanel" class="statusPanel">
+          <span id="statusText">Idle</span>
+          <span id="lastAction">等待操作</span>
         </section>
-        <section>
-          <h2>JSON Viewer</h2>
+
+        <section id="warningsPanel" class="warningPanel">
+          <h2>Warnings</h2>
+          <div id="warningsList">当前没有新的 warning。</div>
+        </section>
+
+        <section id="view-overview" class="view isVisible">
+          <h2>总览</h2>
+          <div id="overviewCards" class="contentBox"></div>
+          <div class="guideGrid">
+            <article><h3>如何使用</h3><p>先检查状态，再运行指定日期分析；如果要看历史诊断，运行概率回测；导入预检只读取本地文件并保持 dry-run。</p></article>
+            <article><h3>风险边界</h3><p>所有结果都是研究观察项。单场有随机性，组合会叠加不确定性，回测也不能代表未来表现。</p></article>
+            <article><h3>解释层</h3><p>当前使用本地 deterministic explainer。LLM/DeepSeek 占位默认关闭，不会发起外部请求。</p></article>
+          </div>
+        </section>
+
+        <section id="view-analysis" class="view">
+          <h2>指定日期分析</h2>
+          <div id="analysisCards" class="contentBox"></div>
+          <h3>模型组件说明</h3>
+          <div id="componentNotes"></div>
+        </section>
+
+        <section id="view-candidates" class="view">
+          <h2>候选买点</h2>
+          <p class="sectionHint">这里显示的是模型信号和市场分歧，不是确定性操作建议。</p>
+          <div id="singleTable"></div>
+        </section>
+
+        <section id="view-parlay" class="view">
+          <h2>组合风险</h2>
+          <p class="sectionHint">组合会把多个不确定事件相乘，命中概率和波动都需要单独观察。</p>
+          <h3>2串1组合</h3>
+          <div id="parlay2Table"></div>
+          <h3>3串1组合</h3>
+          <div id="parlay3Table"></div>
+          <div id="riskNotes"></div>
+        </section>
+
+        <section id="view-backtest" class="view">
+          <h2>概率回测</h2>
+          <div id="backtestCards" class="contentBox"></div>
+          <h3>指标解释</h3>
+          <div id="metricExplanations"></div>
+          <h3>Calibration / 校准表</h3>
+          <div id="calibrationTable"></div>
+          <h3>模拟收益明细</h3>
+          <div id="betsTable"></div>
+        </section>
+
+        <section id="view-import" class="view">
+          <h2>数据导入预检</h2>
+          <p class="sectionHint">预检只读取本地文件并返回质量报告，不写 normalized output。</p>
+          <div id="importCards" class="contentBox"></div>
+          <div id="importQuality"></div>
+        </section>
+
+        <section id="view-calibration" class="view">
+          <h2>校准状态</h2>
+          <div id="calibrationCards" class="contentBox"></div>
+          <div id="calibrationNotes"></div>
+        </section>
+
+        <section id="view-qa" class="view">
+          <h2>QA 健康检查</h2>
+          <div id="qaCards" class="contentBox"></div>
+          <div id="qaChecks"></div>
+        </section>
+
+        <section id="view-raw" class="view">
+          <h2>原始 JSON</h2>
           <pre id="jsonOutput">{}</pre>
         </section>
       </section>
+    </main>
+
+    <section class="glossaryPanel">
+      <h2>术语速查</h2>
+      <div id="glossaryList"></div>
     </section>
-  </main>
+
+    <footer class="footerNote">
+      Read-only local analysis mode. No betting, payment, order placement, or proxy purchase features are implemented.
+    </footer>
+  </div>
+  <script src="/glossary.js"></script>
+  <script src="/components.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

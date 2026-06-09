@@ -30,12 +30,15 @@ It must not implement wagering, payment, order placement, account management, or
 - QA checks must not claim prediction accuracy or guaranteed outcomes.
 - QA rehearsal fixtures are not production data.
 - Do not add betting, payment, order placement, or proxy purchase UI controls.
+- Dashboard must not include betting, payment, order placement, proxy purchase, martingale, or chase controls.
+- LLM/DeepSeek integration must be disabled by default and must not make external calls without explicit user authorization.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.
 - Add tests for import adapters, calibration persistence, and report export.
 - Add tests for API health, read-only guard, and dashboard static disclaimers.
 - Add tests for QA harness, disclaimer scanning, model sanity, and generated-file hygiene.
+- Add tests for user-facing dashboard, local explainer, view models, and probability backtest UX.
 - Run tests before final response.
 
 ## Testing

@@ -12,9 +12,14 @@ from src.calibration.persistence import load_calibration_artifact
 from src.calibration.store import validate_calibration_artifact
 from src.exports.report_exporter import summarize_report
 from src.ingestion.importer import import_historical_file
+from src.view_models.analysis_view import build_analysis_view
+from src.view_models.backtest_view import build_backtest_view
+from src.view_models.calibration_view import build_calibration_view
+from src.view_models.import_view import build_import_preview_view
+from src.view_models.qa_view import build_qa_view
 
 
-VERSION = "phase2e_local_api_dashboard"
+VERSION = "phase2g_user_app_probability_backtest"
 DISABLED_CAPABILITIES = ["betting", "payment", "order_placement", "proxy_purchase", "automation"]
 
 
@@ -33,7 +38,19 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             {
                 "project": "football-jc-analysis",
                 "mode": "read_only",
-                "capabilities": ["matches", "analyze", "backtest", "import_preview", "calibration_validate", "report_summary"],
+                "capabilities": [
+                    "matches",
+                    "analyze",
+                    "backtest",
+                    "import_preview",
+                    "calibration_validate",
+                    "report_summary",
+                    "view_analyze",
+                    "view_backtest",
+                    "view_import_preview",
+                    "view_calibration_validate",
+                    "view_qa",
+                ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "disclaimer": "For research and entertainment reference only. No betting, payment, or order placement.",
             }
@@ -64,13 +81,7 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         )
         return success_response(payload, payload.get("warnings", []))
     if path == "/api/calibration/validate":
-        artifact_path = _required(query, "path")
-        try:
-            artifact = load_calibration_artifact(artifact_path)
-            issues = validate_calibration_artifact(artifact)
-            return success_response({"path": artifact_path, "valid": not issues, "issues": issues})
-        except Exception as exc:
-            return success_response({"path": artifact_path, "valid": False, "issues": [str(exc)[:180]]})
+        return success_response(_validate_calibration_from_query(query))
     if path == "/api/report/summary":
         report_type = query.get("type", "analysis")
         if report_type == "backtest":
@@ -79,6 +90,39 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             payload = build_analysis_payload(target_date=query.get("date"), provider_name=query.get("provider", "mock"))
             return success_response(summarize_report(payload))
         raise ApiError("bad_request", "type must be analysis or backtest")
+    if path == "/api/view/analyze":
+        _reject_write_params(query, {"export", "report_md", "report-md"})
+        payload = build_analysis_payload(
+            target_date=query.get("date"),
+            provider_name=query.get("provider", "auto"),
+            historical_data_path=query.get("historical_data"),
+            use_fixture_historical=_truthy(query.get("no_historical_fixture")) is False,
+            calibration_artifact_path=query.get("calibration_artifact"),
+        )
+        view = build_analysis_view(payload)
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/backtest":
+        _reject_write_params(query, {"export", "save_calibration", "save-calibration", "report_md", "report-md"})
+        view = build_backtest_view(_run_backtest_from_query(query))
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/import/preview":
+        _reject_write_params(query, {"output"})
+        payload = import_historical_file(
+            input_path=_required(query, "input"),
+            adapter_name=query.get("adapter", "auto"),
+            mapping_path=query.get("mapping"),
+            dry_run=True,
+        )
+        view = build_import_preview_view(payload)
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/calibration/validate":
+        view = build_calibration_view(_validate_calibration_from_query(query))
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/qa":
+        from src.qa.runner import run_qa
+
+        view = build_qa_view(run_qa(project_root=".", rehearsal=_truthy(query.get("rehearsal"))))
+        return success_response(view, view.get("warnings", []))
     raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
 
 
@@ -105,6 +149,16 @@ def _reject_write_params(query: dict[str, str], names: set[str]) -> None:
     for name in names:
         if name in query:
             ensure_read_only_operation(name, write_requested=True)
+
+
+def _validate_calibration_from_query(query: dict[str, str]) -> dict:
+    artifact_path = _required(query, "path")
+    try:
+        artifact = load_calibration_artifact(artifact_path)
+        issues = validate_calibration_artifact(artifact)
+        return {"path": artifact_path, "valid": not issues, "issues": issues}
+    except Exception as exc:
+        return {"path": artifact_path, "valid": False, "issues": [str(exc)[:180]]}
 
 
 def _required(query: dict[str, str], name: str) -> str:

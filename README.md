@@ -4,6 +4,57 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-G: User-Facing App + Probability Backtest UX
+
+Status: implemented
+
+新增：
+- user-facing local dashboard app
+- Chinese explanation-first UI
+- analysis summary cards
+- candidate signal tables
+- parlay risk explanation
+- probability backtest page
+- metric explanations
+- calibration status page
+- import preview page
+- QA status page
+- dashboard-friendly API view endpoints
+- local deterministic explainer
+- optional LLM/DeepSeek explainer stub, disabled by default
+
+启动 API：
+
+```bash
+python3 -m src.cli.serve_api --host 127.0.0.1 --port 8765
+```
+
+启动 App：
+
+```bash
+python3 -m src.cli.serve_dashboard --host 127.0.0.1 --port 8766 --api-base http://127.0.0.1:8765
+```
+
+打开：
+
+```text
+http://127.0.0.1:8766
+```
+
+DeepSeek 说明：
+- 当前阶段不默认接入 DeepSeek；
+- 当前解释层使用本地 deterministic explainer；
+- DeepSeek 仅作为后续可选解释增强；
+- 如需接入，需要用户明确提供 API Key 和授权；
+- 任何 LLM 输出都必须经过安全过滤，不得生成投注承诺。
+
+限制：
+- App 是本地只读；
+- 不提供投注、下单、支付、代购或自动化购彩能力；
+- 概率模型不保证结果；
+- 回测结果不保证未来表现；
+- 串关风险显著放大。
+
 ## Phase 2-F: QA Harness + Real-Data Rehearsal
 
 Status: implemented
@@ -229,6 +280,6 @@ The tool must never output:
 - baseline model only
 - fixture historical data is not production data
 - `sporttery` live API may fail depending on network/API availability
-- no REST API yet
+- local read-only REST API exists, but no public deployment is provided
 - project is local-only and not attached to Git/GitHub
 - no GitHub remote attached
