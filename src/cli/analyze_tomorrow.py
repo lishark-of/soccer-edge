@@ -22,6 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--provider", dest="provider_name", default="auto", choices=["auto", "mock", "sporttery"])
     parser.add_argument("--historical-data", dest="historical_data_path", default=None, help="Path to historical CSV data")
     parser.add_argument("--no-historical-fixture", dest="no_historical_fixture", action="store_true")
+    parser.add_argument("--calibration-artifact", dest="calibration_artifact_path", default=None)
+    parser.add_argument("--report-md", dest="report_markdown_path", default=None)
     return parser.parse_args()
 
 
@@ -34,6 +36,8 @@ def main() -> int:
         export_format=args.export_format,
         historical_data_path=args.historical_data_path,
         use_fixture_historical=not args.no_historical_fixture,
+        calibration_artifact_path=args.calibration_artifact_path,
+        report_markdown_path=args.report_markdown_path,
     )
 
     if args.output_format == "json":
@@ -53,6 +57,7 @@ def _print_text_report(payload: dict[str, object]) -> None:
         f"(requested={payload.get('provider', payload.get('provider_requested', 'unknown'))})"
     )
     print(f"模型版本: {payload.get('model_version', 'unknown')}")
+    print(f"校准状态: {payload.get('calibration_status', 'not_provided')}")
     print(f"历史数据状态: {payload.get('historical_data_status', 'unknown')}")
     print(f"模型组件: {', '.join(payload.get('model_components_available', []))}")
     if payload.get("fallback_used"):

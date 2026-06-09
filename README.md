@@ -4,6 +4,38 @@
 
 This project is not a betting platform. It does not place orders, handle payments, manage accounts, or claim guaranteed profit.
 
+## Phase 2-D: Import Adapters + Calibration Persistence + Report Hardening
+
+Status: implemented
+
+新增：
+- generic CSV import adapter
+- sporttery-style export adapter
+- football_data-style adapter
+- field mapping JSON support
+- import dry-run
+- normalized historical CSV output
+- import manifest with sha256
+- data quality report
+- calibration artifact save/load
+- analyze_tomorrow calibration artifact loading
+- Markdown report export
+
+示例：
+
+```bash
+python3 -m src.cli.import_history --input data/fixtures/import_sample_generic.csv --dry-run --format json
+python3 -m src.cli.import_history --input data/fixtures/import_sample_sporttery.csv --adapter sporttery_export --mapping data/fixtures/import_field_mapping_example.json --dry-run --format json
+python3 -m src.cli.backtest --historical-data data/fixtures/historical_matches_backtest_sample.csv --save-calibration artifacts/calibration/sample_calibration.json --format json
+python3 -m src.cli.analyze_tomorrow --provider mock --date 2026-06-09 --calibration-artifact artifacts/calibration/sample_calibration.json --format json
+python3 -m src.cli.backtest --historical-data data/fixtures/historical_matches_backtest_sample.csv --report-md reports/backtest_sample.md --format json
+```
+
+限制：
+- import fixtures 仅用于流程测试；
+- calibration artifact 是诊断辅助，不保证未来表现；
+- 不提供自动投注、支付、下单或代购能力。
+
 ## Phase 2-C: Backtesting + Calibration Diagnostics
 
 Status: implemented
@@ -104,6 +136,7 @@ git push -u origin main
 仅供数据研究与娱乐参考。
 不提供投注、下单、支付、代购或任何自动化购彩能力。
 概率模型不保证结果。
+回测结果不保证未来表现。
 串关会显著放大风险。
 
 Every report must include:

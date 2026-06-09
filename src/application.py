@@ -5,8 +5,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.backtesting.historical_loader import load_historical_matches_with_warnings
+from src.calibration.persistence import load_calibration_artifact
+from src.calibration.store import validate_calibration_artifact
 from src.domain.analysis_result import DailyAnalysisReport
 from src.exports.csv_exporter import export_analysis_csv
+from src.exports.report_exporter import export_report_to_markdown
 from src.exports.xlsx_exporter import export_analysis_xlsx
 from src.providers.base import ProviderError
 from src.providers.factory import create_provider
@@ -33,9 +36,12 @@ def build_analysis_payload(
     export_format: str | None = None,
     historical_data_path: str | None = None,
     use_fixture_historical: bool = True,
+    calibration_artifact_path: str | None = None,
+    report_markdown_path: str | None = None,
 ) -> dict[str, object]:
     date = target_date or default_target_date()
     provider = create_provider(provider_name)
+    calibration_status, calibration_warnings = _resolve_calibration_artifact(calibration_artifact_path)
     historical_matches, historical_status, historical_warnings = _resolve_historical_inputs(
         historical_data_path=historical_data_path,
         use_fixture_historical=use_fixture_historical,
@@ -52,12 +58,19 @@ def build_analysis_payload(
         _record_provider_warning(provider, provider_name, exc)
         report = _empty_report(date, historical_status)
         report.warnings.extend(historical_warnings)
+    report.warnings.extend(calibration_warnings)
     payload = report.to_dict()
     payload.update(_provider_meta(provider, provider_name))
+    payload["calibration_status"] = calibration_status
     if export_format == "csv":
         payload["export_file"] = str(export_analysis_csv(report))
     elif export_format == "xlsx":
         payload["export_file"] = str(export_analysis_xlsx(report))
+    if report_markdown_path:
+        try:
+            payload["report_markdown_path"] = export_report_to_markdown(payload, report_markdown_path)
+        except Exception as exc:
+            payload.setdefault("warnings", []).append(f"markdown report export failed: {_short_error(exc)}")
     return payload
 
 
@@ -139,6 +152,19 @@ def _resolve_historical_inputs(
     fallback_warnings = [f"fixture historical data unavailable: {FIXTURE_PATH}"]
     fallback_warnings.extend(warnings)
     return [], "unavailable", fallback_warnings
+
+
+def _resolve_calibration_artifact(path: str | None) -> tuple[str, list[str]]:
+    if not path:
+        return "not_provided", []
+    try:
+        artifact = load_calibration_artifact(path)
+    except Exception as exc:
+        return "invalid", [f"calibration artifact unavailable: {_short_error(exc)}"]
+    issues = validate_calibration_artifact(artifact)
+    if issues:
+        return "invalid", [f"calibration artifact invalid: {'; '.join(issues)}"]
+    return "loaded", []
 
 
 def _provider_meta(provider, requested: str) -> dict[str, object]:

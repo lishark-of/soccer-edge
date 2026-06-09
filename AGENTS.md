@@ -23,9 +23,12 @@ It must not implement wagering, payment, order placement, account management, or
 - Historical features must use only data strictly before target match date.
 - Backtests must use chronological evaluation only.
 - Backtest results must be framed as diagnostics, not guarantees.
+- User-provided raw datasets must not be committed.
+- Generated artifacts, reports, normalized outputs, and calibration files must not be committed unless they are explicit fixtures.
 - Add tests for every probability and ticket-counting function.
 - Add tests for provider fallback and odds normalization.
 - Add tests for no-future-leakage guards.
+- Add tests for import adapters, calibration persistence, and report export.
 - Run tests before final response.
 
 ## Testing

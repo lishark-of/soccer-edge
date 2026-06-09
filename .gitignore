@@ -25,6 +25,16 @@ output/
 !data/
 !data/fixtures/
 !data/fixtures/*.csv
+!data/fixtures/*.json
+
+# Generated data
+data/raw/
+data/imports/
+data/normalized/
+
+# Generated artifacts and reports
+artifacts/
+reports/
 
 # OS / editor
 .DS_Store

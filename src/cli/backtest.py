@@ -8,7 +8,10 @@ from src.backtesting.backtest_engine import run_backtest
 from src.backtesting.historical_loader import load_historical_matches_with_warnings
 from src.backtesting.report import build_backtest_report
 from src.backtesting.schema import validate_historical_dataset
+from src.calibration.persistence import save_calibration_artifact
+from src.calibration.store import build_calibration_artifact
 from src.exports.backtest_exporter import export_backtest_to_csv, export_backtest_to_xlsx
+from src.exports.report_exporter import export_report_to_markdown
 
 
 DEFAULT_BACKTEST_FIXTURE = Path("data/fixtures/historical_matches_backtest_sample.csv")
@@ -24,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-edge", type=float, default=0.025)
     parser.add_argument("--format", choices=["text", "json"], default="text")
     parser.add_argument("--export", choices=["csv", "xlsx"], default=None)
+    parser.add_argument("--save-calibration", default=None)
+    parser.add_argument("--report-md", default=None)
     return parser.parse_args()
 
 
@@ -50,6 +55,17 @@ def main() -> int:
                 report["export_file"] = export_backtest_to_csv(report, str(output_dir / f"{stem}.csv"))
             else:
                 report["export_file"] = export_backtest_to_xlsx(report, str(output_dir / f"{stem}.xlsx"))
+        if args.save_calibration:
+            try:
+                artifact = build_calibration_artifact(report, report.get("model_version", "unknown"))
+                report["calibration_artifact_path"] = save_calibration_artifact(artifact, args.save_calibration)
+            except Exception as exc:
+                report.setdefault("warnings", []).append(f"calibration artifact save failed: {str(exc)[:180]}")
+        if args.report_md:
+            try:
+                report["report_markdown_path"] = export_report_to_markdown(report, args.report_md)
+            except Exception as exc:
+                report.setdefault("warnings", []).append(f"markdown report export failed: {str(exc)[:180]}")
     except Exception as exc:
         report = _error_report(exc)
     if args.format == "json":
