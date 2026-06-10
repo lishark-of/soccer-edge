@@ -4,9 +4,7 @@ import argparse
 import json
 import sys
 
-from src.application import build_analysis_payload
-from src.optimizer.candidate_pool import build_candidate_pool
-from src.optimizer.portfolio_optimizer import optimize_portfolio
+from src.intelligence.fusion import build_intelligence_preview
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,10 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", choices=["json", "text"], default="text")
     args = parser.parse_args(argv)
     try:
-        payload = build_analysis_payload(target_date=args.date, provider_name=args.provider)
-        candidates = build_candidate_pool(payload)
-        result = optimize_portfolio(candidates, bankroll=args.bankroll, config={"enable_3x1": args.enable_3x1, "risk_profile": args.risk_profile, "show_rejected": args.show_rejected, "compare_profiles": args.compare_profiles})
-        result.update({"provider": args.provider, "date": payload.get("date") or args.date, "matches_analyzed": payload.get("matches_analyzed", 0), "candidate_pool_count": len(candidates), "warnings": payload.get("warnings", []) + payload.get("provider_warnings", [])})
+        payload = build_intelligence_preview(args.provider, args.date, bankroll=args.bankroll, risk_profile=args.risk_profile)
+        result = dict(payload.get("optimizer", {}))
+        result.update({"provider": args.provider, "provider_used": payload.get("provider_used"), "date": payload.get("date") or args.date, "matches_analyzed": payload.get("matches_count", 0), "candidate_pool_count": len(payload.get("optimizer_candidates", []) or []), "top_total_goals_observations": payload.get("top_total_goals_observations", []), "top_score_observations": payload.get("top_score_observations", []), "missing_signals": payload.get("missing_signals", []), "warnings": payload.get("warnings", [])})
         if args.format == "json":
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:

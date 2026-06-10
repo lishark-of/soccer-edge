@@ -11,6 +11,7 @@ const state = {
   onboardingView: null,
   operationView: null,
   optimizerView: null,
+  intelligenceView: null,
   llmStatus: null,
   observationList: [],
 };
@@ -268,6 +269,45 @@ function renderOptimizer(view) {
   document.querySelector("#optimizerExplanations").innerHTML = C.list(view.explanations || []);
 }
 
+function renderIntelligence(view) {
+  state.intelligenceView = view;
+  document.querySelector("#intelligenceCards").innerHTML = C.cards(view.summary_cards || []);
+  const obsColumns = [
+    { key: "match", label: "比赛" },
+    { key: "play_type", label: "玩法" },
+    { key: "direction", label: "方向" },
+    { key: "official_odds", label: "官方赔率" },
+    { key: "market_prob", label: "市场概率" },
+    { key: "model_prob", label: "融合概率" },
+    { key: "edge", label: "Edge" },
+    { key: "ev", label: "EV" },
+    { key: "confidence_score", label: "信心" },
+    { key: "risk_level", label: "风险" },
+    { key: "supporting_factors", label: "支持因素" },
+    { key: "opposing_factors", label: "反对因素" },
+  ];
+  document.querySelector("#intelligenceSingles").innerHTML = C.table(view.top_singles || [], obsColumns);
+  document.querySelector("#intelligenceParlay2").innerHTML = C.table(view.top_2x1 || [], [
+    { key: "legs", label: "组合" },
+    { key: "odds", label: "组合赔率" },
+    { key: "model_prob", label: "组合概率" },
+    { key: "market_prob", label: "市场概率" },
+    { key: "ev", label: "EV" },
+    { key: "risk_level", label: "风险" },
+    { key: "paper_stake", label: "纸面投入" },
+  ]);
+  document.querySelector("#intelligenceTotalGoals").innerHTML = C.table(view.top_total_goals || [], obsColumns);
+  document.querySelector("#intelligenceScores").innerHTML = C.table(view.top_scores || [], obsColumns);
+  document.querySelector("#intelligenceDiscipline").innerHTML = C.list(view.discipline || []);
+  document.querySelector("#missingSignalsPanel").innerHTML = C.list((view.missing_signals || []).length ? view.missing_signals : ["当前没有缺失情报记录。"]);
+}
+
+async function loadIntelligence() {
+  const payload = await request("/api/view/intelligence", { provider: value("#provider"), date: value("#date"), bankroll: value("#initialBankroll"), risk_profile: value("#riskProfile") }, "刷新赛前情报");
+  if (payload.ok) renderIntelligence(payload.data);
+  switchView("intelligence");
+}
+
 function renderBacktest(view) {
   state.backtestView = view;
   document.querySelector("#backtestCards").innerHTML = C.cards(view.summary_cards || []);
@@ -485,6 +525,7 @@ document.addEventListener("click", (event) => {
 
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
 document.querySelector("#healthBtn").addEventListener("click", checkHealth);
+document.querySelector("#intelligenceBtn").addEventListener("click", loadIntelligence);
 document.querySelector("#matchesBtn").addEventListener("click", loadMatches);
 document.querySelector("#sportteryStatusBtn").addEventListener("click", loadSportteryStatus);
 document.querySelector("#analyzeBtn").addEventListener("click", runAnalysis);
@@ -515,3 +556,4 @@ renderOverview();
 loadOnboarding();
 checkHealth();
 checkLlmStatus();
+loadIntelligence();

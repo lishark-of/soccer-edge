@@ -15,7 +15,7 @@
         <p class="eyebrow">Sporttery probability lab</p>
         <h1>JC Edge</h1>
         <p class="subtitle">竞彩足球概率分析与回测 · 本地只读</p>
-        <p class="heroCopy">用更清晰的路径查看竞彩足球比赛、候选信号、理论期望 EV、组合风险和概率回测诊断。</p>
+        <p class="heroCopy">自动读取可售竞彩足球，融合数学模型、赔率市场与赛前情报状态，输出观察信号、组合研究和回测复盘。</p>
         <div class="heroActions">
           <button id="heroAnalyzeBtn" class="primary">开始体验 mock 分析</button>
           <button id="heroMatchesBtn" class="secondary">查看竞彩足球比赛</button>
@@ -44,12 +44,12 @@
           <input id="apiBase" value="http://127.0.0.1:8765">
         </label>
         <label>日期
-          <input id="date" value="2026-06-09">
+          <input id="date" value="2026-06-10">
         </label>
         <label>数据源模式
           <select id="provider">
             <option value="mock">mock：本地示例数据</option>
-            <option value="auto">auto：优先 Sporttery，失败回退 mock</option>
+            <option value="auto" selected>auto：优先 Sporttery，失败回退 mock</option>
             <option value="sporttery">sporttery：只尝试公开数据</option>
           </select>
         </label>
@@ -66,7 +66,7 @@
           <select id="riskProfile">
             <option value="conservative">保守：优先单关，严格控制组合</option>
             <option value="balanced">均衡：允许少量 2串1 纸面组合</option>
-            <option value="aggressive">进取：允许更高风险组合观察</option>
+            <option value="aggressive" selected>进取：允许更高风险组合观察</option>
           </select>
         </label>
         <label>导入 CSV 路径
@@ -95,6 +95,7 @@
         </label>
         <div class="actions">
           <button id="healthBtn">检查状态</button>
+          <button id="intelligenceBtn">刷新赛前情报</button>
           <button id="matchesBtn">查看竞彩足球比赛</button>
           <button id="sportteryStatusBtn">刷新数据源状态</button>
           <button id="analyzeBtn">运行概率分析</button>
@@ -112,10 +113,13 @@
       <section class="mainPanel glassCard">
         <nav class="tabs" aria-label="页面导航">
           <button class="tab isActive" data-view="overview">总览</button>
+          <button class="tab" data-view="intelligence">赛前情报</button>
           <button class="tab" data-view="matches">竞彩足球</button>
           <button class="tab" data-view="signals">候选信号</button>
           <button class="tab" data-view="optimizer">赛前优化</button>
           <button class="tab" data-view="parlay">组合风险</button>
+          <button class="tab" data-view="scoregoals">比分/进球数</button>
+          <button class="tab" data-view="missing">缺失情报</button>
           <button class="tab" data-view="backtest">概率回测</button>
           <button class="tab" data-view="operation">模拟走盘</button>
           <button class="tab" data-view="import">数据导入</button>
@@ -137,8 +141,8 @@
         <section id="view-overview" class="view isVisible pageLift">
           <div class="sectionHeading">
             <p class="eyebrow">Start here</p>
-            <h2>今天你可以这样开始</h2>
-            <p>不需要记命令。先体验 mock，再查看竞彩足球数据源，最后导入自己的 CSV 做回测诊断。</p>
+            <h2>赛前观察总览</h2>
+            <p>打开后自动拉取可售比赛，优先查看 Top 单关、Top 2串1、Top 总进球、Top 比分和缺失情报。</p>
           </div>
           <div id="overviewCards" class="contentBox"></div>
           <div class="staticSteps onboardingSteps" aria-label="6 步使用路径">
@@ -157,6 +161,22 @@
           </div>
           <h3>DeepSeek 可选解释状态</h3>
           <div id="llmStatusCards" class="contentBox"></div>
+        </section>
+
+        
+        <section id="view-intelligence" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Intelligence Fusion</p>
+            <h2>赛前观察总览</h2>
+            <p>自动读取可售比赛，融合市场赔率、Poisson/xG、Elo、Dixon-Coles 与赛前情报状态。</p>
+          </div>
+          <div id="intelligenceCards" class="contentBox"></div>
+          <h3>Top 单关观察</h3>
+          <div id="intelligenceSingles"></div>
+          <h3>Top 2串1观察</h3>
+          <div id="intelligenceParlay2"></div>
+          <h3>严厉交易者诊断</h3>
+          <div id="intelligenceDiscipline" class="noteBox"></div>
         </section>
 
         <section id="view-matches" class="view pageLift">
@@ -244,6 +264,28 @@
           <h3>3串1组合观察</h3>
           <div id="parlay3Table"></div>
           <div id="riskNotes" class="noteBox"></div>
+        </section>
+
+        
+        <section id="view-scoregoals" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Score matrix</p>
+            <h2>比分 / 总进球</h2>
+            <p>由 Poisson/xG 与 Dixon-Coles 低比分修正生成 Top 比分和总进球概率；若官方赔率未接入，暂不计算 EV。</p>
+          </div>
+          <h3>Top 总进球观察</h3>
+          <div id="intelligenceTotalGoals"></div>
+          <h3>Top 比分观察</h3>
+          <div id="intelligenceScores"></div>
+        </section>
+
+        <section id="view-missing" class="view pageLift">
+          <div class="sectionHeading">
+            <p class="eyebrow">Missing signals</p>
+            <h2>缺失情报</h2>
+            <p>新闻、伤停、首发、天气等未接入时只显示 unknown，不编造。</p>
+          </div>
+          <div id="missingSignalsPanel" class="noteBox"></div>
         </section>
 
         <section id="view-backtest" class="view pageLift">

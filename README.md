@@ -554,3 +554,19 @@ python3 -m src.cli.optimize_today --provider mock --date 2026-06-09 --bankroll 1
 ```
 
 说明：该功能只做纸面模拟和概率研究，不提供投注、下单、支付、代购或自动化购彩能力。提高风险档位可能增加纸面收益预期，也会增加回撤和连续亏损概率。
+
+
+## Phase 2-O: Intelligence Fusion for Pre-match Optimizer
+
+Status: implemented
+
+新增：
+- 赛前情报融合层：市场赔率、Poisson/xG、Elo、Dixon-Coles、赛程与外部情报状态
+- Dixon-Coles 低比分修正和比分矩阵
+- 胜平负、让球胜平负、总进球、比分 Top 5 观察输出
+- 新闻、伤停、首发、天气 JSON 插口，未提供时显示 not_connected / unknown，不编造
+- `python3 -m src.cli.intelligence_preview --provider auto --date 2026-06-10 --format json`
+- `/api/intelligence/preview` 和 `/api/view/intelligence`
+- App 新增赛前情报、比分/进球数、缺失情报页面
+
+说明：所有输出仍为观察信号、纸面模拟与风险诊断，不提供真实交易执行能力。

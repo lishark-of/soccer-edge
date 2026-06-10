@@ -17,6 +17,7 @@ from src.exports.report_exporter import summarize_report
 from src.ingestion.field_report import build_field_recognition_report
 from src.ingestion.importer import import_historical_file
 from src.ingestion.repair_suggestions import build_repair_suggestions
+from src.intelligence.fusion import build_intelligence_preview
 from src.release.metadata import build_release_metadata
 from src.paper_trading.walkforward import run_paper_operation_walkforward
 from src.optimizer.candidate_pool import build_candidate_pool
@@ -26,6 +27,7 @@ from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
 from src.view_models.calibration_view import build_calibration_view
 from src.view_models.import_view import build_import_preview_view
+from src.view_models.intelligence_view import build_intelligence_view
 from src.view_models.matches_view import build_matches_view, build_sporttery_status_view
 from src.view_models.onboarding_view import build_onboarding_view
 from src.view_models.operation_view import build_operation_view
@@ -79,6 +81,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_operation",
                     "optimizer_pre_match",
                     "view_optimizer",
+                    "intelligence_preview",
+                    "view_intelligence",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -156,6 +160,13 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         payload = build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto"))
         view = build_sporttery_status_view(payload)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/intelligence/preview":
+        result = _run_intelligence_from_query(query)
+        return success_response(result, result.get("warnings", []))
+    if path == "/api/view/intelligence":
+        result = _run_intelligence_from_query(query)
+        view = build_intelligence_view(result)
+        return success_response(view, view.get("warnings", []))
     if path == "/api/optimizer/pre-match":
         result = _run_optimizer_from_query(query)
         return success_response(result, result.get("warnings", []))
@@ -211,26 +222,29 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
 
 
 
-def _run_optimizer_from_query(query: dict[str, str]) -> dict:
-    payload = build_analysis_payload(target_date=query.get("date"), provider_name=query.get("provider", "mock"))
-    candidates = build_candidate_pool(payload)
-    bankroll = _float_param(query, "bankroll", 10000.0)
-    result = optimize_portfolio(
-        candidates,
-        bankroll=bankroll,
-        config={
-            "enable_3x1": _truthy(query.get("enable_3x1")),
-            "risk_profile": query.get("risk_profile", "conservative"),
-            "show_rejected": _truthy(query.get("show_rejected")),
-            "compare_profiles": _truthy(query.get("compare_profiles")),
-        },
+def _run_intelligence_from_query(query: dict[str, str]) -> dict:
+    return build_intelligence_preview(
+        query.get("provider", "auto"),
+        query.get("date"),
+        query.get("external_signals"),
+        bankroll=_float_param(query, "bankroll", 10000.0),
+        risk_profile=query.get("risk_profile", "aggressive"),
     )
+
+
+def _run_optimizer_from_query(query: dict[str, str]) -> dict:
+    preview = _run_intelligence_from_query(query)
+    result = dict(preview.get("optimizer", {}))
     result.update({
-        "provider": query.get("provider", "mock"),
-        "date": payload.get("date") or query.get("date"),
-        "matches_analyzed": payload.get("matches_analyzed", 0),
-        "candidate_pool_count": len(candidates),
-        "warnings": list(dict.fromkeys(list(payload.get("warnings", []) or []) + list(payload.get("provider_warnings", []) or []))),
+        "provider": preview.get("provider", query.get("provider", "auto")),
+        "provider_used": preview.get("provider_used"),
+        "date": preview.get("date") or query.get("date"),
+        "matches_analyzed": preview.get("matches_count", 0),
+        "candidate_pool_count": len(preview.get("optimizer_candidates", []) or []),
+        "top_total_goals_observations": preview.get("top_total_goals_observations", []),
+        "top_score_observations": preview.get("top_score_observations", []),
+        "missing_signals": preview.get("missing_signals", []),
+        "warnings": list(dict.fromkeys(list(result.get("warnings", []) or []) + list(preview.get("warnings", []) or []))),
     })
     return result
 

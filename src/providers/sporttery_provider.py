@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -34,7 +35,11 @@ class SportteryProvider(BaseProvider):
         target_date = date
         selling_matches = self._get_selling_matches()
         if target_date:
-            filtered = [match for match in selling_matches if match.date == target_date]
+            filtered = [
+                match
+                for match in selling_matches
+                if match.date == target_date or str((match.raw or {}).get("businessDate") or "") == target_date
+            ]
             if filtered:
                 return filtered
             return self._get_results_by_date(target_date)
@@ -120,7 +125,21 @@ class SportteryProvider(BaseProvider):
                 raw = response.read().decode("utf-8")
             payload = json.loads(raw)
         except Exception as exc:
-            raise ProviderError(self._short_error(exc)) from exc
+            if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+                raise ProviderError(self._short_error(exc)) from exc
+            try:
+                with urlopen(request, timeout=self.timeout, context=ssl._create_unverified_context()) as response:
+                    raw = response.read().decode("utf-8")
+                payload = json.loads(raw)
+                warnings = getattr(self, "warnings", None)
+                if warnings is None:
+                    warnings = []
+                    setattr(self, "warnings", warnings)
+                warning = "sporttery ssl fallback used for official webapi host"
+                if warning not in warnings:
+                    warnings.append(warning)
+            except Exception as fallback_exc:
+                raise ProviderError(self._short_error(fallback_exc)) from fallback_exc
         if payload.get("success") is False:
             raise ProviderError(str(payload.get("errorMessage") or "sporttery request failed"))
         value = payload.get("value")

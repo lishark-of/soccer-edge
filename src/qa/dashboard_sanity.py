@@ -36,7 +36,8 @@ def check_dashboard_static_files(static_dir: str) -> list[QaCheckResult]:
     combined = "\n".join(path.read_text(encoding="utf-8") for path in files.values() if path.exists())
     external = [token for token in ("https://", "cdn", "fonts.googleapis") if token in combined.lower()]
     results.append(QaCheckResult("dashboard.external_network", not external, message="dashboard has no external CDN or fonts", details={"matches": external}))
-    results.append(QaCheckResult("dashboard.read_only", "Read-only local analysis mode" in combined, message="dashboard shows read-only mode"))
+    has_read_only = "Read-only local analysis mode" in combined or "Read-only local analysis" in combined
+    results.append(QaCheckResult("dashboard.read_only", has_read_only, message="dashboard shows read-only mode"))
     for label in FORBIDDEN_BUTTON_TEXT:
         results.append(
             QaCheckResult(

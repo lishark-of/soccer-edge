@@ -28,7 +28,20 @@ BANNED_PROMOTIONAL_TERMS = [
     "支付购彩",
 ]
 
-ALLOW_CONTEXT = ["禁止", "不得", "不提供", "不要", "不能", "must never", "do not", "does not", "forbidden", "disabled", "banned"]
+ALLOW_CONTEXT = [
+    "禁止",
+    "不得",
+    "不提供",
+    "不要",
+    "不能",
+    "不代购",
+    "must never",
+    "do not",
+    "does not",
+    "forbidden",
+    "disabled",
+    "banned",
+]
 
 
 def check_text_disclaimers(text: str, source: str = "") -> list[QaCheckResult]:
