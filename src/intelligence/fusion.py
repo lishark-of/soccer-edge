@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from src.intelligence.feature_context import build_match_context
 from src.intelligence.market_signals import odds_for_outcome
 from src.intelligence.news_signals import load_external_signals
@@ -61,11 +64,20 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         optimizer_candidates.extend(match_candidates)
     optimizer = optimize_portfolio(optimizer_candidates, bankroll=bankroll, config={"risk_profile": risk_profile, "compare_profiles": True, "enable_3x1": risk_profile == "aggressive"})
     provider_meta = _provider_meta(provider, provider_name)
+    data_source_status = {
+        "requested_provider": provider_name,
+        "provider_used": provider_meta.get("provider_used", provider_name),
+        "matches_count": len(matches),
+        "status": "available" if matches else "empty",
+        "warnings": list(provider_meta.get("provider_warnings", []) or []),
+        "message_zh": "已读取可售竞彩足球比赛。" if matches else "当前日期未读取到可售比赛，系统可继续尝试未来日期。",
+    }
     return {
         "intelligence_version": "phase2o_intelligence_fusion_v0",
         "date": target_date,
         "provider": provider_name,
         **provider_meta,
+        "data_source_status": data_source_status,
         "matches_count": len(matches),
         "contexts": contexts,
         "observations": observations,
@@ -78,6 +90,53 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "warnings": list(dict.fromkeys(list(provider_meta.get("provider_warnings", [])))),
         "disclaimer": "赛前情报融合仅用于观察信号、纸面模拟和风险诊断，不构成投注建议。",
     }
+
+
+def build_next_available_preview(
+    provider_name: str = "auto",
+    start_date: str | None = None,
+    bankroll: float = 10000.0,
+    risk_profile: str = "aggressive",
+    days_ahead: int = 3,
+    external_signals_path: str | None = None,
+) -> dict:
+    start = _parse_date(start_date)
+    attempts = []
+    best = None
+    for offset in range(max(0, days_ahead) + 1):
+        current = (start + timedelta(days=offset)).isoformat()
+        preview = build_intelligence_preview(provider_name, current, external_signals_path, bankroll=bankroll, risk_profile=risk_profile)
+        attempts.append(
+            {
+                "date": current,
+                "matches_count": preview.get("matches_count", 0),
+                "provider_used": preview.get("provider_used", provider_name),
+                "status": preview.get("data_source_status", {}).get("status", "unknown"),
+            }
+        )
+        if best is None:
+            best = preview
+        if preview.get("matches_count", 0) > 0:
+            best = preview
+            break
+    best = dict(best or {})
+    selected_date = best.get("date") or start.isoformat()
+    best["selected_date"] = selected_date
+    best["attempts"] = attempts
+    best["next_available_version"] = "phase2o_next_available_v0"
+    best["top_observations"] = {
+        "singles": best.get("top_single_observations", [])[:5],
+        "parlay_2x1": (best.get("optimizer", {}).get("selected_portfolio", {}) or {}).get("parlay_2x1", [])[:5],
+        "total_goals": best.get("top_total_goals_observations", [])[:5],
+        "scores": best.get("top_score_observations", [])[:5],
+    }
+    best["data_source_status"] = {
+        **(best.get("data_source_status", {}) or {}),
+        "selected_date": selected_date,
+        "attempts": attempts,
+        "message_zh": "已自动找到可售比赛。" if best.get("matches_count", 0) else "未来 1-3 天暂未读取到可售比赛。",
+    }
+    return best
 
 
 def build_observations_from_context(context: dict) -> tuple[list[dict], list[dict]]:
@@ -112,16 +171,25 @@ def explain_trade_discipline(result: dict) -> list[str]:
     selected = optimizer.get("selected_portfolio", {})
     messages = []
     if not any(selected.get(key) for key in ("singles", "parlay_2x1", "parlay_3x1")):
-        messages.append("无观察价值：当前候选没有通过 EV、Edge、风险或暴露约束。")
+        messages.append("无观察价值：当前候选没有通过 EV、Edge、风险或纸面暴露约束。")
     else:
-        messages.append("入选原因：候选通过市场去水概率、模型融合概率、EV、Edge 和纸面风险约束。")
-    messages.append("拒绝原因会集中显示在候选排行榜中，常见原因包括 EV 不足、Edge 不足、风险等级过高、相关性折扣后不达标。")
-    messages.append("赔率价值判断：只有模型融合概率足以覆盖官方赔率隐含概率时，才可能形成正 EV。")
-    messages.append("串关纪律：2串1/3串1 会把命中概率相乘，组合收益预期可能上升，但回撤与连续失败概率也会放大。")
+        messages.append("入选原因：入选项通过市场去水概率、模型融合概率、EV、Edge 和纸面风险约束。")
+    messages.append("拒绝原因：未入选项通常是 EV 不足、Edge 不足、风险等级过高、相关性折扣后不达标，或超过纸面暴露上限。")
+    messages.append("赔率价值判断：只有模型融合概率足以覆盖官方赔率隐含概率时，才可能形成观察价值；否则显示“无观察价值”。")
+    messages.append("串关纪律：2串1/3串1 会把多场不确定性叠加，不要因为赔率高就盲目组合。")
     missing = result.get("missing_signals") or []
     if missing:
         messages.append(f"信心下降因素：{', '.join(missing)} 未接入，新闻/伤停/天气/首发不得臆造。")
     return messages
+
+
+def _parse_date(value: str | None) -> date:
+    if value:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
 def _weighted_probs(sources: dict[str, dict], weights: dict[str, float]) -> dict[str, float]:

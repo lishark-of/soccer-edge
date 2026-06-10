@@ -17,7 +17,7 @@ from src.exports.report_exporter import summarize_report
 from src.ingestion.field_report import build_field_recognition_report
 from src.ingestion.importer import import_historical_file
 from src.ingestion.repair_suggestions import build_repair_suggestions
-from src.intelligence.fusion import build_intelligence_preview
+from src.intelligence.fusion import build_intelligence_preview, build_next_available_preview
 from src.release.metadata import build_release_metadata
 from src.paper_trading.walkforward import run_paper_operation_walkforward
 from src.optimizer.candidate_pool import build_candidate_pool
@@ -29,10 +29,12 @@ from src.view_models.calibration_view import build_calibration_view
 from src.view_models.import_view import build_import_preview_view
 from src.view_models.intelligence_view import build_intelligence_view
 from src.view_models.matches_view import build_matches_view, build_sporttery_status_view
+from src.view_models.next_available_view import build_next_available_view
 from src.view_models.onboarding_view import build_onboarding_view
 from src.view_models.operation_view import build_operation_view
 from src.view_models.optimizer_view import build_optimizer_view
 from src.view_models.qa_view import build_qa_view
+from src.view_models.score_goals_view import build_score_goals_view
 
 
 VERSION = "0.1.0-local"
@@ -83,6 +85,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_optimizer",
                     "intelligence_preview",
                     "view_intelligence",
+                    "view_next_available",
+                    "view_score_goals",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -160,12 +164,20 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         payload = build_matches_payload(target_date=query.get("date"), provider_name=query.get("provider", "auto"))
         view = build_sporttery_status_view(payload)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/view/next-available":
+        result = _run_next_available_from_query(query)
+        view = build_next_available_view(result)
+        return success_response(view, view.get("warnings", []))
     if path == "/api/intelligence/preview":
         result = _run_intelligence_from_query(query)
         return success_response(result, result.get("warnings", []))
     if path == "/api/view/intelligence":
         result = _run_intelligence_from_query(query)
         view = build_intelligence_view(result)
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/score-goals":
+        result = _run_intelligence_from_query(query)
+        view = build_score_goals_view(result)
         return success_response(view, view.get("warnings", []))
     if path == "/api/optimizer/pre-match":
         result = _run_optimizer_from_query(query)
@@ -227,6 +239,15 @@ def _run_intelligence_from_query(query: dict[str, str]) -> dict:
         query.get("provider", "auto"),
         query.get("date"),
         query.get("external_signals"),
+        bankroll=_float_param(query, "bankroll", 10000.0),
+        risk_profile=query.get("risk_profile", "aggressive"),
+    )
+
+
+def _run_next_available_from_query(query: dict[str, str]) -> dict:
+    return build_next_available_preview(
+        query.get("provider", "auto"),
+        query.get("date"),
         bankroll=_float_param(query, "bankroll", 10000.0),
         risk_profile=query.get("risk_profile", "aggressive"),
     )

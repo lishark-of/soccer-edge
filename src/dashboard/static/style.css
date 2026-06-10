@@ -362,3 +362,81 @@ pre {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Phase 2-O product simplification */
+.productShell { max-width: 1380px; }
+.compactHero { grid-template-columns: minmax(0, 1fr) 340px; padding-top: 18px; }
+.compactHero h1 { font-size: clamp(58px, 9vw, 118px); }
+.compactSafety strong { font-size: 18px; line-height: 1.35; }
+.advancedDrawer {
+  margin: 16px 0 22px;
+  padding: 0;
+  overflow: hidden;
+}
+.advancedDrawer summary {
+  cursor: pointer;
+  padding: 16px 20px;
+  font-weight: 850;
+  color: var(--text);
+  list-style: none;
+}
+.advancedDrawer summary::-webkit-details-marker { display: none; }
+.advancedDrawer summary::after {
+  content: "展开";
+  float: right;
+  color: var(--muted);
+  font-size: 13px;
+}
+.advancedDrawer[open] summary::after { content: "收起"; }
+.advancedGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 18px 18px;
+}
+.advancedActions {
+  display: flex;
+  gap: 10px;
+  padding: 0 18px 18px;
+}
+.productWorkspace {
+  padding: 18px;
+  overflow: hidden;
+}
+.topGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.topGrid article {
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.58);
+  border-radius: var(--radius-xl);
+  padding: 18px;
+  box-shadow: var(--shadow-soft);
+}
+.footerNote {
+  margin: 20px auto 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.6;
+}
+.skeletonBlock:empty,
+.skeletonBlock .empty {
+  min-height: 150px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(90deg, rgba(255,255,255,.45), rgba(255,255,255,.88), rgba(255,255,255,.45));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (max-width: 980px) {
+  .compactHero { grid-template-columns: 1fr; }
+  .advancedGrid, .topGrid, .cardGrid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeletonBlock:empty,
+  .skeletonBlock .empty { animation: none; }
+}

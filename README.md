@@ -570,3 +570,29 @@ Status: implemented
 - App 新增赛前情报、比分/进球数、缺失情报页面
 
 说明：所有输出仍为观察信号、纸面模拟与风险诊断，不提供真实交易执行能力。
+
+## Phase 2-O: Product Simplification + Auto Sporttery Fetch + Strict Trader QA
+
+Status: implemented
+
+新增：
+- App 默认进入“今日观察”，自动查找未来 1-3 天可售竞彩足球比赛；
+- 首页隐藏 API Base、provider、路径等技术控件，统一放入默认关闭的“高级设置”；
+- `/api/view/next-available` 自动返回 selected_date、provider_used、数据源状态和 Top 观察项；
+- `/api/view/score-goals` 展示总进球与比分 Top 5 的模型概率；
+- strict trader audit CLI 检查首页、只读 API、禁用交易控件和风险诊断链路；
+- 严厉交易者诊断会说明入选、拒绝、赔率覆盖、串关风险和缺失情报。
+
+示例：
+
+```bash
+python3 -m src.cli.strict_trader_audit --format json
+python3 -m src.cli.intelligence_preview --provider auto --date 2026-06-10 --format json
+python3 -m src.cli.optimize_today --provider auto --date 2026-06-10 --bankroll 10000 --risk-profile aggressive --format json
+```
+
+安全边界：
+- 本工具仅做本地概率分析、观察信号、纸面模拟和风险诊断；
+- 不提供投注、下单、支付、代购或自动化购彩能力；
+- 新闻、伤停、首发、天气未接入时显示 unknown / not_connected，不编造；
+- DeepSeek 默认关闭，不参与概率、EV、筛选或回测。
