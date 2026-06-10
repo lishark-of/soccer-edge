@@ -71,6 +71,13 @@ def _rank_singles(candidates: list[dict], bankroll: float, cfg: dict) -> list[di
 def _rank_parlays(singles_ranked: list[dict], bankroll: float, cfg: dict) -> list[dict]:
     valid_singles = [item for item in singles_ranked if not item.get("reject_reason")]
     parlay_raw = build_parlay_candidates(valid_singles, max_legs=3)
+    if not parlay_raw:
+        diagnostic_legs = [
+            item
+            for item in singles_ranked
+            if float(item.get("odds") or 0.0) > 1.01 and float(item.get("model_prob") or 0.0) > 0.0 and float(item.get("market_prob") or 0.0) > 0.0
+        ][:8]
+        parlay_raw = build_parlay_candidates(diagnostic_legs, max_legs=3)
     ranked = []
     for candidate in parlay_raw:
         if candidate.get("rejected"):
@@ -78,7 +85,7 @@ def _rank_parlays(singles_ranked: list[dict], bankroll: float, cfg: dict) -> lis
         else:
             item = score_candidate(candidate, bankroll, cfg)
             item["selected"] = False
-            item["reject_reason"] = _base_reject_reason(item, cfg)
+            item["reject_reason"] = _parlay_reject_reason(item, cfg)
         ranked.append(item)
     return sorted(ranked, key=lambda item: item.get("score", -999), reverse=True)
 
@@ -101,6 +108,25 @@ def _base_reject_reason(candidate: dict, cfg: dict) -> str:
     if float(candidate.get("correlation_discount") or 1.0) <= 0:
         return "相关性过强"
     return ""
+
+
+def _parlay_reject_reason(candidate: dict, cfg: dict) -> str:
+    reasons = []
+    base = _base_reject_reason(candidate, cfg)
+    if base:
+        reasons.append(base)
+    weak_legs = []
+    for leg in candidate.get("legs", []) or []:
+        leg_reason = leg.get("reject_reason") or _base_reject_reason(leg, cfg)
+        if leg_reason:
+            weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：{leg_reason}".strip())
+    if weak_legs:
+        reasons.append("组合腿未全部通过单关纪律（" + "；".join(weak_legs[:3]) + "）")
+    if float(candidate.get("combo_prob") or 0.0) < 0.12:
+        reasons.append("组合命中概率偏低")
+    if float(candidate.get("correlation_discount") or 1.0) < 0.98:
+        reasons.append("相关性折扣后吸引力下降")
+    return "；".join(dict.fromkeys(reasons))
 
 
 def _select_ranked(target: list, ranked: list[dict], limit: int, exposure: float, cap: float) -> float:

@@ -9,3 +9,8 @@ def test_optimize_today_cli_json_shape():
     assert payload["bankroll"] == 10000
     assert "recommended_observation_portfolio" in payload
     assert "daily_exposure_cap" in payload
+
+
+def test_optimize_today_cli_accepts_external_signals_option():
+    result = subprocess.run([sys.executable, "-m", "src.cli.optimize_today", "--help"], check=True, capture_output=True, text=True)
+    assert "--external-signals" in result.stdout

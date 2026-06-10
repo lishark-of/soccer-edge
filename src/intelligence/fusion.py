@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.intelligence.feature_context import build_match_context
 from src.intelligence.market_signals import odds_for_outcome
-from src.intelligence.news_signals import load_external_signals
+from src.intelligence.news_signals import load_external_signals_with_status
 from src.optimizer.portfolio_optimizer import optimize_portfolio
 from src.providers.factory import create_provider
 from src.models.score_matrix import normalize_probs
@@ -49,8 +50,9 @@ def fused_probability(match_context: dict, weights: dict | None = None) -> dict:
 
 def build_intelligence_preview(provider_name: str = "auto", target_date: str | None = None, external_signals_path: str | None = None, bankroll: float = 10000.0, risk_profile: str = "aggressive") -> dict:
     provider = create_provider(provider_name)
-    external_signals = load_external_signals(external_signals_path)
+    external_signals, external_signal_status = load_external_signals_with_status(external_signals_path)
     matches = provider.get_matches(target_date)
+    match_ids = [str(match.match_id) for match in matches]
     contexts = []
     observations = []
     optimizer_candidates = []
@@ -78,6 +80,7 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "provider": provider_name,
         **provider_meta,
         "data_source_status": data_source_status,
+        "external_signals_status": _external_signals_status(external_signals_path, external_signals, match_ids, external_signal_status),
         "matches_count": len(matches),
         "contexts": contexts,
         "observations": observations,
@@ -102,10 +105,14 @@ def build_next_available_preview(
 ) -> dict:
     start = _parse_date(start_date)
     attempts = []
-    best = None
-    for offset in range(max(0, days_ahead) + 1):
+    first_preview = None
+    first_available = None
+    max_offset = max(0, days_ahead)
+    for offset in range(max_offset + 1):
         current = (start + timedelta(days=offset)).isoformat()
         preview = build_intelligence_preview(provider_name, current, external_signals_path, bankroll=bankroll, risk_profile=risk_profile)
+        if first_preview is None:
+            first_preview = preview
         attempts.append(
             {
                 "date": current,
@@ -114,15 +121,19 @@ def build_next_available_preview(
                 "status": preview.get("data_source_status", {}).get("status", "unknown"),
             }
         )
-        if best is None:
-            best = preview
-        if preview.get("matches_count", 0) > 0:
-            best = preview
-            break
-    best = dict(best or {})
+        if first_available is None and preview.get("matches_count", 0) > 0:
+            first_available = preview
+    best = dict(first_available or first_preview or {})
     selected_date = best.get("date") or start.isoformat()
     best["selected_date"] = selected_date
     best["attempts"] = attempts
+    best["scan_window"] = {
+        "start_date": start.isoformat(),
+        "end_date": (start + timedelta(days=max_offset)).isoformat(),
+        "days_checked": len(attempts),
+        "complete": len(attempts) == max_offset + 1,
+        "selection_rule": "选择扫描窗口内第一个 matches_count > 0 的日期；如果都为空，则返回首日空结果。",
+    }
     best["next_available_version"] = "phase2o_next_available_v0"
     best["top_observations"] = {
         "singles": best.get("top_single_observations", [])[:5],
@@ -134,9 +145,35 @@ def build_next_available_preview(
         **(best.get("data_source_status", {}) or {}),
         "selected_date": selected_date,
         "attempts": attempts,
+        "scan_window": best["scan_window"],
         "message_zh": "已自动找到可售比赛。" if best.get("matches_count", 0) else "未来 1-3 天暂未读取到可售比赛。",
     }
     return best
+
+
+def _external_signals_status(path: str | None, signals: dict[str, dict], match_ids: list[str], load_status: dict | None = None) -> dict:
+    load_status = load_status or {}
+    provided = bool(path)
+    signal_ids = set(signals)
+    match_id_set = set(match_ids)
+    matched_ids = sorted(signal_ids & match_id_set)
+    unmatched_ids = sorted(signal_ids - match_id_set)
+    missing_match_ids = sorted(match_id_set - signal_ids)
+    return {
+        "source_type": load_status.get("source_type") or ("user_json" if provided else "not_provided"),
+        "path_provided": provided,
+        "path_label": load_status.get("path_label") or (Path(path).name if path else None),
+        "load_status": load_status.get("load_status") or ("loaded" if provided else "not_provided"),
+        "signals_loaded": len(signals),
+        "invalid_items": load_status.get("invalid_items", 0),
+        "matches_count": len(match_ids),
+        "matched_count": len(matched_ids),
+        "unmatched_count": len(unmatched_ids),
+        "missing_match_count": len(missing_match_ids),
+        "matched_match_ids": matched_ids,
+        "unmatched_signal_ids": unmatched_ids,
+        "message_zh": load_status.get("message_zh") or ("已读取用户提供的本地 JSON 情报；仅用于解释信心，不参与真实下单。" if provided else "未提供外部情报 JSON；新闻、伤停、首发、天气、战意保持 unknown。"),
+    }
 
 
 def build_observations_from_context(context: dict) -> tuple[list[dict], list[dict]]:

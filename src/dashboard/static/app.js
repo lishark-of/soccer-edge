@@ -77,6 +77,9 @@ const obsColumns = [
   { key: "confidence_score", label: "信心" },
   { key: "risk_level", label: "风险" },
   { key: "selection_reason", label: "纪律判断" },
+  { key: "supporting_factors", label: "支持因素" },
+  { key: "opposing_factors", label: "反对因素" },
+  { key: "missing_signals", label: "缺失情报" },
 ];
 const comboColumns = [
   { key: "legs", label: "组合" },
@@ -86,6 +89,18 @@ const comboColumns = [
   { key: "ev", label: "EV" },
   { key: "risk_level", label: "风险" },
   { key: "paper_stake", label: "纸面投入" },
+];
+const rejectedComboColumns = [
+  { key: "type", label: "类型" },
+  { key: "legs", label: "组合" },
+  { key: "odds", label: "组合赔率" },
+  { key: "model_prob", label: "组合概率" },
+  { key: "market_prob", label: "市场概率" },
+  { key: "ev", label: "EV" },
+  { key: "edge", label: "Edge" },
+  { key: "risk_level", label: "风险" },
+  { key: "status", label: "状态" },
+  { key: "reject_reason", label: "被拒原因" },
 ];
 
 async function loadToday() {
@@ -111,17 +126,38 @@ function renderToday(view) {
     { label: "缺失情报", value: (view.missing_signals || []).length, help: "新闻、伤停、首发、天气未接入时不编造。" },
   ]);
   const status = view.data_source_status || {};
+  const health = view.source_health || {};
+  const externalSignals = view.external_signals_status || {};
   qs("#dataSourceStatus").innerHTML = C.list([
-    `数据源状态：${status.status || "unknown"}`,
-    `说明：${status.message_zh || "暂无说明"}`,
-    `实际 provider：${view.provider_used || "unknown"}`,
+    `健康状态：${health.health || status.status || "unknown"}`,
+    `说明：${health.message_zh || status.message_zh || "暂无说明"}`,
+    `实际 provider：${health.provider_used || view.provider_used || "unknown"}`,
+    `扫描日期：${(health.scanned_dates || []).join("、") || "N/A"}`,
+    health.scan_summary_zh || "扫描窗口：N/A",
+    `成功次数：${health.successful_attempts ?? 0}/${health.attempt_count ?? 0}`,
+    `提醒数量：${health.warning_count ?? 0}`,
+    `外部情报：${externalSignals.source_type || "not_provided"}，覆盖 ${externalSignals.matched_count ?? 0}/${externalSignals.matches_count ?? 0} 场`,
+    `情报读取状态：${externalSignals.load_status || "not_provided"}，无效条目：${externalSignals.invalid_items ?? 0}`,
+    externalSignals.message_zh || "未提供外部情报 JSON。",
+    health.recovery_hint_zh || "数据源状态会明确标记，不会把回退数据伪装成 Sporttery。",
   ]);
   qs("#todaySingles").innerHTML = tableOrEmpty(view.top_singles || [], obsColumns, "当前没有通过纪律筛选的单关观察。若无 Edge，显示无观察价值。");
   qs("#todayParlay2").innerHTML = tableOrEmpty(view.top_2x1 || [], comboColumns, "当前没有 2串1 入选。组合需要多场同时命中，风险纪律会更严格。 ");
   qs("#todayTotalGoals").innerHTML = tableOrEmpty(view.top_total_goals || [], obsColumns, "当前没有总进球观察。 ");
   qs("#todayScores").innerHTML = tableOrEmpty(view.top_scores || [], obsColumns, "当前没有比分观察。 ");
+  qs("#todayRejectedParlay2").innerHTML = tableOrEmpty(view.top_rejected_2x1 || [], rejectedComboColumns, "当前没有 2串1 被拒候选。");
+  qs("#todayRejectedParlay3").innerHTML = tableOrEmpty(view.top_rejected_3x1 || [], rejectedComboColumns, "当前没有 3串1 被拒候选。");
   qs("#todayRiskTip").innerHTML = C.list([view.max_risk_tip || "请先查看数据源状态和缺失情报。"]);
-  qs("#todayMissing").innerHTML = C.list((view.missing_signals || []).length ? view.missing_signals : ["当前没有缺失情报记录。"]);
+  qs("#todayMissing").innerHTML = (view.signal_status || []).length
+    ? C.table(view.signal_status, [
+      { key: "signal", label: "情报" },
+      { key: "status", label: "状态" },
+      { key: "impact", label: "影响" },
+      { key: "coverage", label: "覆盖" },
+      { key: "source_zh", label: "来源" },
+      { key: "message_zh", label: "说明" },
+    ])
+    : C.list((view.missing_signals || []).length ? view.missing_signals : ["当前没有缺失情报记录。"]);
 }
 
 async function loadMatches() {
@@ -179,6 +215,8 @@ function renderOptimizer(view) {
   qs("#optimizerExplanations").innerHTML = C.list(view.explanations || []);
   qs("#parlay2Table").innerHTML = qs("#optimizerParlay2").innerHTML;
   qs("#parlay3Table").innerHTML = qs("#optimizerParlay3").innerHTML;
+  qs("#parlay2RejectedTable").innerHTML = tableOrEmpty(view.candidate_rankings?.parlay_2x1 || [], rankCols, "当前没有 2串1 被拒候选。 ");
+  qs("#parlay3RejectedTable").innerHTML = tableOrEmpty(view.candidate_rankings?.parlay_3x1 || [], rankCols, "当前没有 3串1 被拒候选。 ");
   qs("#riskNotes").innerHTML = C.list([view.no_2x1_reason || "组合观察会放大风险。", ...(view.explanations || [])]);
 }
 
@@ -190,8 +228,18 @@ async function loadScoreGoals() {
 function renderScoreGoals(view) {
   state.scoreGoalsView = view;
   qs("#scoreGoalsCards").innerHTML = C.cards(view.summary_cards || []);
+  qs("#scoreGoalsHandicap").innerHTML = tableOrEmpty(view.handicap_table || [], obsColumns, "当前没有让球胜平负观察。 ");
   qs("#scoreGoalsTotals").innerHTML = C.table(view.total_goals_table || [], obsColumns);
   qs("#scoreGoalsScores").innerHTML = C.table(view.score_table || [], obsColumns);
+  qs("#scoreGoalsIntegrity").innerHTML = tableOrEmpty(view.probability_integrity || [], [
+    { key: "match", label: "比赛" },
+    { key: "total_goals_sum", label: "总进球合计" },
+    { key: "had_sum", label: "胜平负合计" },
+    { key: "hhad_sum", label: "让球合计" },
+    { key: "top5_score_mass", label: "Top5 比分覆盖" },
+    { key: "status", label: "状态" },
+    { key: "message_zh", label: "说明" },
+  ], "暂无概率矩阵完整性数据。");
   qs("#scoreGoalsNotes").innerHTML = C.list([...(view.risk_notes || []), ...((view.missing_signals || []).map((x) => `缺失情报：${x}`))]);
 }
 
@@ -206,12 +254,16 @@ function renderOperation(view) {
   qs("#operationEquityTable").innerHTML = C.table(view.equity_curve || [], [{ key: "date", label: "日期" }, { key: "bankroll", label: "纸面本金" }, { key: "daily_profit", label: "当日盈亏" }, { key: "observations", label: "观察项" }]);
   qs("#operationComboTable").innerHTML = C.table(view.combo_summary || [], [{ key: "type", label: "类型" }, { key: "count", label: "观察数" }, { key: "hit_rate", label: "命中率" }, { key: "profit", label: "盈亏" }, { key: "roi", label: "ROI" }]);
   qs("#operationWalkLog").innerHTML = C.table(view.walk_log_table || [], [{ key: "date", label: "日期" }, { key: "type", label: "类型" }, { key: "match", label: "比赛/组合" }, { key: "direction", label: "方向" }, { key: "paper_stake", label: "纸面金额" }, { key: "profit", label: "盈亏" }]);
+  qs("#operationProfitExplanation").innerHTML = C.list(view.profit_explanation || ["暂无盈亏归因。请先运行模拟走盘。"]);
   qs("#operationDiagnostics").innerHTML = C.list((view.diagnostics || []).map((item) => `问题：${item.title}；影响：${item.detail}；建议：${item.suggestion}`));
 }
 
 async function previewImport() {
-  const payload = await request("/api/view/import/preview", { input: value("#importInput"), adapter: value("#adapter"), mapping: value("#mappingPath") }, "预检字段");
+  const params = { input: value("#importInput"), adapter: value("#adapter"), mapping: value("#mappingPath") };
+  const payload = await request("/api/view/import/preview", params, "预检字段");
   if (payload.ok) renderImport(payload.data);
+  const workflow = await request("/api/view/user-workflow", { input: params.input, mapping: params.mapping }, "生成用户 CSV 复盘路径");
+  if (workflow.ok) renderUserWorkflow(workflow.data);
   switchView("import");
 }
 function renderImport(view) {
@@ -220,6 +272,41 @@ function renderImport(view) {
   qs("#fieldReportTable").innerHTML = C.table(view.field_report?.recognized_fields || [], [{ key: "canonical", label: "系统字段" }, { key: "label_zh", label: "中文含义" }, { key: "source", label: "CSV 列名" }, { key: "status", label: "状态" }]);
   qs("#repairSuggestionTable").innerHTML = C.table(view.repair_suggestions || [], [{ key: "severity", label: "级别" }, { key: "field", label: "字段" }, { key: "message_zh", label: "问题" }, { key: "suggestion_zh", label: "怎么修" }, { key: "mapping_example", label: "mapping 示例" }]);
   qs("#importQuality").innerHTML = `<pre>${C.escapeHtml(JSON.stringify(view.quality || {}, null, 2))}</pre>`;
+}
+function renderUserWorkflow(view) {
+  qs("#userWorkflowReadinessCards").innerHTML = C.cards(view.readiness_cards || []);
+  qs("#userWorkflowReadinessTable").innerHTML = C.table(view.readiness_table || [], [
+    { key: "item", label: "环节" },
+    { key: "status", label: "状态" },
+    { key: "meaning_zh", label: "含义" },
+    { key: "next_action_zh", label: "下一步" },
+  ]);
+  qs("#userWorkflowPreflightChecks").innerHTML = C.table(view.preflight_checks || [], [
+    { key: "item", label: "检查项" },
+    { key: "status", label: "状态" },
+    { key: "value", label: "数值" },
+    { key: "message_zh", label: "说明" },
+  ]);
+  const handoff = view.cli_handoff || {};
+  qs("#userWorkflowCliHandoff").innerHTML = [
+    C.list(handoff.notes || ["Dashboard/API 保持只读；完整 workflow 由 CLI 执行。"]),
+    handoff.command ? `<pre>${C.escapeHtml(handoff.command)}</pre>` : "",
+    C.table(handoff.expected_outputs || [], [
+      { key: "label", label: "输出" },
+      { key: "path", label: "路径" },
+      { key: "git_policy", label: "Git 策略" },
+    ]),
+  ].join("");
+  qs("#userWorkflowSteps").innerHTML = C.table(view.steps || [], [
+    { key: "step", label: "步骤" },
+    { key: "title", label: "动作" },
+    { key: "status", label: "状态" },
+    { key: "summary", label: "说明" },
+  ]);
+  qs("#userWorkflowBacktestNotes").innerHTML = C.list(view.backtest_explanation || ["完整执行 workflow 后会显示回测解释。"]);
+  qs("#userWorkflowCalibrationNotes").innerHTML = C.list(view.calibration_explanation || ["完整执行 workflow 后会显示校准说明。"]);
+  qs("#userWorkflowQualityNotes").innerHTML = C.list(view.data_quality_notes || ["字段预检后会显示数据质量提示。"]);
+  qs("#userWorkflowNextSteps").innerHTML = C.list(view.next_steps || ["字段预检通过后，可使用 CLI 完整执行标准化、回测、校准和分析。"]);
 }
 
 async function runQa() {

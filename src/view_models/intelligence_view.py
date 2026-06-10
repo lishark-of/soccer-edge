@@ -20,6 +20,8 @@ def build_intelligence_view(preview: dict) -> dict:
         "top_total_goals": [_obs(row) for row in preview.get("top_total_goals_observations", [])[:5]],
         "top_scores": [_obs(row) for row in preview.get("top_score_observations", [])[:5]],
         "missing_signals": list(preview.get("missing_signals", []) or []),
+        "external_signals_status": preview.get("external_signals_status", {}) or {},
+        "signal_status": _signal_status_table(preview),
         "discipline": explain_trade_discipline(preview),
         "warnings": list(preview.get("warnings", []) or []),
         "disclaimer": preview.get("disclaimer", "仅用于观察信号、纸面模拟和风险诊断。"),
@@ -57,6 +59,52 @@ def _combo(row: dict) -> dict:
         "risk_level": row.get("risk_level"),
         "paper_stake": _rmb(row.get("suggested_paper_stake")),
     }
+
+
+def _signal_status_table(preview: dict) -> list[dict]:
+    contexts = preview.get("contexts") or []
+    external_status = preview.get("external_signals_status", {}) or {}
+    signal_names = ["news", "injuries", "lineup", "weather", "motivation", "schedule", "travel"]
+    labels = {
+        "news": "新闻",
+        "injuries": "伤停",
+        "lineup": "首发",
+        "weather": "天气",
+        "motivation": "战意",
+        "schedule": "赛程",
+        "travel": "旅行",
+    }
+    rows = []
+    for name in signal_names:
+        signals = []
+        for context in contexts:
+            signal = (context.get("signals") or {}).get(name)
+            if isinstance(signal, dict):
+                signals.append(signal)
+        connected = [item for item in signals if item.get("status") == "connected"]
+        basic_only = [item for item in signals if item.get("status") == "basic_only"]
+        status = "connected" if connected else "basic_only" if basic_only else "not_connected"
+        if connected:
+            message = "已有外部结构化输入，仅用于解释信心。"
+            source = "用户 JSON" if external_status.get("source_type") == "user_json" else "外部结构化输入"
+        elif basic_only:
+            message = "只有开赛时间等基础信息，休息天数或旅行距离仍为 unknown。"
+            source = "基础赛程"
+        else:
+            message = "未接入可靠数据，模型不会编造该情报。"
+            source = "未接入"
+        rows.append(
+            {
+                "signal": labels.get(name, name),
+                "key": name,
+                "status": status,
+                "impact": "known" if connected else "unknown",
+                "coverage": f"{len(connected) + len(basic_only)}/{len(contexts)}",
+                "source_zh": source,
+                "message_zh": message,
+            }
+        )
+    return rows
 
 
 def _play(value: str | None) -> str:

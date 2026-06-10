@@ -12,6 +12,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", default="mock")
     parser.add_argument("--date")
     parser.add_argument("--bankroll", type=float, default=10000.0)
+    parser.add_argument("--external-signals", default=None)
     parser.add_argument("--enable-3x1", action="store_true")
     parser.add_argument("--risk-profile", choices=["conservative", "balanced", "aggressive"], default="conservative")
     parser.add_argument("--show-rejected", action="store_true")
@@ -19,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", choices=["json", "text"], default="text")
     args = parser.parse_args(argv)
     try:
-        payload = build_intelligence_preview(args.provider, args.date, bankroll=args.bankroll, risk_profile=args.risk_profile)
+        payload = build_intelligence_preview(args.provider, args.date, args.external_signals, bankroll=args.bankroll, risk_profile=args.risk_profile)
         result = dict(payload.get("optimizer", {}))
         result.update({"provider": args.provider, "provider_used": payload.get("provider_used"), "date": payload.get("date") or args.date, "matches_analyzed": payload.get("matches_count", 0), "candidate_pool_count": len(payload.get("optimizer_candidates", []) or []), "top_total_goals_observations": payload.get("top_total_goals_observations", []), "top_score_observations": payload.get("top_score_observations", []), "missing_signals": payload.get("missing_signals", []), "warnings": payload.get("warnings", [])})
         if args.format == "json":

@@ -82,6 +82,8 @@
           <article><h3>Top 总进球观察</h3><div id="todayTotalGoals"></div></article>
           <article><h3>Top 比分观察</h3><div id="todayScores"></div></article>
         </div>
+        <h3>Top 2串1被拒原因</h3><div id="todayRejectedParlay2"></div>
+        <h3>Top 3串1被拒原因</h3><div id="todayRejectedParlay3"></div>
         <h3>最大风险提示</h3><div id="todayRiskTip" class="noteBox"></div>
         <h3>缺失情报</h3><div id="todayMissing" class="noteBox"></div>
       </section>
@@ -108,24 +110,27 @@
       <section id="view-scoregoals" class="view pageLift">
         <div class="sectionHeading"><p class="eyebrow">Score matrix</p><h2>比分 / 总进球</h2><p>由 Poisson/xG 与 Dixon-Coles 矩阵推导，总进球和比分只作模型观察。</p></div>
         <button id="scoreGoalsBtn" class="secondary">刷新比分/进球数</button>
-        <div id="scoreGoalsCards" class="contentBox"></div><h3>总进球区间概率</h3><div id="scoreGoalsTotals"></div><h3>比分 Top 5</h3><div id="scoreGoalsScores"></div><div id="scoreGoalsNotes" class="noteBox"></div>
+        <div id="scoreGoalsCards" class="contentBox"></div><h3>让球胜平负概率</h3><div id="scoreGoalsHandicap"></div><h3>总进球区间概率</h3><div id="scoreGoalsTotals"></div><h3>比分 Top 5</h3><div id="scoreGoalsScores"></div><h3>概率矩阵完整性</h3><div id="scoreGoalsIntegrity"></div><div id="scoreGoalsNotes" class="noteBox"></div>
       </section>
 
       <section id="view-parlay" class="view pageLift">
-        <div class="sectionHeading"><p class="eyebrow">Combination risk</p><h2>组合风险</h2><p>组合会叠加不确定性；赔率变高不等于风险变低。</p></div>
-        <div id="parlay2Table"></div><div id="parlay3Table"></div><div id="riskNotes" class="noteBox"></div>
+        <div class="sectionHeading"><p class="eyebrow">Combination risk</p><h2>组合风险</h2><p>组合会叠加不确定性；赔率变高不等于风险变低。这里重点展示入选组合和被拒组合原因。</p></div>
+        <h3>入选 2串1 / 3串1</h3><div id="parlay2Table"></div><div id="parlay3Table"></div>
+        <h3>2串1 被拒候选</h3><div id="parlay2RejectedTable"></div>
+        <h3>3串1 被拒候选</h3><div id="parlay3RejectedTable"></div>
+        <div id="riskNotes" class="noteBox"></div>
       </section>
 
       <section id="view-operation" class="view pageLift">
         <div class="sectionHeading"><p class="eyebrow">Paper operation</p><h2>模拟走盘</h2><p>按时间顺序做纸面复盘，不代表未来表现。</p></div>
         <button id="operationBtn" class="secondary">运行模拟走盘</button>
-        <div id="operationCards" class="contentBox"></div><h3>盈亏曲线</h3><div id="operationEquityTable"></div><h3>组合表现</h3><div id="operationComboTable"></div><h3>走盘明细</h3><div id="operationWalkLog"></div><h3>问题诊断</h3><div id="operationDiagnostics" class="noteBox"></div>
+        <div id="operationCards" class="contentBox"></div><h3>盈亏曲线</h3><div id="operationEquityTable"></div><h3>组合表现</h3><div id="operationComboTable"></div><h3>走盘明细</h3><div id="operationWalkLog"></div><h3>为什么赚/亏</h3><div id="operationProfitExplanation" class="noteBox"></div><h3>问题诊断</h3><div id="operationDiagnostics" class="noteBox"></div>
       </section>
 
       <section id="view-import" class="view pageLift">
         <div class="sectionHeading"><p class="eyebrow">CSV onboarding</p><h2>数据导入</h2><p>预检字段、展示缺失项和中文修复建议；完整写文件 workflow 仍走 CLI。</p></div>
         <button id="importBtn" class="secondary">预检字段</button>
-        <div id="importCards" class="contentBox"></div><h3>字段识别结果</h3><div id="fieldReportTable"></div><h3>中文修复建议</h3><div id="repairSuggestionTable"></div><h3>质量摘要</h3><div id="importQuality"></div>
+        <div id="importCards" class="contentBox"></div><h3>字段识别结果</h3><div id="fieldReportTable"></div><h3>中文修复建议</h3><div id="repairSuggestionTable"></div><h3>CSV 复盘就绪度</h3><div id="userWorkflowReadinessCards" class="contentBox"></div><div id="userWorkflowReadinessTable"></div><h3>预检质量检查</h3><div id="userWorkflowPreflightChecks"></div><h3>完整 workflow 交接</h3><div id="userWorkflowCliHandoff" class="noteBox"></div><h3>用户 CSV 复盘路径</h3><div id="userWorkflowSteps"></div><h3>回测怎么读</h3><div id="userWorkflowBacktestNotes" class="noteBox"></div><h3>校准文件说明</h3><div id="userWorkflowCalibrationNotes" class="noteBox"></div><h3>数据质量提示</h3><div id="userWorkflowQualityNotes" class="noteBox"></div><h3>下一步</h3><div id="userWorkflowNextSteps" class="noteBox"></div><h3>质量摘要</h3><div id="importQuality"></div>
       </section>
 
       <section id="view-qa" class="view pageLift">

@@ -13,3 +13,7 @@ def test_dashboard_operation_page_has_no_betting_controls():
     button_text = " ".join(part.split("</button>")[0] for part in HTML.split("<button")[1:])
     for forbidden in ["下注", "投注", "购买", "下单", "支付", "代购"]:
         assert forbidden not in button_text
+
+
+def test_dashboard_operation_page_mentions_profit_explanation():
+    assert "为什么赚/亏" in HTML

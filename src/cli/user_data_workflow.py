@@ -69,6 +69,7 @@ def run_user_data_workflow(
         if field_report.get("missing_required_fields"):
             return _finalize(
                 input_path,
+                mapping_path,
                 field_report,
                 repair_suggestions,
                 normalized_path=None,
@@ -99,6 +100,7 @@ def run_user_data_workflow(
         )
         return _finalize(
             input_path,
+            mapping_path,
             field_report,
             repair_suggestions,
             normalized_path=normalized_path,
@@ -113,6 +115,7 @@ def run_user_data_workflow(
         field_report = {"recognized_fields": [], "missing_required_fields": [], "warnings": [_friendly_error(exc)], "confidence": "low"}
         return _finalize(
             input_path,
+            mapping_path,
             field_report,
             build_repair_suggestions(field_report),
             normalized_path=None,
@@ -136,10 +139,16 @@ def preview_user_data_workflow(input_path: str, mapping_path: str | None = None)
             "input_path": input_path,
             "field_report": field_report,
             "repair_suggestions": repair_suggestions,
+            "preflight_quality": _preflight_quality(dry_run, field_report),
             "normalized_output_path": None,
             "backtest": {},
             "calibration_artifact_path": None,
             "analysis": {},
+            "workflow_summary": _workflow_summary("preview", None, None, {}, {}),
+            "backtest_explanation": _backtest_explanation("preview", {}),
+            "calibration_explanation": _calibration_explanation(None),
+            "data_quality_notes": _data_quality_notes(field_report, {}),
+            "cli_handoff": _cli_handoff(input_path, mapping_path, None, None),
             "next_steps": _next_steps("error" if field_report.get("missing_required_fields") else "preview", field_report, None, None),
             "warnings": list(dict.fromkeys(_zh_warnings(dry_run.get("warnings", [])) + field_report.get("warnings", []))),
             "disclaimer": DISCLAIMER,
@@ -154,10 +163,16 @@ def preview_user_data_workflow(input_path: str, mapping_path: str | None = None)
             "input_path": input_path,
             "field_report": field_report,
             "repair_suggestions": build_repair_suggestions(field_report),
+            "preflight_quality": _preflight_quality({}, field_report),
             "normalized_output_path": None,
             "backtest": {},
             "calibration_artifact_path": None,
             "analysis": {},
+            "workflow_summary": _workflow_summary("error", None, None, {}, {}),
+            "backtest_explanation": _backtest_explanation("error", {}),
+            "calibration_explanation": _calibration_explanation(None),
+            "data_quality_notes": _data_quality_notes(field_report, {}),
+            "cli_handoff": _cli_handoff(input_path, mapping_path, None, None),
             "next_steps": ["请先修复 CSV 路径、字段名或 mapping JSON，然后重新预检。"],
             "warnings": [_friendly_error(exc)],
             "disclaimer": DISCLAIMER,
@@ -168,6 +183,7 @@ def preview_user_data_workflow(input_path: str, mapping_path: str | None = None)
 
 def _finalize(
     input_path: str,
+    mapping_path: str | None,
     field_report: dict,
     repair_suggestions: list[dict],
     normalized_path: str | None,
@@ -184,10 +200,16 @@ def _finalize(
         "input_path": input_path,
         "field_report": field_report,
         "repair_suggestions": repair_suggestions,
+        "preflight_quality": _preflight_quality({}, field_report),
         "normalized_output_path": normalized_path,
         "backtest": backtest_report,
         "calibration_artifact_path": calibration_path,
         "analysis": analysis,
+        "workflow_summary": _workflow_summary(overall_status, normalized_path, calibration_path, backtest_report, analysis),
+        "backtest_explanation": _backtest_explanation(overall_status, backtest_report),
+        "calibration_explanation": _calibration_explanation(calibration_path),
+        "data_quality_notes": _data_quality_notes(field_report, backtest_report),
+        "cli_handoff": _cli_handoff(input_path, mapping_path, normalized_path, calibration_path),
         "next_steps": _next_steps(overall_status, field_report, normalized_path, calibration_path),
         "warnings": list(dict.fromkeys(warnings + field_report.get("warnings", []))),
         "disclaimer": DISCLAIMER,
@@ -212,6 +234,179 @@ def _next_steps(status: str, field_report: dict, normalized_path: str | None, ca
         f"在校准状态页验证 calibration artifact：{calibration_path}",
         "进入指定日期分析页查看候选信号、EV、风险等级和本地解释。",
     ]
+
+
+def _cli_handoff(input_path: str, mapping_path: str | None, normalized_path: str | None, calibration_path: str | None) -> dict:
+    stem = Path(input_path).stem
+    output_dir = "data/normalized/user_workflow"
+    expected_normalized = normalized_path or str(Path(output_dir) / f"{stem}_normalized.csv")
+    expected_calibration = calibration_path or str(Path("artifacts/calibration") / f"{stem}_calibration.json")
+    parts = ["python3", "-m", "src.cli.user_data_workflow", "--input", _shell_quote(input_path)]
+    if mapping_path:
+        parts.extend(["--mapping", _shell_quote(mapping_path)])
+    parts.extend(["--output-dir", output_dir, "--format", "json"])
+    return {
+        "title": "完整 workflow 交接",
+        "mode": "cli_only_write_step",
+        "command": " ".join(parts),
+        "expected_outputs": [
+            {"label": "标准化 CSV", "path": expected_normalized, "git_policy": "ignored"},
+            {"label": "校准文件", "path": expected_calibration, "git_policy": "ignored"},
+        ],
+        "notes": [
+            "Dashboard/API 默认只读，只做字段预检和回测准备度解释。",
+            "完整 workflow 会生成标准化 CSV 和校准文件，因此保持 CLI-only，避免 App 自动写入用户数据。",
+            "生成文件位于 ignored 目录，不应提交到 Git。",
+        ],
+    }
+
+
+def _shell_quote(value: str) -> str:
+    text = str(value)
+    if not text:
+        return "''"
+    if all(ch.isalnum() or ch in "._/-" for ch in text):
+        return text
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def _preflight_quality(dry_run: dict, field_report: dict) -> dict:
+    quality = dry_run.get("quality", {}) if isinstance(dry_run, dict) else {}
+    odds_coverage = quality.get("odds_coverage", {}) if isinstance(quality, dict) else {}
+    rows_read = _int_value(dry_run.get("rows_read") if isinstance(dry_run, dict) else None)
+    rows_normalized = _int_value(dry_run.get("rows_normalized") if isinstance(dry_run, dict) else None)
+    rows_skipped = _int_value(dry_run.get("rows_skipped") if isinstance(dry_run, dict) else None)
+    had_coverage = _float_value(odds_coverage.get("had")) if isinstance(odds_coverage, dict) else None
+    hhad_coverage = _float_value(odds_coverage.get("hhad")) if isinstance(odds_coverage, dict) else None
+    can_normalize = bool(field_report.get("can_normalize")) and not field_report.get("missing_required_fields")
+    can_backtest_ev = bool(field_report.get("can_backtest_with_ev")) and (had_coverage is None or had_coverage >= 0.5)
+    sample_status = "ready" if rows_normalized >= 30 else "warning" if rows_normalized >= 20 else "blocked"
+    backtest_status = "ready" if can_normalize and can_backtest_ev and rows_normalized >= 20 else "pending" if can_normalize else "blocked"
+    calibration_status = "ready" if rows_normalized >= 100 else "warning" if rows_normalized >= 30 else "pending"
+    checks = [
+        {
+            "item": "样本行数",
+            "status": sample_status,
+            "value": rows_normalized,
+            "message_zh": "样本量可用于入门回测，但仍建议更多真实历史数据。" if sample_status == "ready" else "样本偏少，回测稳定性有限。",
+        },
+        {
+            "item": "胜平负赔率覆盖",
+            "status": "ready" if can_backtest_ev else "warning",
+            "value": f"{had_coverage * 100:.1f}%" if had_coverage is not None else "unknown",
+            "message_zh": "可支持 EV 回测。" if can_backtest_ev else "赔率覆盖不足，EV 回测可信度会下降。",
+        },
+        {
+            "item": "让球赔率覆盖",
+            "status": "ready" if hhad_coverage and hhad_coverage >= 0.5 else "info",
+            "value": f"{hhad_coverage * 100:.1f}%" if hhad_coverage is not None else "unknown",
+            "message_zh": "可辅助让球玩法回测。" if hhad_coverage and hhad_coverage >= 0.5 else "让球赔率不足，不阻断胜平负 EV 回测。",
+        },
+        {
+            "item": "回测准备度",
+            "status": backtest_status,
+            "value": backtest_status,
+            "message_zh": "字段、样本和赔率已具备回测准备度。" if backtest_status == "ready" else "请先修复字段或补充样本/赔率。",
+        },
+        {
+            "item": "校准准备度",
+            "status": calibration_status,
+            "value": calibration_status,
+            "message_zh": "样本量适合生成更稳定的校准诊断。" if calibration_status == "ready" else "可生成入门校准诊断，但样本越少越不稳定。",
+        },
+    ]
+    return {
+        "rows_read": rows_read,
+        "rows_normalized": rows_normalized,
+        "rows_skipped": rows_skipped,
+        "date_min": quality.get("date_min") if isinstance(quality, dict) else None,
+        "date_max": quality.get("date_max") if isinstance(quality, dict) else None,
+        "teams": quality.get("teams") if isinstance(quality, dict) else None,
+        "leagues": quality.get("leagues") if isinstance(quality, dict) else None,
+        "had_odds_coverage": had_coverage,
+        "hhad_odds_coverage": hhad_coverage,
+        "can_normalize": can_normalize,
+        "can_backtest_ev": can_backtest_ev,
+        "backtest_preflight_status": backtest_status,
+        "calibration_preflight_status": calibration_status,
+        "checks": checks,
+        "warnings": list(quality.get("warnings", []) if isinstance(quality, dict) else []),
+    }
+
+
+def _workflow_summary(status: str, normalized_path: str | None, calibration_path: str | None, backtest_report: dict, analysis: dict) -> dict:
+    metrics = backtest_report.get("metrics", {}) or {}
+    data_summary = backtest_report.get("data_summary", {}) or {}
+    return {
+        "overall_status": status,
+        "normalized_output_path": normalized_path,
+        "calibration_artifact_path": calibration_path,
+        "historical_matches": data_summary.get("total_matches") or data_summary.get("matches") or 0,
+        "evaluated_matches": backtest_report.get("matches_evaluated") or metrics.get("matches_evaluated") or 0,
+        "candidate_triggers": backtest_report.get("bets_total") or metrics.get("bets_total") or metrics.get("bet_count") or 0,
+        "roi": metrics.get("roi"),
+        "max_drawdown": metrics.get("max_drawdown"),
+        "brier_score": metrics.get("brier_score"),
+        "analysis_matches": analysis.get("matches_analyzed", 0) if isinstance(analysis, dict) else 0,
+        "readable_status_zh": "流程完成，可查看回测、校准和候选信号。" if status == "success" else "流程尚未完成，请先修复字段或数据质量问题。",
+    }
+
+
+def _int_value(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _backtest_explanation(status: str, backtest_report: dict) -> list[str]:
+    if status != "success" or not backtest_report:
+        return ["尚未完成概率回测。请先通过字段预检并执行完整 user_data_workflow。"]
+    metrics = backtest_report.get("metrics", {}) or {}
+    notes = [
+        "概率回测用于诊断历史样本中的模型表现，不代表未来表现。",
+        "命中率只说明候选方向在历史样本中的命中比例，不能单独代表收益质量。",
+        "ROI 表示纸面模拟收益与纸面投入的比例；样本越少，波动越大。",
+        "最大回撤用于观察连续不利结果对纸面本金曲线的影响。",
+    ]
+    if metrics.get("brier_score") is not None:
+        notes.append("Brier Score 衡量概率预测误差，越低越好。")
+    if metrics.get("log_loss") is not None:
+        notes.append("Log Loss 会重罚过度自信但错误的概率预测，越低越好。")
+    return notes
+
+
+def _calibration_explanation(calibration_path: str | None) -> list[str]:
+    if not calibration_path:
+        return ["尚未生成校准文件。校准文件只用于后续概率诊断辅助。"]
+    return [
+        f"校准文件已生成：{calibration_path}",
+        "校准文件用于让后续分析读取历史概率分箱诊断，不会保证未来结果。",
+        "如果历史 CSV 样本量不足或赔率缺失较多，校准效果也会有限。",
+    ]
+
+
+def _data_quality_notes(field_report: dict, backtest_report: dict) -> list[str]:
+    notes = []
+    missing = field_report.get("missing_required_fields") or []
+    if missing:
+        notes.append("缺少必需字段：" + "、".join(missing))
+    if field_report.get("warnings"):
+        notes.extend(str(item) for item in field_report.get("warnings", []))
+    data_summary = backtest_report.get("data_summary", {}) or {}
+    notes.extend(str(item) for item in data_summary.get("warnings", []) or [])
+    if not notes:
+        notes.append("字段识别和基础数据质量未发现阻断问题；仍建议使用更多真实历史样本验证。")
+    return list(dict.fromkeys(notes))
 
 
 def _write_workflow_report(result: dict, output_path: str) -> str:

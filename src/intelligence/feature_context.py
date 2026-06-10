@@ -3,8 +3,9 @@ from __future__ import annotations
 from src.intelligence.confidence import confidence_score
 from src.intelligence.lineup_signals import injury_signal, lineup_signal
 from src.intelligence.market_signals import no_vig_probs
+from src.intelligence.motivation_signals import motivation_signal
 from src.intelligence.news_signals import signal_or_unknown
-from src.intelligence.schedule_signals import schedule_signal
+from src.intelligence.schedule_signals import schedule_signal, travel_signal
 from src.intelligence.weather_signals import weather_signal
 from src.models.dixon_coles import apply_dixon_coles_adjustment
 from src.models.score_matrix import build_score_matrix, handicap_probabilities, outcome_probabilities, top_scores, total_goals_distribution
@@ -28,7 +29,9 @@ def build_match_context(match, historical_data=None, external_signals: dict | No
         "injuries": injury_signal(external),
         "lineup": lineup_signal(external),
         "weather": weather_signal(external),
+        "motivation": motivation_signal(external),
         "schedule": schedule_signal(match),
+        "travel": travel_signal(match),
     }
     confidence = confidence_score(signals)
     return {

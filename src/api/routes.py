@@ -250,6 +250,7 @@ def _run_next_available_from_query(query: dict[str, str]) -> dict:
         query.get("date"),
         bankroll=_float_param(query, "bankroll", 10000.0),
         risk_profile=query.get("risk_profile", "aggressive"),
+        external_signals_path=query.get("external_signals"),
     )
 
 

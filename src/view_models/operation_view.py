@@ -21,6 +21,7 @@ def build_operation_view(report: dict) -> dict:
         "equity_curve": report.get("equity_curve", []) or [],
         "walk_log_table": report.get("walk_log_table", []) or [],
         "combo_summary": [_combo_row(name, data) for name, data in combo.items()],
+        "profit_explanation": _profit_explanation(report, combo),
         "diagnostics": list(diagnostics.get("issues", []) or []),
         "strengths": list(diagnostics.get("strengths", []) or []),
         "warnings": list(report.get("warnings", []) or []),
@@ -39,6 +40,55 @@ def _combo_row(name: str, data: dict) -> dict:
         "profit": _signed_rmb(data.get("profit")),
         "roi": _pct(data.get("roi")),
     }
+
+
+def _profit_explanation(report: dict, combo: dict) -> list[str]:
+    profit = _float(report.get("total_profit"))
+    initial = _float(report.get("initial_bankroll"))
+    total_staked = _float(report.get("total_staked"))
+    bankroll_return = profit / initial if initial > 0 else 0.0
+    stake_roi = profit / total_staked if total_staked > 0 else 0.0
+    hit_rate = _float(report.get("hit_rate"))
+    max_drawdown = _float(report.get("max_drawdown"))
+    if total_staked <= 0:
+        return [
+            "本次没有形成已结算的纸面观察项，因此无法解释盈亏来源。",
+            "请检查历史数据、赔率覆盖、EV/Edge 阈值和最小训练样本数量。",
+            "模拟走盘只用于复盘诊断，不代表未来表现。",
+        ]
+    direction = "盈利" if profit > 0 else "亏损" if profit < 0 else "基本持平"
+    notes = [
+        f"本次纸面结果为{direction}：总盈亏 {_signed_rmb(profit)}，本金收益率 {_signed_pct(bankroll_return)}，模拟投入 ROI {_signed_pct(stake_roi)}。",
+        f"口径说明：总模拟投入为 {_rmb(total_staked)}，不是全仓使用本金；因此本金收益率和模拟投入 ROI 会明显不同。",
+        f"命中率为 {_pct(hit_rate)}，它只说明已结算观察项的命中比例，不能单独代表收益质量。",
+        f"最大回撤为 {_signed_pct(-max_drawdown)}，用于观察纸面本金曲线曾经承受的最大不利波动。",
+    ]
+    contributors = _combo_contributors(combo)
+    if contributors:
+        notes.append("玩法贡献：" + "；".join(contributors))
+    else:
+        notes.append("玩法贡献暂不明显，可能是样本量不足或观察项太少。")
+    notes.append("模拟走盘不代表未来表现，也不构成投注、下单、支付或代购建议。")
+    return notes
+
+
+def _combo_contributors(combo: dict) -> list[str]:
+    rows = []
+    labels = {"single": "单关观察", "parlay_2x1": "2串1 组合观察", "parlay_3x1": "3串1 组合观察"}
+    for key, label in labels.items():
+        data = combo.get(key, {}) or {}
+        count = int(data.get("settled") or data.get("count") or 0)
+        if count <= 0:
+            continue
+        rows.append(f"{label}结算 {count} 项，盈亏 {_signed_rmb(data.get('profit'))}，ROI {_pct(data.get('roi'))}")
+    return rows
+
+
+def _float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _rmb(value) -> str:

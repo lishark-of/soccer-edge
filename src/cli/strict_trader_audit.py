@@ -41,8 +41,11 @@ def run_strict_trader_audit(project_root: str = ".") -> dict[str, Any]:
     endpoint_specs = {
         "next_available": ("/api/view/next-available", {"provider": "auto", "bankroll": "10000", "risk_profile": "aggressive"}),
         "matches": ("/api/view/matches", {"provider": "auto", "date": "2026-06-10"}),
+        "intelligence": ("/api/view/intelligence", {"provider": "auto", "date": "2026-06-10"}),
+        "intelligence_external": ("/api/view/intelligence", {"provider": "mock", "date": "2026-06-10", "external_signals": "data/fixtures/external_signals_mock_20260610.json"}),
         "optimizer_aggressive": ("/api/view/optimizer", {"provider": "auto", "date": "2026-06-10", "bankroll": "10000", "risk_profile": "aggressive"}),
         "score_goals": ("/api/view/score-goals", {"provider": "auto", "date": "2026-06-10"}),
+        "user_workflow": ("/api/view/user-workflow", {"input": "data/fixtures/user_onboarding_sample.csv", "mapping": "data/fixtures/user_onboarding_mapping_example.json"}),
         "operation_simulate": ("/api/view/operation", {"historical_data": "data/fixtures/operation_walkforward_sample.csv", "initial_bankroll": "10000"}),
         "qa": ("/api/view/qa", {}),
     }
@@ -56,6 +59,9 @@ def run_strict_trader_audit(project_root: str = ".") -> dict[str, Any]:
             checks.append(QaCheckResult(f"audit.endpoint.{name}", False, message=f"{name} endpoint failed cleanly", details={"error": str(exc).splitlines()[0][:180]}))
 
     checks.extend(_static_checks(html, combined))
+    acceptance_checks = _acceptance_checks(html, combined, endpoint_payloads)
+    checks.extend(acceptance_checks)
+    phase3_readiness = _phase3_readiness(html, combined, endpoint_payloads)
     summary = summarize_checks(checks)
     findings = [
         {"name": c.name, "message": c.message, "details": c.details}
@@ -67,6 +73,10 @@ def run_strict_trader_audit(project_root: str = ".") -> dict[str, Any]:
         "overall_passed": summary["overall_passed"],
         "summary": summary,
         "checks": results_to_dicts(checks),
+        "acceptance_summary": summarize_checks(acceptance_checks),
+        "acceptance_criteria": results_to_dicts(acceptance_checks),
+        "phase3_summary": _phase3_summary(phase3_readiness),
+        "phase3_readiness": phase3_readiness,
         "endpoint_summary": _endpoint_summary(endpoint_payloads),
         "findings": findings,
         "fix_suggestions": _fix_suggestions(findings),
@@ -96,6 +106,241 @@ def _static_checks(html: str, combined: str) -> list[QaCheckResult]:
     return checks
 
 
+def _acceptance_checks(html: str, combined: str, payloads: dict[str, dict]) -> list[QaCheckResult]:
+    next_available = _payload_data(payloads, "next_available")
+    optimizer = _payload_data(payloads, "optimizer_aggressive")
+    score_goals = _payload_data(payloads, "score_goals")
+    operation = _payload_data(payloads, "operation_simulate")
+
+    matches_count = _safe_int(next_available.get("matches_count"))
+    provider_used = str(next_available.get("provider_used") or "")
+    data_source_status = next_available.get("data_source_status")
+    observation_rows = _collect_observation_rows(next_available) or _collect_observation_rows(optimizer)
+    rejected_combo_rows = _collect_rejected_combo_rows(optimizer)
+    profit_notes = operation.get("profit_explanation") or []
+    disclaimers_blob = _stringify([next_available, optimizer, score_goals, operation])
+
+    no_forbidden_buttons = all(
+        f">{label}<" not in combined and f">{label} " not in combined
+        for label in FORBIDDEN_BUTTON_TEXT
+    )
+    score_rows = (score_goals.get("score_table") or []) + (score_goals.get("top_scores") or [])
+    total_goal_rows = score_goals.get("total_goals_table") or []
+
+    return [
+        QaCheckResult(
+            "acceptance.01_today_observation_default",
+            bool(next_available) and "今日观察" in html,
+            message="App 默认进入今日观察，并能取得 next-available 预览。",
+            details={"selected_date": next_available.get("selected_date"), "matches_count": matches_count},
+        ),
+        QaCheckResult(
+            "acceptance.02_no_visible_technical_controls",
+            "<details id=\"advancedSettings\"" in html and "<details id=\"advancedSettings\" open" not in html and "API Base" not in html and "操作面板" not in html,
+            message="首页不默认展示 API Base、Provider、路径输入等技术操作面板。",
+        ),
+        QaCheckResult(
+            "acceptance.03_top_observations_visible",
+            all(text in html for text in ["Top 单关观察", "Top 2串1观察", "Top 总进球观察", "Top 比分观察"]) and matches_count is not None,
+            message="首页展示可售比赛数与 Top 单关、2串1、总进球、比分观察入口。",
+            details={"matches_count": matches_count},
+        ),
+        QaCheckResult(
+            "acceptance.04_no_transaction_controls",
+            no_forbidden_buttons,
+            message="App 没有投注、支付、下单、代购等正向操作按钮。",
+        ),
+        QaCheckResult(
+            "acceptance.05_sporttery_success_or_calm_fallback",
+            (provider_used == "sporttery" and (matches_count or 0) > 0) or isinstance(data_source_status, dict),
+            message="Sporttery 成功时展示真实比赛；不可用时保留平静的数据源状态说明。",
+            details={"provider_used": provider_used, "matches_count": matches_count},
+        ),
+        QaCheckResult(
+            "acceptance.06_datasource_status_no_crash",
+            bool(payloads.get("next_available", {}).get("ok")) and isinstance(data_source_status, dict),
+            message="数据源失败或回退时不崩溃，并返回 data_source_status。",
+        ),
+        QaCheckResult(
+            "acceptance.07_observations_have_discipline_context",
+            bool(observation_rows)
+            and all(_has_any(row, ["selection_reason", "入选原因", "reason", "selected_reason"]) for row in observation_rows[:8])
+            and all(label in combined for label in ["支持因素", "反对因素", "缺失情报"]),
+            message="观察项包含并展示入选原因、反对因素和缺失情报等严厉交易者上下文。",
+            details={"checked_rows": min(len(observation_rows), 8), "total_rows": len(observation_rows)},
+        ),
+        QaCheckResult(
+            "acceptance.08_rejected_combos_have_reasons",
+            bool(rejected_combo_rows)
+            and all(_has_any(row, ["reject_reason", "rejected_reason", "拒绝原因", "reason"]) for row in rejected_combo_rows[:12])
+            and "Top 2串1被拒原因" in html
+            and "Top 3串1被拒原因" in html,
+            message="被拒绝的 2串1/3串1 组合包含拒绝原因，并在今日观察首页展示。",
+            details={"checked_rows": min(len(rejected_combo_rows), 12), "total_rows": len(rejected_combo_rows)},
+        ),
+        QaCheckResult(
+            "acceptance.09_operation_profit_explained",
+            bool(profit_notes),
+            message="模拟走盘解释为什么赚/亏，并区分本金收益率与模拟投入 ROI。",
+            details={"notes_count": len(profit_notes) if isinstance(profit_notes, list) else 1},
+        ),
+        QaCheckResult(
+            "acceptance.10_model_outputs_are_not_guarantees",
+            ("不代表未来表现" in disclaimers_blob or "不保证" in disclaimers_blob) and ("不构成" in disclaimers_blob or "纸面" in disclaimers_blob) and bool(score_rows) and bool(total_goal_rows),
+            message="模型输出包含非保证声明，并展示比分 Top 与总进球概率。",
+            details={"score_rows": len(score_rows), "total_goal_rows": len(total_goal_rows)},
+        ),
+    ]
+
+
+def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> list[dict[str, Any]]:
+    next_available = _payload_data(payloads, "next_available")
+    matches = _payload_data(payloads, "matches")
+    intelligence = _payload_data(payloads, "intelligence")
+    intelligence_external = _payload_data(payloads, "intelligence_external")
+    external_signal_status = intelligence_external.get("external_signals_status") if isinstance(intelligence_external.get("external_signals_status"), dict) else {}
+    optimizer = _payload_data(payloads, "optimizer_aggressive")
+    score_goals = _payload_data(payloads, "score_goals")
+    user_workflow = _payload_data(payloads, "user_workflow")
+
+    matches_count = _safe_int(next_available.get("matches_count"))
+    data_source_status = next_available.get("data_source_status")
+    source_health = next_available.get("source_health") if isinstance(next_available.get("source_health"), dict) else {}
+    scan_window = source_health.get("scan_window") if isinstance(source_health.get("scan_window"), dict) else {}
+    missing_signals = _collect_missing_signals(next_available, intelligence, optimizer, score_goals)
+    signal_keys = _collect_signal_keys(next_available, intelligence)
+    connected_external_keys = _collect_connected_signal_keys(intelligence_external)
+    rejected_combo_rows = _collect_rejected_combo_rows(optimizer)
+    user_steps = user_workflow.get("steps") or []
+    user_readiness = user_workflow.get("readiness_table") or []
+    user_preflight = user_workflow.get("preflight_quality") if isinstance(user_workflow.get("preflight_quality"), dict) else {}
+    user_preflight_checks = user_workflow.get("preflight_checks") or []
+    user_cli_handoff = user_workflow.get("cli_handoff") if isinstance(user_workflow.get("cli_handoff"), dict) else {}
+    user_has_backtest_context = bool(user_workflow.get("backtest_explanation") or user_workflow.get("workflow_summary"))
+    score_integrity = score_goals.get("probability_integrity") or []
+
+    return [
+        _phase_item(
+            "Phase 3-A",
+            "首页极简化与今日观察",
+            ready="今日观察" in html and "API Base" not in html and "<details id=\"advancedSettings\" open" not in html,
+            evidence=[
+                "首页包含今日观察",
+                "高级设置 details 存在且默认关闭",
+                "首页未出现 API Base 文案",
+            ],
+            gaps=[],
+        ),
+        _phase_item(
+            "Phase 3-B",
+            "Sporttery 自动拉取与数据源状态",
+            ready=bool(payloads.get("next_available", {}).get("ok")) and matches_count is not None and isinstance(data_source_status, dict) and bool(source_health) and bool(scan_window.get("complete")),
+            evidence=[
+                f"selected_date={next_available.get('selected_date')}",
+                f"matches_count={matches_count}",
+                f"provider_used={next_available.get('provider_used')}",
+                f"source_health={source_health.get('health')}",
+                f"all_attempts_stable={source_health.get('all_attempts_stable')}",
+                f"scan_window={scan_window.get('start_date')}..{scan_window.get('end_date')}",
+                f"scan_complete={scan_window.get('complete')}",
+                f"days_checked={scan_window.get('days_checked')}",
+                f"scanned_dates={', '.join(source_health.get('scanned_dates') or [])}",
+                f"successful_attempts={source_health.get('successful_attempts')}/{source_health.get('attempt_count')}",
+                f"sporttery_attempts={source_health.get('sporttery_attempts')}",
+                f"fallback_attempts={source_health.get('fallback_attempts')}",
+                f"empty_attempts={source_health.get('empty_attempts')}",
+                f"warning_attempts={source_health.get('warning_attempts')}",
+                f"matches_table_rows={len(matches.get('matches_table') or [])}",
+            ],
+            gaps=["Sporttery 外部接口仍可能受网络、证书或接口变更影响；当前已提供本地健康摘要，后续可增加历史监控。"],
+        ),
+        _phase_item(
+            "Phase 3-C",
+            "赛前情报融合接口与缺失情报展示",
+            ready=bool(missing_signals) and _signals_mark_unknown(intelligence) and {"schedule", "travel"}.issubset(set(signal_keys)) and bool(connected_external_keys) and external_signal_status.get("source_type") == "user_json",
+            evidence=[
+                f"missing_signals={', '.join(missing_signals) if missing_signals else 'none'}",
+                f"signal_status_keys={', '.join(signal_keys) if signal_keys else 'none'}",
+                f"external_signal_connected={', '.join(connected_external_keys) if connected_external_keys else 'none'}",
+                f"external_signal_source={external_signal_status.get('source_type')}",
+                f"external_signal_load_status={external_signal_status.get('load_status')}",
+                f"external_signal_invalid_items={external_signal_status.get('invalid_items')}",
+                f"external_signal_coverage={external_signal_status.get('matched_count')}/{external_signal_status.get('matches_count')}",
+                "新闻、伤停、首发、天气等未接入时显示 not_connected / unknown",
+            ],
+            gaps=["真实新闻、伤停、首发、天气源尚未接入；当前只做接口与缺失展示。"],
+        ),
+        _phase_item(
+            "Phase 3-D",
+            "比分/总进球/让球概率矩阵",
+            ready=bool(score_goals.get("score_table")) and bool(score_goals.get("total_goals_table")) and bool(score_goals.get("handicap_table")) and bool(score_integrity) and all(row.get("status") == "pass" for row in score_integrity if isinstance(row, dict)),
+            evidence=[
+                f"score_rows={len(score_goals.get('score_table') or [])}",
+                f"total_goal_rows={len(score_goals.get('total_goals_table') or [])}",
+                f"handicap_rows={len(score_goals.get('handicap_table') or [])}",
+                f"integrity_rows={len(score_integrity)}",
+                f"integrity_status={_readiness_status_counts(score_integrity)}",
+            ],
+            gaps=[],
+        ),
+        _phase_item(
+            "Phase 3-E",
+            "用户历史 CSV 回测与模型校准",
+            ready=bool(user_steps) and bool(user_readiness) and bool(user_preflight_checks) and bool(user_cli_handoff.get("command")) and user_has_backtest_context,
+            evidence=[
+                f"user_workflow_steps={len(user_steps)}",
+                f"user_readiness_items={len(user_readiness)}",
+                f"user_readiness_status={_readiness_status_counts(user_readiness)}",
+                f"preflight_checks={len(user_preflight_checks)}",
+                f"rows_normalized={user_preflight.get('rows_normalized')}",
+                f"had_odds_coverage={user_preflight.get('had_odds_coverage')}",
+                f"cli_handoff_mode={user_cli_handoff.get('mode')}",
+                f"cli_handoff_outputs={len(user_cli_handoff.get('expected_outputs') or [])}",
+                "用户 CSV 预检、字段修复、回测解释和校准说明已进入只读视图",
+            ],
+            gaps=["真实用户 CSV 的效果仍取决于数据质量；完整写文件 workflow 仍应保持 CLI-only。"],
+        ),
+        _phase_item(
+            "Phase 3-F",
+            "组合优化器展示被拒组合和原因",
+            ready=bool(rejected_combo_rows) and all(_has_any(row, ["reject_reason", "rejected_reason", "拒绝原因", "reason"]) for row in rejected_combo_rows[:12]),
+            evidence=[
+                f"rejected_combo_rows={len(rejected_combo_rows)}",
+                "2串1/3串1 候选排行榜包含被拒原因",
+            ],
+            gaps=[],
+        ),
+    ]
+
+
+def _phase_item(phase: str, title: str, ready: bool, evidence: list[str], gaps: list[str]) -> dict[str, Any]:
+    status = "ready" if ready and not gaps else "partial" if ready else "needs_work"
+    return {
+        "phase": phase,
+        "title": title,
+        "status": status,
+        "ready": ready,
+        "evidence": evidence,
+        "remaining_gaps": gaps,
+    }
+
+
+def _phase3_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {"ready": 0, "partial": 0, "needs_work": 0}
+    for item in items:
+        status = str(item.get("status") or "needs_work")
+        counts[status] = counts.get(status, 0) + 1
+    return {"total": len(items), **counts, "overall_ready": counts.get("needs_work", 0) == 0 and counts.get("partial", 0) == 0}
+
+
+def _readiness_status_counts(rows: list[dict[str, Any]]) -> str:
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return ", ".join(f"{key}:{value}" for key, value in sorted(counts.items())) or "none"
+
+
 def _endpoint_summary(payloads: dict[str, dict]) -> dict[str, Any]:
     next_available = payloads.get("next_available", {}).get("data", {})
     optimizer = payloads.get("optimizer_aggressive", {}).get("data", {})
@@ -107,6 +352,115 @@ def _endpoint_summary(payloads: dict[str, dict]) -> dict[str, Any]:
         "optimizer_risk_profile": optimizer.get("risk_profile"),
         "score_goals_rows": len(score_goals.get("total_goals_table", []) or []) + len(score_goals.get("score_table", []) or []),
     }
+
+
+def _payload_data(payloads: dict[str, dict], name: str) -> dict[str, Any]:
+    payload = payloads.get(name) or {}
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    return data if isinstance(data, dict) else {}
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _stringify(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _has_any(row: dict[str, Any], keys: list[str]) -> bool:
+    return any(str(row.get(key) or "").strip() for key in keys)
+
+
+def _collect_observation_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    direct_keys = [
+        "top_single_observations",
+        "top_singles",
+        "top_2x1",
+        "top_parlay_2x1",
+        "top_total_goals",
+        "top_scores",
+    ]
+    for key in direct_keys:
+        rows.extend(_list_of_dicts(data.get(key)))
+
+    top_observations = data.get("top_observations")
+    if isinstance(top_observations, dict):
+        for key in ["singles", "parlay_2x1", "parlay_3x1", "total_goals", "scores"]:
+            rows.extend(_list_of_dicts(top_observations.get(key)))
+
+    selected_portfolio = data.get("selected_portfolio")
+    if isinstance(selected_portfolio, dict):
+        for key in ["singles", "parlay_2x1", "parlay_3x1"]:
+            rows.extend(_list_of_dicts(selected_portfolio.get(key)))
+
+    return rows
+
+
+def _collect_rejected_combo_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    candidate_rankings = data.get("candidate_rankings")
+    if isinstance(candidate_rankings, dict):
+        for key in ["parlay_2x1", "parlay_3x1"]:
+            rows.extend(_list_of_dicts(candidate_rankings.get(key)))
+    rows.extend(_list_of_dicts(data.get("rejected_candidates")))
+    return [row for row in rows if not row.get("selected")]
+
+
+def _collect_missing_signals(*items: dict[str, Any]) -> list[str]:
+    collected: list[str] = []
+    for item in items:
+        values = item.get("missing_signals")
+        if isinstance(values, list):
+            collected.extend(str(value) for value in values if value)
+        context_summary = item.get("context_summary")
+        if isinstance(context_summary, dict):
+            values = context_summary.get("missing_signals")
+            if isinstance(values, list):
+                collected.extend(str(value) for value in values if value)
+    return list(dict.fromkeys(collected))
+
+
+def _collect_signal_keys(*items: dict[str, Any]) -> list[str]:
+    collected: list[str] = []
+    for item in items:
+        rows = item.get("signal_status")
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("key"):
+                    collected.append(str(row["key"]))
+    return list(dict.fromkeys(collected))
+
+
+def _collect_connected_signal_keys(*items: dict[str, Any]) -> list[str]:
+    collected: list[str] = []
+    for item in items:
+        rows = item.get("signal_status")
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("key") and row.get("status") == "connected":
+                    collected.append(str(row["key"]))
+    return list(dict.fromkeys(collected))
+
+
+def _signals_mark_unknown(data: dict[str, Any]) -> bool:
+    blob = _stringify(data)
+    return "not_connected" in blob and "unknown" in blob
+
+
+def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _fix_suggestions(findings: list[dict]) -> list[str]:

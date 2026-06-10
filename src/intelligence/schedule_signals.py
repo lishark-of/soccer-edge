@@ -19,6 +19,16 @@ def schedule_signal(match) -> dict:
     }
 
 
+def travel_signal(match) -> dict:
+    return {
+        "travel_flag": "unknown",
+        "travel_distance_km": None,
+        "status": "not_connected",
+        "impact": "unknown",
+        "message_zh": "未接入球队旅行距离或跨时区信息，模型不会编造旅行影响。",
+    }
+
+
 def _value(obj, name: str, default=None):
     if isinstance(obj, dict):
         return obj.get(name, default)

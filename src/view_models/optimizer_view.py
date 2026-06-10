@@ -10,9 +10,17 @@ def build_optimizer_view(result: dict) -> dict:
     comparison = result.get("profile_comparison", {}) or {}
     return {
         "title": "赛前组合优化",
+        "date": result.get("date") or result.get("selected_date"),
+        "provider_used": result.get("provider_used", "unknown"),
+        "matches_analyzed": result.get("matches_analyzed", result.get("matches_count", 0)),
+        "candidate_pool_count": result.get("candidate_pool_count", 0),
         "risk_profile": result.get("risk_profile", "conservative"),
         "risk_profile_label": result.get("risk_profile_label") or PROFILE_LABELS.get(result.get("risk_profile"), "保守"),
         "summary_cards": [
+            {"label": "观察日期", "value": result.get("date") or result.get("selected_date") or "N/A", "help": "本次赛前优化使用的可售比赛日期。"},
+            {"label": "实际数据源", "value": result.get("provider_used", "unknown"), "help": "Sporttery 成功时显示 sporttery，回退时显示 fallback/mock。"},
+            {"label": "分析比赛数", "value": result.get("matches_analyzed", result.get("matches_count", 0)), "help": "进入本次赛前优化的可售比赛数量。"},
+            {"label": "候选池", "value": result.get("candidate_pool_count", 0), "help": "进入严格筛选前的候选观察项数量。"},
             {"label": "风险档位", "value": result.get("risk_profile_label") or PROFILE_LABELS.get(result.get("risk_profile"), "保守"), "help": "保守 / 均衡 / 进取只影响纸面观察约束。"},
             {"label": "当前本金", "value": _rmb(result.get("bankroll")), "help": "用于计算纸面观察金额。"},
             {"label": "每日暴露上限", "value": _rmb(result.get("daily_exposure_cap")), "help": "按风险档位计算。"},
