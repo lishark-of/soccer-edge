@@ -1,25 +1,70 @@
 from __future__ import annotations
 
-DEFAULT_OPTIMIZER_CONFIG = {
-    "max_daily_exposure_pct": 0.03,
-    "single_stake_cap_pct": 0.01,
-    "parlay_2x1_cap_pct": 0.005,
-    "parlay_3x1_cap_pct": 0.0025,
-    "min_ev": 0.04,
-    "min_edge": 0.025,
-    "max_risk": "medium",
-    "enable_3x1": False,
-    "kelly_multiplier": 0.25,
-    "max_singles": 3,
-    "max_parlay_2x1": 2,
-    "max_parlay_3x1": 1,
+RISK_PROFILES = {
+    "conservative": {
+        "risk_profile": "conservative",
+        "risk_profile_label": "保守",
+        "max_daily_exposure_pct": 0.03,
+        "single_stake_cap_pct": 0.01,
+        "parlay_2x1_cap_pct": 0.005,
+        "parlay_3x1_cap_pct": 0.0,
+        "min_ev": 0.04,
+        "min_edge": 0.025,
+        "max_risk": "medium",
+        "enable_3x1": False,
+        "kelly_multiplier": 0.25,
+        "max_singles": 3,
+        "max_parlay_2x1": 0,
+        "max_parlay_3x1": 0,
+    },
+    "balanced": {
+        "risk_profile": "balanced",
+        "risk_profile_label": "均衡",
+        "max_daily_exposure_pct": 0.05,
+        "single_stake_cap_pct": 0.012,
+        "parlay_2x1_cap_pct": 0.008,
+        "parlay_3x1_cap_pct": 0.0,
+        "min_ev": 0.035,
+        "min_edge": 0.02,
+        "max_risk": "medium",
+        "enable_3x1": False,
+        "kelly_multiplier": 0.25,
+        "max_singles": 3,
+        "max_parlay_2x1": 2,
+        "max_parlay_3x1": 0,
+    },
+    "aggressive": {
+        "risk_profile": "aggressive",
+        "risk_profile_label": "进取",
+        "max_daily_exposure_pct": 0.08,
+        "single_stake_cap_pct": 0.015,
+        "parlay_2x1_cap_pct": 0.01,
+        "parlay_3x1_cap_pct": 0.004,
+        "min_ev": 0.025,
+        "min_edge": 0.015,
+        "max_risk": "high",
+        "enable_3x1": True,
+        "kelly_multiplier": 0.25,
+        "max_singles": 3,
+        "max_parlay_2x1": 3,
+        "max_parlay_3x1": 1,
+    },
 }
 
+DEFAULT_OPTIMIZER_CONFIG = dict(RISK_PROFILES["conservative"])
 RISK_RANK = {"low": 1, "medium": 2, "high": 3, "very_high": 4}
 
 
 def merge_config(config: dict | None = None) -> dict:
-    merged = {**DEFAULT_OPTIMIZER_CONFIG, **(config or {})}
+    incoming = dict(config or {})
+    profile = str(incoming.get("risk_profile") or incoming.get("profile") or "conservative").lower()
+    if profile not in RISK_PROFILES:
+        profile = "conservative"
+    merged = {**RISK_PROFILES[profile], **incoming}
+    merged["risk_profile"] = profile
+    merged["risk_profile_label"] = RISK_PROFILES[profile]["risk_profile_label"]
+    if profile != "aggressive" and not incoming.get("enable_3x1"):
+        merged["enable_3x1"] = False
     merged["daily_exposure_cap"] = float(merged.get("bankroll", 10000.0)) * float(merged["max_daily_exposure_pct"])
     return merged
 

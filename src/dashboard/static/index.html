@@ -62,6 +62,13 @@
         <label>初始模拟本金
           <input id="initialBankroll" value="10000">
         </label>
+        <label>赛前优化风险档位
+          <select id="riskProfile">
+            <option value="conservative">保守：优先单关，严格控制组合</option>
+            <option value="balanced">均衡：允许少量 2串1 纸面组合</option>
+            <option value="aggressive">进取：允许更高风险组合观察</option>
+          </select>
+        </label>
         <label>导入 CSV 路径
           <input id="importInput" value="data/fixtures/user_onboarding_sample.csv">
         </label>
@@ -92,6 +99,7 @@
           <button id="sportteryStatusBtn">刷新数据源状态</button>
           <button id="analyzeBtn">运行概率分析</button>
           <button id="optimizerBtn">生成观察组合</button>
+          <button id="optimizerCompareBtn">对比三个档位</button>
           <button id="backtestBtn">运行概率回测</button>
           <button id="operationBtn">运行模拟走盘</button>
           <button id="importBtn">预检字段</button>
@@ -197,19 +205,32 @@
             <h2>今日赛前组合优化</h2>
             <p>综合赔率、模型概率、市场去水概率、EV、Edge、风险等级、相关性和纸面本金约束，生成赛前观察组合。结果仅供概率研究，不构成任何真实操作建议。</p>
           </div>
-          <div class="metricPreview">默认本金 10,000 元；每日纸面暴露上限 3%；单关上限 1%；2串1 上限 0.5%；3串1 默认关闭。</div>
+          <div class="metricPreview">默认显示保守档：每日纸面暴露上限 3%，3串1 默认关闭。可切换均衡或进取档查看纸面模拟组合，但风险会升高。</div>
+          <div class="inlineActions">
+            <button id="optimizerCompareInlineBtn" class="secondary">对比三个档位</button>
+            <button id="optimizerRejectedInlineBtn" class="ghost">查看被拒原因</button>
+          </div>
           <div id="optimizerCards" class="contentBox"></div>
-          <h3>单关观察</h3>
+          <div id="optimizerNo2Reason" class="noteBox"></div>
+          <h3>保守 / 均衡 / 进取方案对比</h3>
+          <div id="optimizerProfileComparison"></div>
+          <h3>入选单关观察</h3>
           <div id="optimizerSingles"></div>
-          <h3>2串1观察</h3>
+          <h3>入选2串1观察</h3>
           <div id="optimizerParlay2"></div>
-          <h3>可选3串1观察</h3>
+          <h3>入选3串1观察</h3>
           <div id="optimizerParlay3"></div>
-          <h3>放弃的候选</h3>
+          <h3>Top 单关候选排行榜</h3>
+          <div id="optimizerSingleRanking"></div>
+          <h3>Top 2串1候选排行榜</h3>
+          <div id="optimizerParlay2Ranking"></div>
+          <h3>Top 3串1候选排行榜</h3>
+          <div id="optimizerParlay3Ranking"></div>
+          <h3>被拒组合原因</h3>
           <div id="optimizerRejected"></div>
           <h3>风险解释</h3>
           <div id="optimizerExplanations" class="noteBox"></div>
-          <p class="sectionHint">如果想提高纸面收益，需要提高风险暴露或放宽风险等级，但这会增加回撤和连续亏损概率。</p>
+          <p class="sectionHint">为什么当前没有 2串1？因为串关需要多场同时命中。即使每场都有正 EV，组合命中概率也会快速下降。本工具会用相关性折扣和风险上限过滤组合。提高风险档位可能增加纸面收益预期，但也会增加回撤和连续亏损概率。该功能仅用于纸面模拟研究。</p>
         </section>
 
         <section id="view-parlay" class="view pageLift">
@@ -252,7 +273,7 @@
             <button id="operationDiagBtn" class="secondary">查看问题诊断</button>
             <button id="operationRawBtn" class="ghost">查看原始 JSON</button>
           </div>
-          <div class="metricPreview">运行后会展示：初始模拟本金、最终模拟本金、总盈亏、ROI、命中率、最大回撤。</div>
+          <div class="metricPreview">运行后会展示：初始模拟本金、最终模拟本金、总盈亏、本金收益率、模拟投入 ROI、每日暴露上限和实际模拟投入。当前 10,000 元只产生约 181.88 元纸面盈利，是因为保守策略每日风险暴露上限为 3%，并非全仓使用。</div>
           <div id="operationCards" class="contentBox"></div>
           <h3>盈亏曲线</h3>
           <div id="operationEquityTable"></div>

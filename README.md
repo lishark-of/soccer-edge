@@ -533,3 +533,24 @@ The tool must never output:
 - local read-only REST API exists, but no public deployment is provided
 - project is local-only and not attached to Git/GitHub
 - no GitHub remote attached
+
+
+## Phase 2-M Hotfix: Optimizer Risk Profiles + Parlay Diagnostics
+
+Status: implemented
+
+新增：
+- 赛前优化风险档位：保守、均衡、进取
+- 单关 / 2串1 / 3串1 候选排行榜
+- 被拒组合原因：EV 不足、Edge 不足、风险过高、相关性过强或超过每日暴露
+- 保守 / 均衡 / 进取三档策略对比
+- App 赛前优化页展示“为什么当前没有 2串1”
+
+示例：
+
+```bash
+python3 -m src.cli.optimize_today --provider mock --date 2026-06-09 --bankroll 10000 --risk-profile balanced --show-rejected --format json
+python3 -m src.cli.optimize_today --provider mock --date 2026-06-09 --bankroll 10000 --compare-profiles --format json
+```
+
+说明：该功能只做纸面模拟和概率研究，不提供投注、下单、支付、代购或自动化购彩能力。提高风险档位可能增加纸面收益预期，也会增加回撤和连续亏损概率。

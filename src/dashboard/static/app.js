@@ -213,7 +213,7 @@ function renderLlmStatus(status) {
 function renderOptimizer(view) {
   state.optimizerView = view;
   document.querySelector("#optimizerCards").innerHTML = C.cards(view.summary_cards || []);
-  const columns = [
+  const selectedColumns = [
     { key: "type", label: "类型" },
     { key: "match", label: "比赛 / 组合" },
     { key: "legs", label: "组成" },
@@ -226,16 +226,44 @@ function renderOptimizer(view) {
     { key: "risk_level", label: "风险" },
     { key: "reason", label: "入选原因" },
   ];
-  document.querySelector("#optimizerSingles").innerHTML = C.table(view.singles_table || [], columns);
-  document.querySelector("#optimizerParlay2").innerHTML = C.table(view.parlay_2x1_table || [], columns);
-  document.querySelector("#optimizerParlay3").innerHTML = C.table(view.parlay_3x1_table || [], columns);
+  const rankingColumns = [
+    { key: "type", label: "类型" },
+    { key: "match", label: "比赛 / 组合" },
+    { key: "legs", label: "组成" },
+    { key: "odds", label: "赔率" },
+    { key: "model_prob", label: "模型概率" },
+    { key: "market_prob", label: "市场概率" },
+    { key: "ev", label: "EV" },
+    { key: "edge", label: "Edge" },
+    { key: "correlation_discount", label: "相关性折扣" },
+    { key: "paper_stake", label: "纸面投入" },
+    { key: "status", label: "状态" },
+    { key: "reject_reason", label: "被拒原因" },
+  ];
+  document.querySelector("#optimizerNo2Reason").innerHTML = C.list([view.no_2x1_reason || "当前没有 2串1 入选；请查看候选排行榜和被拒原因。"]);
+  document.querySelector("#optimizerProfileComparison").innerHTML = C.table(view.profile_comparison || [], [
+    { key: "profile", label: "方案" },
+    { key: "daily_exposure_cap", label: "每日上限" },
+    { key: "recommended_paper_exposure", label: "推荐纸面投入" },
+    { key: "singles_count", label: "单关" },
+    { key: "parlay_2x1_count", label: "2串1" },
+    { key: "parlay_3x1_count", label: "3串1" },
+    { key: "note", label: "说明" },
+  ]);
+  document.querySelector("#optimizerSingles").innerHTML = C.table(view.singles_table || [], selectedColumns);
+  document.querySelector("#optimizerParlay2").innerHTML = C.table(view.parlay_2x1_table || [], selectedColumns);
+  document.querySelector("#optimizerParlay3").innerHTML = C.table(view.parlay_3x1_table || [], selectedColumns);
+  document.querySelector("#optimizerSingleRanking").innerHTML = C.table(view.candidate_rankings?.singles || [], rankingColumns);
+  document.querySelector("#optimizerParlay2Ranking").innerHTML = C.table(view.candidate_rankings?.parlay_2x1 || [], rankingColumns);
+  document.querySelector("#optimizerParlay3Ranking").innerHTML = C.table(view.candidate_rankings?.parlay_3x1 || [], rankingColumns);
   document.querySelector("#optimizerRejected").innerHTML = C.table(view.rejected_table || [], [
     { key: "type", label: "类型" },
     { key: "match", label: "候选" },
     { key: "ev", label: "EV" },
     { key: "edge", label: "Edge" },
     { key: "risk_level", label: "风险" },
-    { key: "reason", label: "放弃原因" },
+    { key: "paper_stake", label: "纸面投入" },
+    { key: "reason", label: "被拒原因" },
   ]);
   document.querySelector("#optimizerExplanations").innerHTML = C.list(view.explanations || []);
 }
@@ -388,8 +416,15 @@ async function checkLlmStatus() {
   }
 }
 
-async function runOptimizer() {
-  const payload = await request("/api/view/optimizer", { provider: value("#provider"), date: value("#date"), bankroll: value("#initialBankroll") }, "生成观察组合");
+async function runOptimizer(compareProfiles = false) {
+  const payload = await request("/api/view/optimizer", {
+    provider: value("#provider"),
+    date: value("#date"),
+    bankroll: value("#initialBankroll"),
+    risk_profile: value("#riskProfile"),
+    show_rejected: "1",
+    compare_profiles: compareProfiles ? "1" : "0",
+  }, compareProfiles ? "对比三个档位" : "生成观察组合");
   if (payload.ok) renderOptimizer(payload.data);
   switchView("optimizer");
 }
@@ -453,7 +488,10 @@ document.querySelector("#healthBtn").addEventListener("click", checkHealth);
 document.querySelector("#matchesBtn").addEventListener("click", loadMatches);
 document.querySelector("#sportteryStatusBtn").addEventListener("click", loadSportteryStatus);
 document.querySelector("#analyzeBtn").addEventListener("click", runAnalysis);
-document.querySelector("#optimizerBtn").addEventListener("click", runOptimizer);
+document.querySelector("#optimizerBtn").addEventListener("click", () => runOptimizer(false));
+document.querySelector("#optimizerCompareBtn").addEventListener("click", () => runOptimizer(true));
+document.querySelector("#optimizerCompareInlineBtn").addEventListener("click", () => runOptimizer(true));
+document.querySelector("#optimizerRejectedInlineBtn").addEventListener("click", () => runOptimizer(false));
 document.querySelector("#backtestBtn").addEventListener("click", runBacktest);
 document.querySelector("#operationBtn").addEventListener("click", runOperation);
 document.querySelector("#importBtn").addEventListener("click", previewImport);

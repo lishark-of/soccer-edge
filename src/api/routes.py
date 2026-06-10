@@ -218,7 +218,12 @@ def _run_optimizer_from_query(query: dict[str, str]) -> dict:
     result = optimize_portfolio(
         candidates,
         bankroll=bankroll,
-        config={"enable_3x1": _truthy(query.get("enable_3x1"))},
+        config={
+            "enable_3x1": _truthy(query.get("enable_3x1")),
+            "risk_profile": query.get("risk_profile", "conservative"),
+            "show_rejected": _truthy(query.get("show_rejected")),
+            "compare_profiles": _truthy(query.get("compare_profiles")),
+        },
     )
     result.update({
         "provider": query.get("provider", "mock"),
