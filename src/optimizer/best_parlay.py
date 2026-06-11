@@ -51,6 +51,9 @@ def _normalize_row(row: dict, kind: str, selected: bool) -> dict:
     confidence = _float(row.get("observation_confidence") or row.get("confidence_score"), default=0.45)
     correlation_discount = _float(row.get("correlation_discount"), default=1.0)
     risk = str(row.get("risk_level") or "medium")
+    status = "入选" if selected or row.get("status") == "入选" else "未入选"
+    reject_reason = row.get("reject_reason") or row.get("reason") or ("已入选" if status == "入选" else "未通过组合纪律。")
+    hard_invalid = odds <= 1.01 or "同场互斥" in str(reject_reason)
     risk_penalty = {"low": 0.0, "medium": 0.08, "high": 0.18, "very_high": 0.32}.get(risk, 0.10)
     agreement = max(0.0, 1.0 - min(1.0, abs(model_prob - market_prob) * 4)) if model_prob and market_prob else 0.35
     odds_quality = min(1.0, odds / 5.0) if odds else 0.0
@@ -59,8 +62,9 @@ def _normalize_row(row: dict, kind: str, selected: bool) -> dict:
     drawdown_safety = max(0.0, 1.0 - risk_penalty)
     combo_score = 0.35 * normalized_ev + 0.20 * confidence + 0.15 * agreement + 0.10 * odds_quality + 0.10 * low_correlation + 0.10 * drawdown_safety
     risk_adjusted = combo_score - risk_penalty
-    status = "入选" if selected or row.get("status") == "入选" else "未入选"
-    reject_reason = row.get("reject_reason") or row.get("reason") or ("已入选" if status == "入选" else "未通过组合纪律。")
+    if hard_invalid:
+        combo_score = -999.0
+        risk_adjusted = -999.0
     return {
         "type": row.get("type") or row.get("candidate_type") or kind,
         "label_zh": _type_label(kind),
@@ -83,7 +87,7 @@ def _normalize_row(row: dict, kind: str, selected: bool) -> dict:
         "risk_level": risk,
         "selected": status == "入选",
         "status": status,
-        "selected_reason_zh": _selected_reason(ev, edge, confidence, correlation_discount, risk),
+        "selected_reason_zh": "该组合不可作为优秀串联。" if hard_invalid else _selected_reason(ev, edge, confidence, correlation_discount, risk),
         "opposing_factors_zh": _opposing_factors(row, model_prob, market_prob, confidence, risk),
         "missing_intelligence_zh": row.get("missing_signals") or row.get("missing_intelligence") or "查看数据可靠性页。",
         "reject_reason": reject_reason,
@@ -94,7 +98,15 @@ def _normalize_row(row: dict, kind: str, selected: bool) -> dict:
 def _best(rows: list[dict], key: str) -> dict:
     if not rows:
         return {"status": "empty", "message_zh": "当前没有可排序候选。"}
-    selected = sorted(rows, key=lambda item: _float(item.get(key), default=-999), reverse=True)[0]
+    valid = [item for item in rows if _float(item.get(key), default=-999) > -900 and _float(item.get("odds"), default=0) > 1.01]
+    if not valid:
+        nearest = rows[0]
+        return {
+            "status": "empty",
+            "message_zh": f"当前没有合格候选；最近被拒原因：{nearest.get('reject_reason', '未通过组合纪律。')}",
+            "reject_reason": nearest.get("reject_reason", "未通过组合纪律。"),
+        }
+    selected = sorted(valid, key=lambda item: _float(item.get(key), default=-999), reverse=True)[0]
     return selected
 
 
