@@ -74,7 +74,7 @@ def _cached_endpoint(endpoint: str, params: dict[str, str], *, ttl_seconds: int,
 
 def _injury_signal(payload: dict) -> dict:
     if payload.get("status") == "error":
-        return {"status": "error", "label_zh": "读取异常", "impact": "unknown", "items": [], "message_zh": payload.get("message_zh", "伤停读取失败。")}
+        return {"status": "error", "source": "API-Football", "label_zh": "读取异常", "impact": "unknown", "items": [], "message_zh": payload.get("message_zh", "伤停读取失败。")}
     rows = []
     for item in payload.get("response", []) or []:
         if not isinstance(item, dict):
@@ -83,13 +83,13 @@ def _injury_signal(payload: dict) -> dict:
         team = item.get("team") or {}
         rows.append({"player": player.get("name"), "team": team.get("name"), "reason": item.get("reason"), "type": item.get("type")})
     if rows:
-        return {"status": "confirmed", "label_zh": f"已确认 {len(rows)} 条公开伤停", "impact": "context", "items": rows, "message_zh": "API-Football 返回公开伤停条目。"}
-    return {"status": "checked_empty", "label_zh": "已检查但未返回伤停", "impact": "unknown", "items": [], "message_zh": "已检查，接口暂未返回伤停信息；不等于确认无伤停。"}
+        return {"status": "confirmed", "source": "API-Football", "label_zh": f"已确认 {len(rows)} 条公开伤停", "impact": "context", "items": rows, "message_zh": "API-Football 返回公开伤停条目。"}
+    return {"status": "checked_empty", "source": "API-Football", "label_zh": "已检查但未返回伤停", "impact": "unknown", "items": [], "message_zh": "已检查，接口暂未返回伤停信息；不等于确认无伤停。"}
 
 
 def _lineup_signal(payload: dict) -> dict:
     if payload.get("status") == "error":
-        return {"status": "error", "label_zh": "读取异常", "impact": "unknown", "items": [], "message_zh": payload.get("message_zh", "首发读取失败。")}
+        return {"status": "error", "source": "API-Football", "label_zh": "读取异常", "impact": "unknown", "items": [], "message_zh": payload.get("message_zh", "首发读取失败。")}
     rows = []
     for item in payload.get("response", []) or []:
         if not isinstance(item, dict):
@@ -102,12 +102,12 @@ def _lineup_signal(payload: dict) -> dict:
             "substitute_count": len(item.get("substitutes") or []),
         })
     if rows:
-        return {"status": "confirmed", "label_zh": "已确认首发", "impact": "context", "items": rows, "message_zh": "API-Football 已返回首发阵型和名单数量。"}
-    return {"status": "checked_empty", "label_zh": "已检查但首发未返回", "impact": "unknown", "items": [], "message_zh": "首发通常临近开赛才返回；当前接口未返回可靠首发。"}
+        return {"status": "confirmed", "source": "API-Football", "label_zh": "已确认首发", "impact": "context", "items": rows, "message_zh": "API-Football 已返回首发阵型和名单数量。"}
+    return {"status": "checked_empty", "source": "API-Football", "label_zh": "已检查但首发未返回", "impact": "unknown", "items": [], "message_zh": "首发通常临近开赛才返回；当前接口未返回可靠首发。"}
 
 
 def _unmatched_signal(label: str) -> dict:
-    return {"status": "not_connected", "label_zh": f"{label}未接入", "impact": "unknown", "items": [], "message_zh": f"{label}没有可靠数据，系统不会编造。"}
+    return {"status": "not_connected", "source": "API-Football", "label_zh": f"{label}未接入", "impact": "unknown", "items": [], "message_zh": f"{label}没有可靠数据，系统不会编造。"}
 
 
 def _ssl_context() -> ssl.SSLContext | None:

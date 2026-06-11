@@ -50,6 +50,7 @@ def get_match_weather(
     if not resolved.get("city"):
         return {
             "status": "not_connected",
+            "source": "Open-Meteo",
             "label_zh": "缺少城市/球场坐标",
             "impact": "unknown",
             "message_zh": "缺少 venue city 或 match_city，暂不能读取天气；可在 external_signals JSON 里补充 match_city。",
@@ -58,14 +59,15 @@ def get_match_weather(
     city = resolved["city"]
     geo = _geocode_city(city, timeout=timeout, use_cache=use_cache)
     if geo.get("status") != "ok":
-        return {"status": "not_connected", "label_zh": "城市坐标未匹配", "impact": "unknown", "message_zh": geo.get("message_zh", "城市坐标读取失败。"), "items": []}
+        return {"status": "not_connected", "source": "Open-Meteo", "label_zh": "城市坐标未匹配", "impact": "unknown", "message_zh": geo.get("message_zh", "城市坐标读取失败。"), "items": []}
     forecast = _forecast(geo["latitude"], geo["longitude"], kickoff_at, city, timeout=timeout, use_cache=use_cache)
     if forecast.get("status") != "ok":
-        return {"status": "error", "label_zh": "天气读取异常", "impact": "unknown", "message_zh": forecast.get("message_zh", "天气读取失败。"), "items": []}
+        return {"status": "error", "source": "Open-Meteo", "label_zh": "天气读取异常", "impact": "unknown", "message_zh": forecast.get("message_zh", "天气读取失败。"), "items": []}
     item = forecast.get("weather") or {}
     weather_status = "fallback_estimated" if resolved.get("source") == "team_country_fallback" else "confirmed"
     return {
         "status": weather_status,
+        "source": "Open-Meteo",
         "label_zh": "天气兜底估算" if weather_status == "fallback_estimated" else "天气已确认",
         "impact": _weather_impact(item),
         "city": city,

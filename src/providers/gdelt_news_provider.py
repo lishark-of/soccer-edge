@@ -30,7 +30,7 @@ TEAM_EN = {
 
 def get_match_news(home_team: str | None, away_team: str | None, *, timeout: int = 8, use_cache: bool = True) -> dict:
     if not home_team or not away_team:
-        return {"status": "not_connected", "label_zh": "缺少球队名", "impact": "unknown", "items": [], "message_zh": "缺少球队名，无法检索新闻。"}
+        return {"status": "not_connected", "source": "GDELT 新闻检索", "label_zh": "缺少球队名", "impact": "unknown", "items": [], "message_zh": "缺少球队名，无法检索新闻。"}
     query = _query(home_team, away_team)
 
     def fetch() -> dict:
@@ -48,14 +48,15 @@ def get_match_news(home_team: str | None, away_team: str | None, *, timeout: int
         articles = data.get("articles") or []
         alias = {"home": _team_terms(home_team), "away": _team_terms(away_team)}
         if articles:
-            return {"status": "confirmed", "label_zh": f"已检索到 {len(articles)} 条相关新闻", "impact": "context", "items": articles, "query_alias_used": alias, "confidence": "medium", "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 返回相关新闻标题，仅说明公开报道覆盖情况，不等于确认球队内部状态。"}
-        return {"status": "checked_empty", "label_zh": "已检索但未发现新闻", "impact": "unknown", "items": [], "query_alias_used": alias, "confidence": "low", "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 当前未返回相关新闻；系统不会编造新闻，也不会据此确认球队内部状态。"}
+            return {"status": "confirmed", "source": "GDELT 新闻检索", "label_zh": f"已检索到 {len(articles)} 条相关新闻", "impact": "context", "items": articles, "query_alias_used": alias, "confidence": "medium", "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 返回相关新闻标题，仅说明公开报道覆盖情况，不等于确认球队内部状态。"}
+        return {"status": "checked_empty", "source": "GDELT 新闻检索", "label_zh": "已检索但未发现新闻", "impact": "unknown", "items": [], "query_alias_used": alias, "confidence": "low", "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 当前未返回相关新闻；系统不会编造新闻，也不会据此确认球队内部状态。"}
     except Exception as exc:  # noqa: BLE001
         reason = str(exc).splitlines()[0][:120]
         if "timed out" in reason.lower() or "handshake" in reason.lower():
             reason = "新闻源暂时没有在限定时间内返回。"
         return {
             "status": "error",
+            "source": "GDELT 新闻检索",
             "label_zh": "新闻暂未返回",
             "impact": "unknown",
             "items": [],
