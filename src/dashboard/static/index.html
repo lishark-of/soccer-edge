@@ -59,7 +59,7 @@
         <button class="tab" data-view="signalexplain">信号解释</button>
         <button class="tab" data-view="reliability">数据可靠性</button>
         <button class="tab" data-view="credibility">可信度审计</button>
-        <button class="tab" data-view="missinginfo">情报补齐</button>
+        <button class="tab" data-view="missinginfo">情报覆盖</button>
         <button class="tab" data-view="bestparlay">优秀串联</button>
         <button class="tab" data-view="traderreview">严厉交易者复盘</button>
         <button class="tab" data-view="matches">竞彩足球</button>
@@ -95,7 +95,7 @@
         <h3>Top 3串1被拒原因</h3><div id="todayRejectedParlay3"></div>
         <h3>最大风险提示</h3><div id="todayRiskTip" class="noteBox"></div>
         <h3>严厉交易者结论</h3><div id="todayTraderConclusion" class="noteBox"></div>
-        <h3>缺失情报</h3><div id="todayMissing" class="noteBox"></div>
+        <h3>情报覆盖状态</h3><div id="todayMissing" class="noteBox"></div>
       </section>
 
       <section id="view-signalexplain" class="view pageLift">
@@ -126,11 +126,11 @@
       </section>
 
       <section id="view-missinginfo" class="view pageLift">
-        <div class="sectionHeading"><p class="eyebrow">Intelligence intake</p><h2>情报补齐</h2><p>系统不会自动编造伤停、首发、天气和新闻。如果没有可靠数据，可信度会下降。</p></div>
-        <div class="inlineActions"><button id="missingInfoBtn" class="secondary">查看缺失情报</button><button id="signalsPreviewBtn" class="secondary">预览本地 JSON 补齐</button></div>
+        <div class="sectionHeading"><p class="eyebrow">Intelligence coverage</p><h2>情报覆盖状态</h2><p>系统不会自动编造伤停、首发、天气和新闻。复杂情报未确认时，系统会降低可信度，不会编造。</p></div>
+        <div class="inlineActions"><button id="missingInfoBtn" class="secondary">查看情报覆盖</button><button id="signalsPreviewBtn" class="secondary">预览本地 JSON 覆盖</button></div>
         <div id="missingInfoCards" class="contentBox"></div>
-        <h3>缺失情报清单</h3><div id="missingInfoTable"></div>
-        <h3>本地 JSON 补齐预览</h3><div id="signalsPreviewBox" class="noteBox"></div>
+        <h3>情报覆盖清单</h3><div id="missingInfoTable"></div>
+        <h3>本地 JSON 覆盖预览</h3><div id="signalsPreviewBox" class="noteBox"></div>
       </section>
 
       <section id="view-bestparlay" class="view pageLift">

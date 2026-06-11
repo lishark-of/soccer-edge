@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.audit.credibility import audit_credibility
+from src.view_models.intelligence_view import build_intelligence_coverage_table
 from src.optimizer.best_parlay import build_best_parlay_summary
 
 
@@ -34,6 +35,7 @@ def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> 
         "provider_used": preview.get("provider_used"),
         "credibility": credibility,
         "credibility_gate": gate,
+        "intelligence_coverage": build_intelligence_coverage_table(preview),
         "best_parlay": best,
         "no_combo_reason": optimizer.get("no_combo_reason") or best.get("no_combo_reason") or gate.get("reason_zh", ""),
         "conclusions_zh": conclusions,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.intelligence.fusion import explain_trade_discipline
+from src.intelligence.coverage_status import confidence_zh, normalize_coverage_status, status_zh
 
 
 def build_intelligence_view(preview: dict) -> dict:
@@ -24,6 +25,7 @@ def build_intelligence_view(preview: dict) -> dict:
         "reliability_summary": preview.get("reliability_summary", {}),
         "source_coverage_cards": _source_cards(preview),
         "match_coverage_table": _match_coverage_table(preview),
+        "intelligence_coverage": build_intelligence_coverage_table(preview),
         "external_signals_status": preview.get("external_signals_status", {}) or {},
         "signal_status": _signal_status_table(preview),
         "intelligence_gap_actions": _intelligence_gap_actions(preview),
@@ -96,15 +98,15 @@ def _signal_status_table(preview: dict) -> list[dict]:
             signal = (context.get("signals") or {}).get(name)
             if isinstance(signal, dict):
                 signals.append(signal)
-        connected = [item for item in signals if item.get("status") == "connected"]
-        basic_only = [item for item in signals if item.get("status") == "basic_only"]
-        status = "connected" if connected else "basic_only" if basic_only else "not_connected"
-        if connected:
-            message = "已有外部结构化输入，仅用于解释信心。"
+        confirmed = [item for item in signals if normalize_coverage_status(item.get("status")) in {"confirmed", "user_supplied"} or item.get("status") == "connected"]
+        partial = [item for item in signals if item.get("status") == "basic_only" or normalize_coverage_status(item.get("raw_status")) in {"checked_empty", "fallback_estimated"}]
+        status = "confirmed" if confirmed else "checked_empty" if partial else "not_connected"
+        if confirmed:
+            message = "已有可用结构化覆盖记录，仅用于解释信心。"
             source = "用户 JSON" if external_status.get("source_type") == "user_json" else "外部结构化输入"
-        elif basic_only:
-            message = "只有开赛时间等基础信息，休息天数或旅行距离仍为 unknown。"
-            source = "基础赛程"
+        elif partial:
+            message = "已检查但未返回完整信息，或仅有兜底估算。"
+            source = "自动覆盖审计"
         else:
             message = "未接入可靠数据，模型不会编造该情报。"
             source = "未接入"
@@ -113,9 +115,10 @@ def _signal_status_table(preview: dict) -> list[dict]:
                 "signal": labels.get(name, name),
                 "key": name,
                 "status_raw": status,
-                "status": _status_zh(status),
-                "impact": "已知" if connected else "未知",
-                "coverage": f"{len(connected) + len(basic_only)}/{len(contexts)}",
+                "status": status_zh(status),
+                "confidence_zh": confidence_zh(status),
+                "impact": "已知" if confirmed else "未知",
+                "coverage": f"{len(confirmed) + len(partial)}/{len(contexts)}",
                 "source_zh": source,
                 "message_zh": message,
             }
@@ -128,7 +131,7 @@ def _source_cards(preview: dict) -> list[dict]:
         {
             "source": row.get("source"),
             "role": row.get("label_zh"),
-            "status": _status_zh(row.get("status")),
+            "status": status_zh(row.get("status")),
             "coverage": row.get("coverage"),
             "score": row.get("score"),
             "message_zh": row.get("message_zh"),
@@ -157,23 +160,46 @@ def _match_coverage_table(preview: dict) -> list[dict]:
 
 
 def _status_zh(status: str | None) -> str:
+    return status_zh(status)
+
+
+def build_intelligence_coverage_table(preview: dict) -> dict:
+    rows = []
+    for match in ((preview.get("source_coverage") or {}).get("match_coverage") or []):
+        for key, label in [("injuries", "伤停"), ("lineup", "首发"), ("weather", "天气"), ("news", "新闻")]:
+            signal = match.get(key) or {}
+            status = normalize_coverage_status(signal.get("status"))
+            rows.append(
+                {
+                    "match": match.get("match"),
+                    "key": key,
+                    "item": label,
+                    "status": status,
+                    "status_zh": status_zh(status),
+                    "source": signal.get("source_zh") or _coverage_source(key, status),
+                    "confidence": confidence_zh(status, fallback_source=signal.get("city_source")),
+                    "message_zh": signal.get("message_zh") or signal.get("label_zh") or status_zh(status),
+                }
+            )
+    by_status = {}
+    for row in rows:
+        by_status[row["status"]] = by_status.get(row["status"], 0) + 1
     return {
-        "connected": "已接入",
-        "matched": "已匹配",
-        "ok": "可用",
-        "available": "可用",
-        "not_connected": "未接入",
-        "not_configured": "未配置",
-        "basic_only": "基础信息",
-        "covered_empty": "已检查无公开条目",
-        "not_available": "未公布/未覆盖",
-        "not_found": "未发现",
-        "timeout": "暂未返回",
-        "unmatched": "未匹配",
-        "missing": "缺失",
-        "empty": "空结果",
-        "error": "异常",
-    }.get(str(status), str(status or "未知"))
+        "title": "情报覆盖状态",
+        "rows": rows,
+        "by_status": by_status,
+        "complex_intelligence_note_zh": "战意、中立场影响、国家队阵容完整度、教练轮换、旅行疲劳、更衣室状态和赛事重要性属于复杂情报；未确认时系统会降低可信度，不会编造。",
+    }
+
+
+def _coverage_source(key: str, status: str) -> str:
+    if key in {"injuries", "lineup"}:
+        return "API-Football"
+    if key == "weather":
+        return "Open-Meteo"
+    if key == "news":
+        return "GDELT"
+    return "自动覆盖审计"
 
 
 def _leg_label(row: dict) -> str:
@@ -227,11 +253,11 @@ def _intelligence_gap_actions(preview: dict) -> list[dict]:
     for key, item in suggestions.items():
         status_row = status_by_key.get(key, {})
         status = status_row.get("status_raw", "not_connected")
-        if status == "connected":
-            confidence_impact = "已接入，仅用于解释信心，不直接替代概率模型。"
+        if status in {"connected", "confirmed", "user_supplied"}:
+            confidence_impact = "已有覆盖记录，仅用于解释信心，不直接替代概率模型。"
             next_action = "继续核对来源可靠性。"
-        elif status == "basic_only":
-            confidence_impact = "已有基础信息，但仍有关键细节 unknown。"
+        elif status in {"basic_only", "checked_empty", "fallback_estimated"}:
+            confidence_impact = "已有检查或兜底估算，但仍有关键细节 unknown。"
             next_action = "如有可靠结构化信息，可补充 external_signals JSON。"
         else:
             confidence_impact = "降低信心；系统不会编造该情报，也不会因此给出确定性结论。"

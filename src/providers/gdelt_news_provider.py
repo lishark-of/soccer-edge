@@ -20,6 +20,9 @@ TEAM_EN = {
     "英格兰": "England",
     "哥斯达": "Costa Rica",
     "哥斯达黎加": "Costa Rica",
+    "匈牙利": "Hungary",
+    "哈萨克": "Kazakhstan",
+    "哈萨克斯坦": "Kazakhstan",
     "鹿岛鹿角": "Kashima Antlers",
     "弗拉门戈": "Flamengo",
 }
@@ -43,15 +46,16 @@ def get_match_news(home_team: str | None, away_team: str | None, *, timeout: int
         cache = cached_json("gdelt_news", cache_key, 60 * 60, fetch) if use_cache else {"data": fetch(), "status": "miss"}
         data = cache.get("data") or {}
         articles = data.get("articles") or []
+        alias = {"home": _team_terms(home_team), "away": _team_terms(away_team)}
         if articles:
-            return {"status": "connected", "label_zh": f"找到 {len(articles)} 条相关新闻", "impact": "context", "items": articles, "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 返回相关新闻标题，仅用于情报提示，不改变概率。"}
-        return {"status": "not_found", "label_zh": "未发现可靠新闻", "impact": "unknown", "items": [], "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 当前未返回相关新闻；系统不会编造新闻。"}
+            return {"status": "confirmed", "label_zh": f"已检索到 {len(articles)} 条相关新闻", "impact": "context", "items": articles, "query_alias_used": alias, "confidence": "medium", "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 返回相关新闻标题，仅说明公开报道覆盖情况，不等于确认球队内部状态。"}
+        return {"status": "checked_empty", "label_zh": "已检索但未发现新闻", "impact": "unknown", "items": [], "query_alias_used": alias, "confidence": "low", "cache": {"status": cache.get("status"), "age_seconds": cache.get("age_seconds")}, "message_zh": "GDELT 当前未返回相关新闻；系统不会编造新闻，也不会据此确认球队内部状态。"}
     except Exception as exc:  # noqa: BLE001
         reason = str(exc).splitlines()[0][:120]
         if "timed out" in reason.lower() or "handshake" in reason.lower():
             reason = "新闻源暂时没有在限定时间内返回。"
         return {
-            "status": "timeout",
+            "status": "error",
             "label_zh": "新闻暂未返回",
             "impact": "unknown",
             "items": [],
@@ -60,9 +64,20 @@ def get_match_news(home_team: str | None, away_team: str | None, *, timeout: int
 
 
 def _query(home_team: str, away_team: str) -> str:
-    home = TEAM_EN.get(str(home_team), str(home_team))
-    away = TEAM_EN.get(str(away_team), str(away_team))
-    return f'("{home}" "{away}" football) OR ("{home}" "{away}" soccer) OR ("{home}" injury football) OR ("{away}" injury football)'
+    home_terms = _team_terms(home_team)
+    away_terms = _team_terms(away_team)
+    home = " OR ".join(f'"{term}"' for term in home_terms)
+    away = " OR ".join(f'"{term}"' for term in away_terms)
+    return f"(({home}) ({away}) (football OR soccer)) OR (({home}) (injury OR lineup) football) OR (({away}) (injury OR lineup) football)"
+
+
+def _team_terms(team: str) -> list[str]:
+    raw = str(team)
+    terms = [raw]
+    mapped = TEAM_EN.get(raw)
+    if mapped and mapped not in terms:
+        terms.append(mapped)
+    return terms
 
 
 def _condense_articles(articles: list[dict]) -> list[dict]:

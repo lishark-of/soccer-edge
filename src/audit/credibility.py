@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.intelligence.missing_info import build_missing_info_from_preview
+from src.intelligence.coverage_status import normalize_coverage_status
 
 
 def audit_credibility(preview: dict | None = None, optimizer_result: dict | None = None, backtest_result: dict | None = None, operation_result: dict | None = None) -> dict:
@@ -36,6 +37,10 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
     if partial:
         score -= min(10, len(partial) * 1.5)
         reasons.append("部分覆盖信息需要谨慎：" + "、".join(partial[:6]))
+    coverage_penalty, coverage_reasons = _coverage_penalty(preview)
+    if coverage_penalty:
+        score -= coverage_penalty
+        reasons.extend(coverage_reasons)
 
     selected = optimizer_result.get("selected_portfolio") or {}
     all_selected = list(selected.get("singles", []) or []) + list(selected.get("parlay_2x1", []) or []) + list(selected.get("parlay_3x1", []) or [])
@@ -62,12 +67,18 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
     else:
         must_not.append("没有同口径真实历史回测时，不要过度相信赛前输出。")
 
+    if provider_used in {"mock", "fallback", "fixture"}:
+        score = min(score, 64)
+        reasons.append("mock/fallback/fixture 数据评级不得高于 C。")
+    if _has_many_weak_coverage(preview):
+        score = min(score, 79)
+        reasons.append("关键情报多为兜底估算/未接入，评级不得高于 B。")
     score = max(0, min(100, round(score)))
     grade = "A" if score >= 80 else "B" if score >= 65 else "C" if score >= 45 else "D"
     confidence = "high" if score >= 80 else "medium" if score >= 55 else "low"
-    if provider_used in {"mock", "fallback", "fixture"} and confidence == "high":
-        confidence = "medium"
-        grade = min(grade, "B")
+    if provider_used in {"mock", "fallback", "fixture"} and grade in {"A", "B"}:
+        grade = "C"
+        confidence = "medium" if confidence == "high" else confidence
     result = {
         "credibility_score": score,
         "grade": grade,
@@ -133,3 +144,49 @@ def _first_number(payload: dict, keys: list[str]) -> float | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def _coverage_penalty(preview: dict) -> tuple[float, list[str]]:
+    rows = ((preview.get("source_coverage") or {}).get("match_coverage") or [])
+    if not rows:
+        return 0.0, []
+    penalty = 0.0
+    counts = {"checked_empty": 0, "fallback_estimated": 0, "not_connected": 0, "unknown": 0, "error": 0}
+    for row in rows:
+        for key in ("injuries", "lineup", "weather", "news"):
+            status = normalize_coverage_status((row.get(key) or {}).get("status"))
+            if status == "checked_empty":
+                penalty += 1.0
+                counts[status] += 1
+            elif status == "fallback_estimated":
+                penalty += 3.0
+                counts[status] += 1
+            elif status in {"not_connected", "unknown"}:
+                penalty += 4.0
+                counts[status] += 1
+            elif status == "error":
+                penalty += 5.0
+                counts[status] += 1
+    reasons = []
+    if counts["checked_empty"]:
+        reasons.append(f"{counts['checked_empty']} 项情报已检查但未返回，不能当作已确认。")
+    if counts["fallback_estimated"]:
+        reasons.append(f"{counts['fallback_estimated']} 项情报使用兜底估算，会降低可信度。")
+    if counts["not_connected"] or counts["unknown"]:
+        reasons.append(f"{counts['not_connected'] + counts['unknown']} 项情报未接入或未知，降低可信度。")
+    if counts["error"]:
+        reasons.append(f"{counts['error']} 项情报查询失败，降低可信度。")
+    return min(16.0, penalty), reasons
+
+
+def _has_many_weak_coverage(preview: dict) -> bool:
+    rows = ((preview.get("source_coverage") or {}).get("match_coverage") or [])
+    weak = 0
+    total = 0
+    for row in rows:
+        for key in ("injuries", "lineup", "weather", "news"):
+            total += 1
+            status = normalize_coverage_status((row.get(key) or {}).get("status"))
+            if status in {"fallback_estimated", "not_connected", "unknown", "error"}:
+                weak += 1
+    return total > 0 and weak / total >= 0.5

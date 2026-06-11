@@ -5,7 +5,17 @@ from pathlib import Path
 from typing import Any
 
 UNKNOWN_SIGNAL = {"status": "not_connected", "impact": "unknown", "items": []}
-SUPPORTED_KEYS = ["injuries", "lineup", "weather", "news", "travel", "motivation", "neutral_ground", "tournament_importance"]
+SUPPORTED_KEYS = [
+    "injuries",
+    "lineup",
+    "match_city",
+    "weather",
+    "news",
+    "travel",
+    "motivation",
+    "neutral_ground",
+    "tournament_importance",
+]
 
 
 def load_external_signals(path: str | None = None) -> dict[str, dict]:
@@ -75,6 +85,7 @@ def normalize_external_signal(item: dict[str, Any]) -> dict:
         "away_team": item.get("away_team"),
         "injuries": _signal(item.get("injuries"), "伤停"),
         "lineup": _signal(lineup, "首发"),
+        "match_city": _signal(item.get("match_city") or item.get("venue_city"), "比赛城市"),
         "weather": _signal(item.get("weather"), "天气"),
         "news": _signal(news, "新闻面"),
         "travel": _signal(item.get("travel"), "旅行"),
@@ -99,7 +110,7 @@ def preview_external_signals(path: str | None, date: str | None = None) -> dict:
     fields = {key: 0 for key in SUPPORTED_KEYS}
     for item in {id(v): v for v in signals.values()}.values():
         for key in SUPPORTED_KEYS:
-            if (item.get(key) or {}).get("status") == "connected":
+            if (item.get(key) or {}).get("status") in {"connected", "user_supplied", "confirmed"}:
                 fields[key] += 1
     supplied = [key for key, count in fields.items() if count > 0]
     missing = [key for key, count in fields.items() if count <= 0]
@@ -143,7 +154,7 @@ def _signal(value: Any, label: str) -> dict:
     if isinstance(value, dict) and str(value.get("status", "")).lower() in {"unknown", "not_connected"}:
         return {"status": "not_connected", "impact": value.get("impact", "unknown"), "items": [], "message_zh": f"{label}提供为 unknown。"}
     items = value if isinstance(value, list) else [value]
-    return {"status": "connected", "impact": "context", "items": items, "message_zh": f"{label}由本地 JSON 提供。"}
+    return {"status": "user_supplied", "impact": "context", "items": items, "message_zh": f"{label}由本地 JSON 用户补充。"}
 
 
 def _status(path_label: str, load_status: str, signals_loaded: int, invalid_items: int, keys: list[str], message_zh: str) -> dict:

@@ -36,7 +36,7 @@ from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
 from src.view_models.calibration_view import build_calibration_view
 from src.view_models.import_view import build_import_preview_view
-from src.view_models.intelligence_view import build_intelligence_view
+from src.view_models.intelligence_view import build_intelligence_coverage_table, build_intelligence_view
 from src.view_models.matches_view import build_matches_view, build_sporttery_status_view
 from src.view_models.next_available_view import build_next_available_view
 from src.view_models.onboarding_view import build_onboarding_view
@@ -103,6 +103,7 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_source_coverage",
                     "view_signal_explain",
                     "intelligence_enriched_preview",
+                    "intelligence_coverage",
                     "audit_user_journey",
                     "audit_credibility",
                     "view_best_parlay",
@@ -221,6 +222,12 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
             payload["credibility_audit"] = result.get("credibility_audit", {})
             payload["missing_information_after_preview"] = build_missing_info_from_preview(result)
         return success_response(payload, [])
+    if path == "/api/intelligence/coverage":
+        result = _run_intelligence_from_query(query)
+        payload = build_intelligence_coverage_table(result)
+        payload["credibility_gate"] = result.get("credibility_gate", {})
+        payload["source_coverage"] = result.get("source_coverage", {})
+        return success_response(payload, result.get("warnings", []))
     if path == "/api/view/intelligence":
         result = _run_intelligence_from_query(query)
         view = build_intelligence_view(result)

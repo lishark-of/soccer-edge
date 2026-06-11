@@ -8,6 +8,7 @@ from src.providers.api_football_provider import get_api_football_fixtures
 from src.providers.gdelt_news_provider import get_match_news
 from src.providers.the_odds_provider import get_the_odds_soccer_odds
 from src.providers.weather_provider import get_match_weather
+from src.intelligence.coverage_status import confidence_zh, normalize_coverage_status, status_zh
 
 
 def build_source_coverage(matches: list, target_date: str | None) -> dict:
@@ -52,10 +53,17 @@ def _coverage_row(match, identity: dict, api_status: dict, odds_status: dict) ->
     fixture_id = api_event.get("fixture_id")
     with ThreadPoolExecutor(max_workers=3) as executor:
         enrichment_future = executor.submit(get_fixture_enrichment, fixture_id, timeout=4) if api_matched else None
-        weather_future = executor.submit(get_match_weather, api_event.get("venue_city"), api_event.get("kickoff_at"), timeout=4) if api_matched else None
+        weather_future = executor.submit(
+            get_match_weather,
+            api_event.get("venue_city"),
+            api_event.get("kickoff_at") or _value(match, "kickoff_at", None),
+            home_team=_value(match, "home_team", ""),
+            away_team=_value(match, "away_team", ""),
+            timeout=4,
+        )
         news_future = executor.submit(get_match_news, _value(match, "home_team", ""), _value(match, "away_team", ""), timeout=4)
         enrichment = _future_value(enrichment_future, get_fixture_enrichment(None), timeout=6) if enrichment_future else get_fixture_enrichment(None)
-        weather_signal = _future_value(weather_future, _unknown_signal("天气", "未匹配 API-Football 赛程，缺少球场城市。"), timeout=6) if weather_future else _unknown_signal("天气", "未匹配 API-Football 赛程，缺少球场城市。")
+        weather_signal = _future_value(weather_future, _unknown_signal("天气", "缺少球场城市；可在 external_signals JSON 补充 match_city。"), timeout=6)
         news_signal = _future_value(news_future, _unknown_signal("新闻", "新闻读取超时或暂不可用。"), timeout=6)
     injuries = enrichment.get("injuries", _unknown_signal("伤停", "伤停未接入。"))
     lineup = enrichment.get("lineup", _unknown_signal("首发", "首发未接入。"))
@@ -97,12 +105,18 @@ def _source_cards(match_rows: list[dict], api_status: dict, odds_status: dict) -
     total = len(match_rows)
     api_matched = _count(match_rows, "api_football", "matched")
     odds_matched = _count(match_rows, "the_odds_api", "matched")
-    injuries_covered = _count_signal(match_rows, "injuries", {"connected", "covered_empty"})
-    lineup_covered = _count_signal(match_rows, "lineup", {"connected"})
-    weather_covered = _count_signal(match_rows, "weather", {"connected"})
-    news_found = _count_signal(match_rows, "news", {"connected"})
-    news_checked = _count_signal(match_rows, "news", {"connected", "not_found", "timeout"})
-    news_timeout = _count_signal(match_rows, "news", {"timeout"})
+    injuries_confirmed = _count_signal(match_rows, "injuries", {"confirmed"})
+    injuries_checked = _count_signal(match_rows, "injuries", {"checked_empty"})
+    injuries_covered = injuries_confirmed + injuries_checked
+    lineup_confirmed = _count_signal(match_rows, "lineup", {"confirmed"})
+    lineup_checked = _count_signal(match_rows, "lineup", {"checked_empty"})
+    lineup_covered = lineup_confirmed + lineup_checked
+    weather_confirmed = _count_signal(match_rows, "weather", {"confirmed", "user_supplied"})
+    weather_fallback = _count_signal(match_rows, "weather", {"fallback_estimated"})
+    weather_covered = weather_confirmed + weather_fallback
+    news_found = _count_signal(match_rows, "news", {"confirmed"})
+    news_checked = _count_signal(match_rows, "news", {"confirmed", "checked_empty", "error"})
+    news_error = _count_signal(match_rows, "news", {"error"})
     return [
         {
             "source": "Sporttery",
@@ -122,15 +136,15 @@ def _source_cards(match_rows: list[dict], api_status: dict, odds_status: dict) -
         },
         {
             "source": "API-Football 伤停",
-            "status": "ok" if injuries_covered else "not_available",
+            "status": "confirmed" if injuries_confirmed else "checked_empty" if injuries_checked else "not_connected",
             "label_zh": "伤停补充",
             "coverage": f"{injuries_covered}/{total}",
             "score": _ratio_score(injuries_covered, total),
-            "message_zh": "已尝试读取每场 fixture 的公开伤停；空结果不等于确认无人缺阵。",
+            "message_zh": "已尝试读取每场 fixture 的公开伤停；已检查但未返回不等于确认无人缺阵。",
         },
         {
             "source": "API-Football 首发",
-            "status": "ok" if lineup_covered else "not_available",
+            "status": "confirmed" if lineup_confirmed else "checked_empty" if lineup_checked else "not_connected",
             "label_zh": "首发补充",
             "coverage": f"{lineup_covered}/{total}",
             "score": _ratio_score(lineup_covered, total),
@@ -146,32 +160,54 @@ def _source_cards(match_rows: list[dict], api_status: dict, odds_status: dict) -
         },
         {
             "source": "Open-Meteo",
-            "status": "ok" if weather_covered else "not_connected",
+            "status": "confirmed" if weather_confirmed else "fallback_estimated" if weather_fallback else "not_connected",
             "label_zh": "天气补充",
             "coverage": f"{weather_covered}/{total}",
             "score": _ratio_score(weather_covered, total),
-            "message_zh": "通过 API-Football 城市/球场信息读取小时级天气。" if weather_covered else "缺少城市坐标或天气接口未返回。",
+            "message_zh": "优先使用球场城市；缺少球场城市时可能使用球队/国家城市兜底，不一定等于比赛球场天气。" if weather_covered else "缺少城市坐标或天气接口未返回。",
         },
         {
             "source": "GDELT 新闻",
-            "status": "ok" if news_found else "timeout" if news_timeout else "not_found",
+            "status": "confirmed" if news_found else "error" if news_error else "checked_empty",
             "label_zh": "新闻标题补充",
             "coverage": f"{news_checked}/{total}",
             "score": _ratio_score(news_found, total),
-            "message_zh": "已尝试读取新闻标题/来源/链接；未返回时不编造新闻，也不改变概率。",
+            "message_zh": "已尝试读取新闻标题/来源/链接；新闻检索只说明公开报道覆盖情况，不等于确认球队内部状态。",
         },
     ]
 
 
 def _signal_card(signal: dict) -> dict:
+    raw_status = signal.get("status", "unknown")
+    status = normalize_coverage_status(raw_status)
+    fallback_source = signal.get("city_source")
     return {
-        "status": signal.get("status", "unknown"),
-        "label_zh": signal.get("label_zh") or signal.get("message_zh") or "未知",
+        "status": status,
+        "raw_status": raw_status,
+        "status_zh": status_zh(status),
+        "confidence_zh": confidence_zh(status, fallback_source=fallback_source),
+        "source_zh": _signal_source(signal, status),
+        "label_zh": signal.get("label_zh") or status_zh(status),
         "impact": signal.get("impact", "unknown"),
         "items_count": len(signal.get("items") or []),
         "items": signal.get("items") or [],
+        "query_alias_used": signal.get("query_alias_used"),
+        "city": signal.get("city"),
+        "city_source": fallback_source,
         "message_zh": signal.get("message_zh", ""),
     }
+
+
+def _signal_source(signal: dict, status: str) -> str:
+    if status == "user_supplied":
+        return "用户本地 JSON"
+    if signal.get("city_source") == "team_country_fallback":
+        return "Open-Meteo + 球队/国家城市兜底"
+    if signal.get("city"):
+        return "Open-Meteo"
+    if signal.get("query_alias_used"):
+        return "GDELT 新闻检索"
+    return signal.get("source") or "API-Football / 自动覆盖"
 
 
 def _match_message(identity: dict, injuries: dict, lineup: dict, weather: dict, news: dict) -> str:

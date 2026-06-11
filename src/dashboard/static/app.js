@@ -267,7 +267,7 @@ function renderToday(view) {
     ? C.table(view.signal_status, [
       { key: "signal", label: "情报" },
       { key: "status", label: "状态" },
-      { key: "impact", label: "影响" },
+      { key: "confidence_zh", label: "可信度" },
       { key: "coverage", label: "覆盖" },
       { key: "source_zh", label: "来源" },
       { key: "message_zh", label: "说明" },
@@ -283,7 +283,7 @@ function renderToday(view) {
   ], "暂无情报缺口行动清单。");
   qs("#todayMissing").innerHTML = [
     signalStatusHtml,
-    `<h4>情报缺口怎么处理</h4>`,
+    `<h4>情报覆盖怎么处理</h4>`,
     gapActionsHtml,
   ].join("");
   renderSignalExplainFromToday(view);
@@ -347,13 +347,13 @@ function renderSignalsPreview(view) {
     C.list([
       `状态：${view.status?.load_status || "unknown"}`,
       `读取场次：${view.signals_count ?? 0}`,
-      `已补齐字段：${(view.supplied_fields || []).join("、") || "暂无"}`,
+      `用户已提供字段：${(view.supplied_fields || []).join("、") || "暂无"}`,
       `仍缺字段：${(view.missing_fields || []).join("、") || "暂无"}`,
       `门控：${view.credibility_gate?.label_zh || "N/A"} / ${view.credibility_gate?.score ?? "N/A"}`,
       view.message_zh || "本地 JSON 只读预览。",
       view.disclaimer || "不联网、不编造。",
     ]),
-    view.missing_information_after_preview ? `<h4>补齐后缺失</h4>${C.list(view.missing_information_after_preview.missing_information || [])}` : "",
+    view.missing_information_after_preview ? `<h4>覆盖预览后仍缺</h4>${C.list(view.missing_information_after_preview.missing_information || [])}` : "",
   ].join("");
 }
 

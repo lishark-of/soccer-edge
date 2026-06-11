@@ -83,8 +83,8 @@ def _injury_signal(payload: dict) -> dict:
         team = item.get("team") or {}
         rows.append({"player": player.get("name"), "team": team.get("name"), "reason": item.get("reason"), "type": item.get("type")})
     if rows:
-        return {"status": "connected", "label_zh": f"已发现 {len(rows)} 条公开伤停", "impact": "context", "items": rows, "message_zh": "API-Football 返回公开伤停条目。"}
-    return {"status": "covered_empty", "label_zh": "未返回公开伤停", "impact": "unknown", "items": [], "message_zh": "API-Football 当前未返回伤停条目；这不等于确认无人缺阵。"}
+        return {"status": "confirmed", "label_zh": f"已确认 {len(rows)} 条公开伤停", "impact": "context", "items": rows, "message_zh": "API-Football 返回公开伤停条目。"}
+    return {"status": "checked_empty", "label_zh": "已检查但未返回伤停", "impact": "unknown", "items": [], "message_zh": "已检查，接口暂未返回伤停信息；不等于确认无伤停。"}
 
 
 def _lineup_signal(payload: dict) -> dict:
@@ -102,8 +102,8 @@ def _lineup_signal(payload: dict) -> dict:
             "substitute_count": len(item.get("substitutes") or []),
         })
     if rows:
-        return {"status": "connected", "label_zh": "已公布首发", "impact": "context", "items": rows, "message_zh": "API-Football 已返回首发阵型和名单数量。"}
-    return {"status": "not_available", "label_zh": "首发未公布或未覆盖", "impact": "unknown", "items": [], "message_zh": "首发通常临近开赛才公布；当前没有可靠首发数据。"}
+        return {"status": "confirmed", "label_zh": "已确认首发", "impact": "context", "items": rows, "message_zh": "API-Football 已返回首发阵型和名单数量。"}
+    return {"status": "checked_empty", "label_zh": "已检查但首发未返回", "impact": "unknown", "items": [], "message_zh": "首发通常临近开赛才返回；当前接口未返回可靠首发。"}
 
 
 def _unmatched_signal(label: str) -> dict:

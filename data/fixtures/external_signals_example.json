@@ -4,6 +4,7 @@
       "match_num": "周三201",
       "home_team": "葡萄牙",
       "away_team": "尼日利亚",
+      "match_city": "Lisbon",
       "injuries": {
         "home": ["示例伤停A：出战成疑，仅用于格式演示"],
         "away": []

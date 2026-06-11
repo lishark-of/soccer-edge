@@ -27,20 +27,20 @@ def test_intelligence_view_marks_missing_signals_not_connected_unknown():
     context = build_match_context(_match())
     view = build_intelligence_view({"contexts": [context], "missing_signals": context["missing_signals"], "optimizer": {"selected_portfolio": {}}})
     rows = {row["key"]: row for row in view["signal_status"]}
-    assert rows["news"]["status"] == "not_connected"
-    assert rows["news"]["impact"] == "unknown"
-    assert rows["injuries"]["status"] == "not_connected"
+    assert rows["news"]["status"] == "未接入"
+    assert rows["news"]["impact"] == "未知"
+    assert rows["injuries"]["status"] == "未接入"
     assert rows["weather"]["message_zh"] == "未接入可靠数据，模型不会编造该情报。"
-    assert rows["schedule"]["status"] == "basic_only"
-    assert rows["schedule"]["impact"] == "unknown"
-    assert rows["travel"]["status"] == "not_connected"
-    assert rows["travel"]["impact"] == "unknown"
+    assert rows["schedule"]["status"] == "已检查但未返回"
+    assert rows["schedule"]["impact"] == "未知"
+    assert rows["travel"]["status"] == "未接入"
+    assert rows["travel"]["impact"] == "未知"
     actions = {row["json_key"]: row for row in view["intelligence_gap_actions"]}
     assert actions["news"]["confidence_impact"].startswith("降低信心")
     assert "不会编造" in actions["news"]["confidence_impact"]
     assert "external_signals JSON" in actions["injuries"]["next_action_zh"]
-    assert actions["travel"]["status"] == "not_connected"
-    assert actions["schedule"]["status"] == "basic_only"
+    assert actions["travel"]["status"] == "未接入"
+    assert actions["schedule"]["status"] == "已检查但未返回"
 
 
 def test_intelligence_preview_connects_external_signal_fixture():
@@ -52,15 +52,15 @@ def test_intelligence_preview_connects_external_signal_fixture():
     assert view["external_signals_status"]["invalid_items"] == 0
     assert view["external_signals_status"]["matched_count"] == 1
     assert view["external_signals_status"]["matches_count"] == 5
-    assert rows["news"]["status"] == "connected"
+    assert rows["news"]["status"] == "已确认"
     assert rows["news"]["source_zh"] == "用户 JSON"
-    assert rows["injuries"]["status"] == "connected"
-    assert rows["lineup"]["status"] == "connected"
-    assert rows["weather"]["status"] == "connected"
-    assert rows["motivation"]["status"] == "connected"
-    assert rows["travel"]["status"] == "not_connected"
+    assert rows["injuries"]["status"] == "已确认"
+    assert rows["lineup"]["status"] == "已确认"
+    assert rows["weather"]["status"] == "已确认"
+    assert rows["motivation"]["status"] == "已确认"
+    assert rows["travel"]["status"] == "未接入"
     actions = {row["json_key"]: row for row in view["intelligence_gap_actions"]}
-    assert actions["news"]["confidence_impact"] == "已接入，仅用于解释信心，不直接替代概率模型。"
+    assert actions["news"]["confidence_impact"] == "已有覆盖记录，仅用于解释信心，不直接替代概率模型。"
     assert actions["travel"]["confidence_impact"].startswith("降低信心")
 
 
@@ -73,5 +73,5 @@ def test_intelligence_preview_reports_bad_external_signal_json(tmp_path):
     assert view["external_signals_status"]["source_type"] == "user_json"
     assert view["external_signals_status"]["load_status"] == "parse_error"
     assert view["external_signals_status"]["signals_loaded"] == 0
-    assert rows["news"]["status"] == "not_connected"
-    assert rows["news"]["impact"] == "unknown"
+    assert rows["news"]["status"] == "未接入"
+    assert rows["news"]["impact"] == "未知"

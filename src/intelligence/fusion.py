@@ -10,6 +10,7 @@ from src.intelligence.market_signals import odds_for_outcome
 from src.intelligence.news_signals import load_external_signals_with_status
 from src.intelligence.signal_explainer import explain_signal_reliability, explain_score_goal_reliability
 from src.intelligence.source_coverage import build_source_coverage
+from src.intelligence.coverage_status import normalize_coverage_status
 from src.optimizer.best_parlay import build_best_parlay_summary
 from src.optimizer.portfolio_optimizer import optimize_portfolio
 from src.providers.factory import create_provider
@@ -490,7 +491,7 @@ def _apply_enriched_signals(context: dict, coverage: dict) -> None:
         if not enriched:
             continue
         current = signals.get(signal_key) or {}
-        if current.get("status") == "connected":
+        if current.get("status") in {"connected", "confirmed", "user_supplied"}:
             continue
         signals[signal_key] = {
             "status": _signal_status_for_context(enriched.get("status")),
@@ -503,9 +504,10 @@ def _apply_enriched_signals(context: dict, coverage: dict) -> None:
 
 
 def _signal_status_for_context(status: str | None) -> str:
-    if status in {"connected"}:
+    normalized = normalize_coverage_status(status)
+    if normalized in {"confirmed", "user_supplied"}:
         return "connected"
-    if status in {"covered_empty", "not_found", "not_available"}:
+    if normalized in {"checked_empty", "fallback_estimated"}:
         return "basic_only"
     return "not_connected"
 
