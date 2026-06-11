@@ -22,7 +22,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = build_intelligence_preview(args.provider, args.date, args.external_signals, bankroll=args.bankroll, risk_profile=args.risk_profile)
         result = dict(payload.get("optimizer", {}))
-        result.update({"provider": args.provider, "provider_used": payload.get("provider_used"), "date": payload.get("date") or args.date, "matches_analyzed": payload.get("matches_count", 0), "candidate_pool_count": len(payload.get("optimizer_candidates", []) or []), "top_total_goals_observations": payload.get("top_total_goals_observations", []), "top_score_observations": payload.get("top_score_observations", []), "missing_signals": payload.get("missing_signals", []), "warnings": payload.get("warnings", [])})
+        result.update({
+            "provider": args.provider,
+            "provider_used": payload.get("provider_used"),
+            "date": payload.get("date") or args.date,
+            "matches_analyzed": payload.get("matches_count", 0),
+            "candidate_pool_count": len(payload.get("optimizer_candidates", []) or []),
+            "top_total_goals_observations": payload.get("top_total_goals_observations", []),
+            "top_score_observations": payload.get("top_score_observations", []),
+            "missing_signals": payload.get("missing_signals", []),
+            "credibility_gate": payload.get("credibility_gate", {}),
+            "credibility_audit": payload.get("credibility_audit", {}),
+            "external_signals_status": payload.get("external_signals_status", {}),
+            "no_combo_reason": result.get("no_combo_reason") or (payload.get("credibility_gate", {}) or {}).get("reason_zh", ""),
+            "warnings": payload.get("warnings", []),
+        })
         if args.format == "json":
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:

@@ -10,6 +10,7 @@ from src.intelligence.market_signals import odds_for_outcome
 from src.intelligence.news_signals import load_external_signals_with_status
 from src.intelligence.signal_explainer import explain_signal_reliability, explain_score_goal_reliability
 from src.intelligence.source_coverage import build_source_coverage
+from src.optimizer.best_parlay import build_best_parlay_summary
 from src.optimizer.portfolio_optimizer import optimize_portfolio
 from src.providers.factory import create_provider
 from src.models.score_matrix import normalize_probs
@@ -52,17 +53,19 @@ def fused_probability(match_context: dict, weights: dict | None = None) -> dict:
 
 
 def build_intelligence_preview(provider_name: str = "auto", target_date: str | None = None, external_signals_path: str | None = None, bankroll: float = 10000.0, risk_profile: str = "aggressive") -> dict:
+    from src.audit.credibility import audit_credibility
+
     provider = create_provider(provider_name)
     external_signals, external_signal_status = load_external_signals_with_status(external_signals_path)
     matches = provider.get_matches(target_date)
     source_coverage = build_source_coverage(matches, target_date)
     source_coverage_by_match = source_coverage.get("by_match_id", {})
-    match_ids = [str(match.match_id) for match in matches]
+    match_ids = _external_match_keys(matches)
     contexts = []
     observations = []
     optimizer_candidates = []
     for match in matches:
-        context = build_match_context(match, external_signals=external_signals.get(str(match.match_id), {}))
+        context = build_match_context(match, external_signals=_external_signal_for_match(external_signals, match))
         match_coverage = source_coverage_by_match.get(str(match.match_id), {})
         context["source_coverage"] = match_coverage
         context["match_identity"] = match_coverage.get("identity", {})
@@ -74,9 +77,19 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         contexts.append(context)
         observations.extend(match_observations)
         optimizer_candidates.extend(match_candidates)
-    optimizer = optimize_portfolio(optimizer_candidates, bankroll=bankroll, config={"risk_profile": risk_profile, "compare_profiles": True, "enable_3x1": risk_profile == "aggressive"})
     provider_meta = _provider_meta(provider, provider_name)
     overall_completeness = build_overall_completeness(contexts)
+    optimizer = optimize_portfolio(optimizer_candidates, bankroll=bankroll, config={"risk_profile": risk_profile, "compare_profiles": True, "enable_3x1": risk_profile == "aggressive"})
+    credibility_audit = audit_credibility(
+        {
+            "provider_used": provider_meta.get("provider_used", provider_name),
+            "intelligence_completeness": overall_completeness,
+            "contexts": contexts,
+            "optimizer": optimizer,
+        },
+        optimizer,
+    )
+    optimizer = _apply_credibility_gate(optimizer, credibility_audit)
     data_source_status = {
         "requested_provider": provider_name,
         "provider_used": provider_meta.get("provider_used", provider_name),
@@ -100,6 +113,8 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "observations": observations,
         "optimizer_candidates": optimizer_candidates,
         "optimizer": optimizer,
+        "credibility_audit": credibility_audit,
+        "credibility_gate": credibility_audit.get("credibility_gate", {}),
         "top_single_observations": _top([item for item in observations if item["play_type"] in {"had", "hhad"} and item.get("official_odds")], 8),
         "top_total_goals_observations": _top([item for item in observations if item["play_type"] == "total_goals"], 5, key="probability"),
         "top_score_observations": _top([item for item in observations if item["play_type"] == "correct_score"], 5, key="probability"),
@@ -165,6 +180,68 @@ def build_next_available_preview(
         "message_zh": "已自动找到可售比赛。" if best.get("matches_count", 0) else "未来 1-3 天暂未读取到可售比赛。",
     }
     return best
+
+
+def _external_signal_for_match(signals: dict[str, dict], match) -> dict:
+    keys = [
+        str(getattr(match, "match_id", "") or ""),
+        str(getattr(match, "match_no", "") or ""),
+        f"{getattr(match, 'home_team', '')}__{getattr(match, 'away_team', '')}",
+    ]
+    for key in keys:
+        if key and key in signals:
+            return signals[key]
+    return {}
+
+
+def _external_match_keys(matches: list) -> list[str]:
+    keys = []
+    for match in matches:
+        for key in (
+            getattr(match, "match_id", None),
+            getattr(match, "match_no", None),
+            f"{getattr(match, 'home_team', '')}__{getattr(match, 'away_team', '')}",
+        ):
+            if key:
+                keys.append(str(key))
+    return sorted(dict.fromkeys(keys))
+
+
+def _apply_credibility_gate(optimizer: dict, credibility: dict) -> dict:
+    gated = dict(optimizer or {})
+    gate = credibility.get("credibility_gate", {}) or {}
+    combo_gate = gate.get("combo_gate")
+    selected = {**(gated.get("selected_portfolio") or {})}
+    no_combo_reason = gate.get("reason_zh", "可信度不足、情报缺失较多、组合风险高于模型优势。")
+    if combo_gate == "closed":
+        selected["parlay_2x1"] = []
+        selected["parlay_3x1"] = []
+        _mark_rankings_gate(gated, "未通过可信度门控")
+        gated["no_combo_reason"] = no_combo_reason
+    elif combo_gate == "restricted":
+        selected["parlay_3x1"] = []
+        selected["parlay_2x1"] = [
+            item for item in selected.get("parlay_2x1", []) or []
+            if str(item.get("risk_level", "medium")) == "low"
+        ]
+        _mark_rankings_gate(gated, "可信度中低，仅允许低风险 2串1")
+        gated["no_combo_reason"] = no_combo_reason if not selected.get("parlay_2x1") else ""
+    gated["selected_portfolio"] = selected
+    gated["recommended_observation_portfolio"] = selected
+    gated["credibility_audit"] = credibility
+    gated["credibility_gate"] = gate
+    gated["best_parlay_summary"] = build_best_parlay_summary(gated)
+    return gated
+
+
+def _mark_rankings_gate(optimizer: dict, reason: str) -> None:
+    rankings = optimizer.get("candidate_rankings") or {}
+    for key in ("parlay_2x1", "parlay_3x1"):
+        for row in rankings.get(key, []) or []:
+            if row.get("selected"):
+                row["selected"] = False
+                row["status"] = "未入选"
+            row["reject_reason"] = reason if not row.get("reject_reason") or row.get("reject_reason") == "已入选" else f"{reason}；{row.get('reject_reason')}"
 
 
 def _external_signals_status(path: str | None, signals: dict[str, dict], match_ids: list[str], load_status: dict | None = None) -> dict:

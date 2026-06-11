@@ -1,0 +1,26 @@
+{
+  "matches": [
+    {
+      "match_num": "周三201",
+      "home_team": "葡萄牙",
+      "away_team": "尼日利亚",
+      "injuries": {
+        "home": ["示例伤停A：出战成疑，仅用于格式演示"],
+        "away": []
+      },
+      "lineup_status": "unknown",
+      "weather": {
+        "status": "unknown",
+        "impact": "unknown"
+      },
+      "travel": {
+        "home_travel_risk": "low",
+        "away_travel_risk": "medium"
+      },
+      "motivation": "unknown",
+      "neutral_ground": "unknown",
+      "tournament_importance": "unknown",
+      "news_summary": []
+    }
+  ]
+}

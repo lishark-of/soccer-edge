@@ -68,7 +68,7 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
     if provider_used in {"mock", "fallback", "fixture"} and confidence == "high":
         confidence = "medium"
         grade = min(grade, "B")
-    return {
+    result = {
         "credibility_score": score,
         "grade": grade,
         "confidence_level": confidence,
@@ -88,6 +88,40 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
             "stability": "保守/均衡/进取结果差异越大，越应谨慎。",
         },
         "disclaimer": "可信度审计只用于观察信号和风险诊断，不构成投注建议。",
+    }
+    result["credibility_gate"] = build_credibility_gate(result)
+    return result
+
+
+def build_credibility_gate(credibility: dict) -> dict:
+    score = int(credibility.get("credibility_score") or 0)
+    grade = credibility.get("grade", "D")
+    missing = list(credibility.get("missing_information") or [])
+    reasons = list(credibility.get("reasons") or [])
+    if score < 50:
+        combo_gate = "closed"
+        allow_parlay = False
+        label = "不建议串联"
+        reason = "缺失伤停、首发、天气、新闻面等关键信息，且当前信号可能主要来自高赔率冷门，不建议强行串联。"
+    elif score < 65:
+        combo_gate = "restricted"
+        allow_parlay = "only_low_risk_2x1"
+        label = "限制串联"
+        reason = "可信度中低，仅允许低风险 2串1 纸面观察；高赔率冷门和 3串1 不通过。"
+    else:
+        combo_gate = "open"
+        allow_parlay = True
+        label = "允许正常筛选"
+        reason = "可信度达到组合观察门槛，但仍需遵守 EV、Edge、相关性和风险纪律。"
+    return {
+        "score": score,
+        "grade": grade,
+        "combo_gate": combo_gate,
+        "allow_parlay": allow_parlay,
+        "label_zh": label,
+        "reason_zh": reason,
+        "missing_information": missing,
+        "supporting_reasons": reasons,
     }
 
 

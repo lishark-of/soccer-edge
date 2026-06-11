@@ -7,6 +7,7 @@ from src.optimizer.best_parlay import build_best_parlay_summary
 def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> dict:
     optimizer = optimizer_result or preview.get("optimizer") or {}
     credibility = audit_credibility(preview, optimizer)
+    gate = credibility.get("credibility_gate", {})
     best = optimizer.get("best_parlay_summary") or build_best_parlay_summary(optimizer)
     conclusions = []
     selected = optimizer.get("selected_portfolio") or {}
@@ -32,7 +33,9 @@ def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> 
         "selected_date": preview.get("selected_date") or preview.get("date"),
         "provider_used": preview.get("provider_used"),
         "credibility": credibility,
+        "credibility_gate": gate,
         "best_parlay": best,
+        "no_combo_reason": optimizer.get("no_combo_reason") or best.get("no_combo_reason") or gate.get("reason_zh", ""),
         "conclusions_zh": conclusions,
         "final_call_zh": _final_call(credibility, best, p2_count, p3_count),
         "fixed_language_zh": "所有结论使用观察、纸面模拟和风险诊断语言，不提供真实交易动作。",
@@ -42,8 +45,11 @@ def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> 
 
 def _final_call(credibility: dict, best: dict, p2_count: int, p3_count: int) -> str:
     score = int(credibility.get("credibility_score") or 0)
+    gate = credibility.get("credibility_gate", {})
+    if gate.get("combo_gate") == "closed" or score < 50:
+        return "暂不强行串联：可信度偏低，优先补齐情报或等待更多数据。"
     if score < 55:
-        return "可信度偏低，优先补齐情报或等待更多数据，不应强行组合。"
+        return "可信度偏低，只保留弱观察，不应强行组合。"
     if p3_count:
         return "进取档出现 3串1，但严厉交易者只允许纸面跟踪，不建议放大风险。"
     if p2_count:

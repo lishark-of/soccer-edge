@@ -44,6 +44,8 @@ def build_optimizer_view(result: dict) -> dict:
         "best_parlay_table": _best_parlay_table(best_parlay),
         "rejected_table": [_rejected_row(item) for item in list(result.get("rejected_candidates", []) or [])],
         "risk_summary": risk,
+        "credibility_gate": result.get("credibility_gate", {}),
+        "no_combo_reason": result.get("no_combo_reason", ""),
         "explanations": list(result.get("explanations", []) or []),
         "no_2x1_reason": result.get("no_2x1_reason", "当前没有 2串1 入选；请查看候选排行榜和被拒原因。"),
         "warnings": list(result.get("warnings", []) or []),
@@ -69,6 +71,7 @@ def _row(item: dict) -> dict:
         "paper_stake": _rmb(item.get("suggested_paper_stake")),
         "risk_level": item.get("risk_label") or item.get("risk_level"),
         "reason": item.get("selection_reason") or item.get("correlation_reason") or "满足约束。",
+        "longshot_warning": item.get("longshot_warning", ""),
         "legs": _legs(item) if is_combo else "",
     }
 
@@ -91,6 +94,8 @@ def _ranking_row(item: dict) -> dict:
         "paper_stake": _rmb(item.get("paper_stake")),
         "status": item.get("status", "未入选"),
         "reject_reason": item.get("reject_reason", ""),
+        "longshot_warning": item.get("longshot_warning", ""),
+        "parlay_eligible": item.get("parlay_eligible", True),
     }
 
 

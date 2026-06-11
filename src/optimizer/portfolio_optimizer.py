@@ -103,7 +103,7 @@ def _base_reject_reason(candidate: dict, cfg: dict) -> str:
         return "EV 不足"
     if float(candidate.get("edge") or 0.0) < float(cfg["min_edge"]):
         return "Edge 不足"
-    if not risk_allowed(str(candidate.get("risk_level", "medium")), str(cfg["max_risk"])):
+    if not (kind == "single" and candidate.get("parlay_eligible") is False) and not risk_allowed(str(candidate.get("risk_level", "medium")), str(cfg["max_risk"])):
         return "风险等级过高"
     odds = float(candidate.get("odds") or candidate.get("combo_odds") or 0.0)
     if odds <= 1.01:
@@ -120,6 +120,9 @@ def _parlay_reject_reason(candidate: dict, cfg: dict) -> str:
         reasons.append(base)
     weak_legs = []
     for leg in candidate.get("legs", []) or []:
+        if leg.get("parlay_eligible") is False:
+            weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：高赔率冷门腿不适合作为串联核心".strip())
+            continue
         leg_reason = leg.get("reject_reason") or _base_reject_reason(leg, cfg)
         if leg_reason:
             weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：{leg_reason}".strip())
@@ -176,6 +179,8 @@ def _ranking_row(item: dict) -> dict:
         "drawdown_safety": item.get("drawdown_safety"),
         "risk_level": item.get("risk_level"),
         "paper_stake": item.get("suggested_paper_stake", 0.0),
+        "longshot_warning": item.get("longshot_warning", ""),
+        "parlay_eligible": item.get("parlay_eligible", True),
         "selected": bool(item.get("selected")),
         "status": "入选" if item.get("selected") else "未入选",
         "reject_reason": item.get("reject_reason") or "已入选",

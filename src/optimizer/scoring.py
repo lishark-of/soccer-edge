@@ -10,6 +10,9 @@ def score_candidate(candidate: dict, bankroll: float, config: dict | None = None
     probability = _probability(candidate)
     ev = float(candidate.get("ev") or 0.0)
     edge = float(candidate.get("edge") or 0.0)
+    longshot = odds >= 6.0
+    if longshot:
+        candidate = {**candidate, "risk_level": "very_high"}
     confidence = float(candidate.get("observation_confidence") or candidate.get("confidence_score") or 0.45)
     market_prob = float(candidate.get("market_prob") or 0.0)
     correlation_discount = float(candidate.get("correlation_discount") or 1.0)
@@ -48,6 +51,8 @@ def score_candidate(candidate: dict, bankroll: float, config: dict | None = None
         "stake_cap": round(cap, 2),
         "stake_reason": "按 1/4 Kelly 参考值估算，并受单项上限与每日总暴露约束。这是纸面投入，不是资金建议。",
         "selection_reason": _selection_reason(kind, ev, edge, candidate.get("risk_level")),
+        "longshot_warning": "这是高赔率冷门观察，不是稳健信号；除非可信度充分补齐，否则不适合作为串联核心。" if longshot else "",
+        "parlay_eligible": not longshot,
     }
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 def build_best_parlay_summary(optimizer_result: dict) -> dict:
+    gate = optimizer_result.get("credibility_gate") or {}
     rankings = optimizer_result.get("candidate_rankings") or {}
     selected = optimizer_result.get("selected_portfolio") or {}
     singles = _merge_rows(selected.get("singles", []), rankings.get("singles", []), "single")
@@ -10,19 +11,26 @@ def build_best_parlay_summary(optimizer_result: dict) -> dict:
     combos = parlay2 + parlay3
     rejected = [row for row in combos if not row.get("selected")]
     selected_combos = [row for row in combos if row.get("selected")]
+    no_combo = gate.get("combo_gate") == "closed" or not selected_combos
+    gate_closed = gate.get("combo_gate") == "closed"
+    gate_empty = _gate_empty(gate)
     return {
         "summary_version": "phase2p_best_parlay_v0",
         "risk_profile": optimizer_result.get("risk_profile"),
         "risk_profile_label": optimizer_result.get("risk_profile_label"),
+        "credibility_gate": gate,
+        "status": "no_combo" if no_combo else "has_combo",
+        "label_zh": "暂无优秀串联观察" if no_combo else "存在优秀串联观察",
+        "no_combo_reason": optimizer_result.get("no_combo_reason") or gate.get("reason_zh") or "可信度不足、情报缺失较多、组合风险高于模型优势。",
         "best_single": _best(singles, key="risk_adjusted_score"),
-        "best_2x1": _best(parlay2, key="risk_adjusted_score"),
-        "best_3x1_if_allowed": _best(parlay3, key="risk_adjusted_score"),
-        "safest_combo": _best(combos, key="safety_score"),
-        "highest_ev_combo": _best(combos, key="ev"),
-        "best_risk_adjusted_combo": _best(combos, key="risk_adjusted_score"),
+        "best_2x1": gate_empty if gate_closed else _best(parlay2, key="risk_adjusted_score"),
+        "best_3x1_if_allowed": gate_empty if gate_closed else _best(parlay3, key="risk_adjusted_score"),
+        "safest_combo": gate_empty if gate_closed else _best(combos, key="safety_score"),
+        "highest_ev_combo": gate_empty if gate_closed else _best(combos, key="ev"),
+        "best_risk_adjusted_combo": gate_empty if gate_closed else _best(combos, key="risk_adjusted_score"),
         "selected_combos": selected_combos[:10],
         "rejected_combos": rejected[:20],
-        "conclusion_zh": _conclusion(singles, parlay2, parlay3),
+        "conclusion_zh": optimizer_result.get("no_combo_reason") or _conclusion(singles, parlay2, parlay3),
         "risk_note_zh": "优秀串联只代表纸面观察排序。串关需要多场同时命中，会显著放大波动；不要因为组合赔率高就提高信心。",
         "disclaimer": "仅用于观察信号、纸面模拟和风险诊断，不构成投注建议。",
     }
@@ -92,6 +100,7 @@ def _normalize_row(row: dict, kind: str, selected: bool) -> dict:
         "missing_intelligence_zh": row.get("missing_signals") or row.get("missing_intelligence") or "查看数据可靠性页。",
         "reject_reason": reject_reason,
         "parlay_risk_note_zh": "串关需要所有腿同时命中，组合概率会低于单腿概率。",
+        "best_parlay_quality": _quality(ev, edge, confidence, correlation_discount, risk, status, hard_invalid),
     }
 
 
@@ -105,9 +114,56 @@ def _best(rows: list[dict], key: str) -> dict:
             "status": "empty",
             "message_zh": f"当前没有合格候选；最近被拒原因：{nearest.get('reject_reason', '未通过组合纪律。')}",
             "reject_reason": nearest.get("reject_reason", "未通过组合纪律。"),
+            "best_parlay_quality": {"final_status": "no_combo", "reason_zh": nearest.get("reject_reason", "未通过组合纪律。")},
         }
     selected = sorted(valid, key=lambda item: _float(item.get(key), default=-999), reverse=True)[0]
     return selected
+
+
+def _gate_empty(gate: dict) -> dict:
+    return {
+        "status": "no_combo",
+        "message_zh": "暂无优秀串联观察",
+        "reject_reason": gate.get("reason_zh", "可信度不足、情报缺失较多、组合风险高于模型优势。"),
+        "best_parlay_quality": {"final_status": "no_combo", "reason_zh": gate.get("reason_zh", "未通过可信度门控。")},
+    }
+
+
+def _quality(ev: float, edge: float, confidence: float, correlation: float, risk: str, status: str, hard_invalid: bool) -> dict:
+    ev_pass = ev >= 0.025 and edge >= 0.015
+    confidence_pass = confidence >= 0.55
+    correlation_pass = correlation >= 0.95
+    risk_pass = risk not in {"high", "very_high"}
+    information_pass = confidence >= 0.50
+    final_status = "selected" if status == "入选" and all([ev_pass, confidence_pass, correlation_pass, risk_pass, information_pass]) and not hard_invalid else "rejected"
+    if hard_invalid:
+        final_status = "rejected"
+    return {
+        "ev_pass": ev_pass,
+        "confidence_pass": confidence_pass,
+        "correlation_pass": correlation_pass,
+        "risk_pass": risk_pass,
+        "information_pass": information_pass,
+        "final_status": final_status,
+        "reason_zh": _quality_reason(ev_pass, confidence_pass, correlation_pass, risk_pass, information_pass, hard_invalid),
+    }
+
+
+def _quality_reason(ev_pass: bool, confidence_pass: bool, correlation_pass: bool, risk_pass: bool, information_pass: bool, hard_invalid: bool) -> str:
+    if hard_invalid:
+        return "该组合赔率/结构无效或同场互斥，不能作为优秀串联。"
+    failed = []
+    if not ev_pass:
+        failed.append("EV/Edge 不足")
+    if not confidence_pass:
+        failed.append("可信度不足")
+    if not correlation_pass:
+        failed.append("相关性折扣不通过")
+    if not risk_pass:
+        failed.append("风险过高")
+    if not information_pass:
+        failed.append("情报不足")
+    return "通过优秀串联质量检查。" if not failed else "不是赔率不够，而是" + "、".join(failed) + "。"
 
 
 def _conclusion(singles: list[dict], parlay2: list[dict], parlay3: list[dict]) -> str:

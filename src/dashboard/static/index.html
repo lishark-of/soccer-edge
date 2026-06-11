@@ -42,6 +42,7 @@
         <label>模拟走盘数据<input id="operationData" value="data/fixtures/operation_walkforward_sample.csv"></label>
         <label>导入 CSV<input id="importInput" value="data/fixtures/user_onboarding_sample.csv"></label>
         <label>Mapping<input id="mappingPath" value="data/fixtures/user_onboarding_mapping_example.json"></label>
+        <label>情报 JSON<input id="externalSignalsPath" value="data/fixtures/external_signals_example.json"></label>
         <label>Adapter<select id="adapter"><option value="auto">auto</option><option value="generic_csv">generic_csv</option><option value="sporttery_export">sporttery_export</option><option value="football_data">football_data</option></select></label>
         <label>校准文件<input id="calibrationPath" value="artifacts/calibration/sample_calibration.json"></label>
         <label>解释模式<select id="explainMode"><option value="local">本地解释</option><option value="deepseek">DeepSeek 可选</option><option value="auto">自动回退</option></select></label>
@@ -58,6 +59,7 @@
         <button class="tab" data-view="signalexplain">信号解释</button>
         <button class="tab" data-view="reliability">数据可靠性</button>
         <button class="tab" data-view="credibility">可信度审计</button>
+        <button class="tab" data-view="missinginfo">情报补齐</button>
         <button class="tab" data-view="bestparlay">优秀串联</button>
         <button class="tab" data-view="traderreview">严厉交易者复盘</button>
         <button class="tab" data-view="matches">竞彩足球</button>
@@ -121,6 +123,14 @@
         <h3>评分原因</h3><div id="credibilityReasons" class="noteBox"></div>
         <h3>缺失与部分覆盖</h3><div id="credibilityMissing"></div>
         <h3>不能过度相信的点</h3><div id="credibilityMustNot" class="noteBox"></div>
+      </section>
+
+      <section id="view-missinginfo" class="view pageLift">
+        <div class="sectionHeading"><p class="eyebrow">Intelligence intake</p><h2>情报补齐</h2><p>系统不会自动编造伤停、首发、天气和新闻。如果没有可靠数据，可信度会下降。</p></div>
+        <div class="inlineActions"><button id="missingInfoBtn" class="secondary">查看缺失情报</button><button id="signalsPreviewBtn" class="secondary">预览本地 JSON 补齐</button></div>
+        <div id="missingInfoCards" class="contentBox"></div>
+        <h3>缺失情报清单</h3><div id="missingInfoTable"></div>
+        <h3>本地 JSON 补齐预览</h3><div id="signalsPreviewBox" class="noteBox"></div>
       </section>
 
       <section id="view-bestparlay" class="view pageLift">

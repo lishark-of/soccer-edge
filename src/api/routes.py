@@ -21,6 +21,8 @@ from src.ingestion.field_report import build_field_recognition_report
 from src.ingestion.importer import import_historical_file
 from src.ingestion.repair_suggestions import build_repair_suggestions
 from src.intelligence.fusion import build_intelligence_preview, build_next_available_preview
+from src.intelligence.external_signals_loader import preview_external_signals
+from src.intelligence.missing_info import build_missing_info_from_preview
 from src.release.metadata import build_release_metadata
 from src.paper_trading.walkforward import run_paper_operation_walkforward
 from src.optimizer.candidate_pool import build_candidate_pool
@@ -199,6 +201,26 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
     if path == "/api/intelligence/enriched-preview":
         result = _run_intelligence_from_query(query)
         return success_response(result, result.get("warnings", []))
+    if path == "/api/intelligence/missing":
+        result = _run_intelligence_from_query(query)
+        payload = build_missing_info_from_preview(result)
+        payload["credibility_gate"] = result.get("credibility_gate", {})
+        return success_response(payload, [])
+    if path == "/api/intelligence/signals-preview":
+        signals_path = query.get("signals_path") or query.get("signals") or query.get("external_signals")
+        payload = preview_external_signals(signals_path, query.get("date"))
+        if signals_path:
+            result = build_intelligence_preview(
+                query.get("provider", "auto"),
+                query.get("date"),
+                signals_path,
+                bankroll=_float_param(query, "bankroll", 10000.0),
+                risk_profile=query.get("risk_profile", "aggressive"),
+            )
+            payload["credibility_gate"] = result.get("credibility_gate", {})
+            payload["credibility_audit"] = result.get("credibility_audit", {})
+            payload["missing_information_after_preview"] = build_missing_info_from_preview(result)
+        return success_response(payload, [])
     if path == "/api/view/intelligence":
         result = _run_intelligence_from_query(query)
         view = build_intelligence_view(result)
@@ -221,6 +243,11 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
     if path == "/api/audit/credibility":
         result = _run_intelligence_from_query(query)
         payload = audit_credibility(result, result.get("optimizer", {}))
+        return success_response(payload, [])
+    if path == "/api/view/credibility-gate":
+        result = _run_intelligence_from_query(query)
+        payload = result.get("credibility_gate", {})
+        payload = {**payload, "credibility_audit": result.get("credibility_audit", {}), "no_combo_reason": (result.get("optimizer") or {}).get("no_combo_reason", "")}
         return success_response(payload, [])
     if path == "/api/view/score-goals":
         result = _run_intelligence_from_query(query)
@@ -300,7 +327,7 @@ def _run_intelligence_from_query(query: dict[str, str]) -> dict:
     return build_intelligence_preview(
         query.get("provider", "auto"),
         query.get("date"),
-        query.get("external_signals"),
+        query.get("external_signals") or query.get("signals_path") or query.get("signals"),
         bankroll=_float_param(query, "bankroll", 10000.0),
         risk_profile=query.get("risk_profile", "aggressive"),
     )
@@ -312,7 +339,7 @@ def _run_next_available_from_query(query: dict[str, str]) -> dict:
         query.get("date"),
         bankroll=_float_param(query, "bankroll", 10000.0),
         risk_profile=query.get("risk_profile", "aggressive"),
-        external_signals_path=query.get("external_signals"),
+        external_signals_path=query.get("external_signals") or query.get("signals_path") or query.get("signals"),
     )
 
 
@@ -328,6 +355,9 @@ def _run_optimizer_from_query(query: dict[str, str]) -> dict:
         "top_total_goals_observations": preview.get("top_total_goals_observations", []),
         "top_score_observations": preview.get("top_score_observations", []),
         "missing_signals": preview.get("missing_signals", []),
+        "credibility_gate": preview.get("credibility_gate", {}),
+        "credibility_audit": preview.get("credibility_audit", {}),
+        "external_signals_status": preview.get("external_signals_status", {}),
         "warnings": list(dict.fromkeys(list(result.get("warnings", []) or []) + list(preview.get("warnings", []) or []))),
     })
     return result

@@ -58,6 +58,7 @@ def _obs(row: dict) -> dict:
         "opposing_factors": row.get("opposition_summary_zh") or "；".join(row.get("opposing_factors", [])),
         "missing_signals": "、".join(row.get("missing_signals", [])),
         "selection_reason": row.get("selection_reason"),
+        "longshot_warning": row.get("longshot_warning") or _longshot_warning(row.get("official_odds")),
     }
 
 
@@ -272,6 +273,13 @@ def _num(value) -> str:
         return f"{float(value):.4f}"
     except (TypeError, ValueError):
         return "N/A"
+
+
+def _longshot_warning(odds) -> str:
+    try:
+        return "这是高赔率冷门观察，不是稳健信号；不适合作为串联核心。" if float(odds) >= 6 else ""
+    except (TypeError, ValueError):
+        return ""
 
 
 def _rmb(value) -> str:

@@ -6,6 +6,8 @@ const state = {
   signalExplainView: null,
   reliabilityView: null,
   credibilityView: null,
+  missingInfoView: null,
+  signalsPreviewView: null,
   bestParlayView: null,
   traderReviewView: null,
   matchesView: null,
@@ -27,6 +29,7 @@ function currentDateParam() { return value("#date", ""); }
 function providerParam() { return value("#provider", "auto"); }
 function bankrollParam() { return value("#initialBankroll", "10000"); }
 function riskProfileParam() { return value("#riskProfile", "aggressive"); }
+function externalSignalsParam() { return value("#externalSignalsPath", "data/fixtures/external_signals_example.json"); }
 
 function endpoint(path, params = {}) {
   const url = new URL(`${apiBase()}${path}`);
@@ -125,6 +128,7 @@ function signalCards(rows, kind = "single", message = "暂无观察信号") {
           <div><span>${C.escapeHtml(label)}</span><b>${C.escapeHtml(value ?? "N/A")}</b></div>
         `).join("")}</div>
         <p class="reasonLine">${C.escapeHtml(reason)}</p>
+        ${!isCombo && longshotText(row) ? `<p class="warningLine">${C.escapeHtml(longshotText(row))}</p>` : ""}
         ${!isCombo && row.reliability_explanation_zh ? `<p class="mutedLine">${C.escapeHtml(row.reliability_explanation_zh)}</p>` : ""}
         ${!isCombo && row.opposing_factors ? `<p class="mutedLine">${C.escapeHtml(row.opposing_factors)}</p>` : ""}
       </article>`;
@@ -195,6 +199,7 @@ function renderToday(view) {
     { label: "provider_used", value: view.provider_used || "unknown", help: "实际数据源，Sporttery 失败时会标记 fallback。" },
     { label: "情报完整度", value: `${view.intelligence_completeness?.score ?? "N/A"}/100`, help: view.intelligence_completeness?.summary_zh || "按赔率、赛程、球队、伤停、首发、天气等评分。" },
     { label: "可信度评分", value: `${view.credibility_audit?.credibility_score ?? "N/A"}/100`, help: view.credibility_audit?.reasons?.[0] || "综合数据源、缺失情报、模型一致性与风险质量。" },
+    { label: "可信度门控", value: view.credibility_gate?.label_zh || view.credibility_audit?.credibility_gate?.label_zh || "N/A", help: view.credibility_gate?.reason_zh || view.credibility_audit?.credibility_gate?.reason_zh || "门控决定是否允许串联。" },
     { label: "完整度评级", value: view.intelligence_completeness?.label_zh || "N/A", help: "高/中/中低/低。缺失情报不会被编造。" },
     { label: "Top 单关", value: (view.top_singles || []).length, help: "按 EV / 概率排序的单关观察。" },
     { label: "Top 2串1", value: (view.top_2x1_display || view.top_2x1 || []).length, help: "通过组合纪律；若未入选，则展示最接近候选和被拒原因。" },
@@ -255,6 +260,7 @@ function renderToday(view) {
   ].join("");
   qs("#todayTraderConclusion").innerHTML = C.list([
     view.strict_trader_conclusion || view.trader_review?.final_call_zh || "请先刷新今日观察。",
+    view.optimizer?.no_combo_reason || view.best_parlay_summary?.no_combo_reason || view.credibility_gate?.reason_zh || "",
     ...(view.trader_review?.conclusions_zh || []),
   ]);
   const signalStatusHtml = (view.signal_status || []).length
@@ -307,6 +313,48 @@ function renderCredibility(view) {
     { type: "部分覆盖", items: (view.partial_information || []).join("、") || "暂无" },
   ], [{ key: "type", label: "类型" }, { key: "items", label: "内容" }]);
   qs("#credibilityMustNot").innerHTML = C.list(view.must_not_overtrust || ["不要把高 EV 自动理解为高可信。"]);
+}
+
+async function loadMissingInfo() {
+  const payload = await request("/api/intelligence/missing", { provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), risk_profile: riskProfileParam() }, "查看缺失情报");
+  if (payload.ok) renderMissingInfo(payload.data);
+  switchView("missinginfo");
+}
+function renderMissingInfo(view) {
+  state.missingInfoView = view;
+  if (!qs("#missingInfoCards")) return;
+  qs("#missingInfoCards").innerHTML = C.cards([
+    { label: "主要缺失", value: (view.missing_information || []).slice(0, 4).join("、") || "暂无", help: view.summary_zh || "" },
+    { label: "部分覆盖", value: (view.partial_information || []).slice(0, 4).join("、") || "暂无", help: "已尝试读取，但源头暂未给出完整信息。" },
+    { label: "门控状态", value: view.credibility_gate?.label_zh || "N/A", help: view.credibility_gate?.reason_zh || "" },
+    { label: "补齐目录", value: view.external_signals_dir || "data/external_signals/", help: "用户真实 JSON 默认不提交。" },
+  ]);
+  qs("#missingInfoTable").innerHTML = C.table(view.fields || [], [
+    { key: "label_zh", label: "情报" }, { key: "status_zh", label: "状态" }, { key: "impact_zh", label: "影响" },
+    { key: "user_can_supply", label: "可由用户补齐" }, { key: "supply_hint_zh", label: "如何补齐" }, { key: "message_zh", label: "说明" },
+  ]);
+}
+
+async function previewSignals() {
+  const payload = await request("/api/intelligence/signals-preview", { provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), risk_profile: riskProfileParam(), signals_path: externalSignalsParam() }, "预览本地情报 JSON");
+  if (payload.ok) renderSignalsPreview(payload.data);
+  switchView("missinginfo");
+}
+function renderSignalsPreview(view) {
+  state.signalsPreviewView = view;
+  if (!qs("#signalsPreviewBox")) return;
+  qs("#signalsPreviewBox").innerHTML = [
+    C.list([
+      `状态：${view.status?.load_status || "unknown"}`,
+      `读取场次：${view.signals_count ?? 0}`,
+      `已补齐字段：${(view.supplied_fields || []).join("、") || "暂无"}`,
+      `仍缺字段：${(view.missing_fields || []).join("、") || "暂无"}`,
+      `门控：${view.credibility_gate?.label_zh || "N/A"} / ${view.credibility_gate?.score ?? "N/A"}`,
+      view.message_zh || "本地 JSON 只读预览。",
+      view.disclaimer || "不联网、不编造。",
+    ]),
+    view.missing_information_after_preview ? `<h4>补齐后缺失</h4>${C.list(view.missing_information_after_preview.missing_information || [])}` : "",
+  ].join("");
 }
 
 async function loadBestParlay() {
@@ -375,6 +423,12 @@ function rowCandidate(category, item = {}) {
     paper_stake: fmtRmb(item?.paper_stake),
     reason: item?.selected_reason_zh || item?.reject_reason || "",
   };
+}
+function longshotText(row = {}) {
+  if (row.longshot_warning) return row.longshot_warning;
+  const odds = Number(row.official_odds || row.odds || 0);
+  if (Number.isFinite(odds) && odds >= 6) return "这是高赔率冷门观察，不是稳健信号；不适合作为串联核心。";
+  return "";
 }
 function bestParlayColumns() {
   return [
@@ -761,6 +815,8 @@ bind("#clearBtn", "click", clearOutput);
 bind("#matchesBtn", "click", loadMatches);
 bind("#matchesToOptimizerBtn", "click", () => runOptimizer(true));
 bind("#credibilityBtn", "click", loadCredibility);
+bind("#missingInfoBtn", "click", loadMissingInfo);
+bind("#signalsPreviewBtn", "click", previewSignals);
 bind("#bestParlayBtn", "click", loadBestParlay);
 bind("#traderReviewBtn", "click", loadTraderReview);
 bind("#optimizerBtn", "click", () => runOptimizer(false));

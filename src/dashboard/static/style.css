@@ -535,3 +535,11 @@ pre {
   .skeletonBlock:empty,
   .skeletonBlock .empty { animation: none; }
 }
+.warningLine {
+  margin: 10px 0 0;
+  color: #b45309;
+  background: rgba(255, 149, 0, 0.10);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
