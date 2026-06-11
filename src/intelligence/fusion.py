@@ -4,9 +4,12 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from src.intelligence.completeness import build_intelligence_completeness, build_overall_completeness
 from src.intelligence.feature_context import build_match_context
 from src.intelligence.market_signals import odds_for_outcome
 from src.intelligence.news_signals import load_external_signals_with_status
+from src.intelligence.signal_explainer import explain_signal_reliability, explain_score_goal_reliability
+from src.intelligence.source_coverage import build_source_coverage
 from src.optimizer.portfolio_optimizer import optimize_portfolio
 from src.providers.factory import create_provider
 from src.models.score_matrix import normalize_probs
@@ -52,12 +55,19 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
     provider = create_provider(provider_name)
     external_signals, external_signal_status = load_external_signals_with_status(external_signals_path)
     matches = provider.get_matches(target_date)
+    source_coverage = build_source_coverage(matches, target_date)
+    source_coverage_by_match = source_coverage.get("by_match_id", {})
     match_ids = [str(match.match_id) for match in matches]
     contexts = []
     observations = []
     optimizer_candidates = []
     for match in matches:
         context = build_match_context(match, external_signals=external_signals.get(str(match.match_id), {}))
+        match_coverage = source_coverage_by_match.get(str(match.match_id), {})
+        context["source_coverage"] = match_coverage
+        context["match_identity"] = match_coverage.get("identity", {})
+        _apply_enriched_signals(context, match_coverage)
+        context["intelligence_completeness"] = build_intelligence_completeness(context, match_coverage)
         fused = fused_probability(context)
         context["fused_probability"] = fused
         match_observations, match_candidates = build_observations_from_context(context)
@@ -66,6 +76,7 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         optimizer_candidates.extend(match_candidates)
     optimizer = optimize_portfolio(optimizer_candidates, bankroll=bankroll, config={"risk_profile": risk_profile, "compare_profiles": True, "enable_3x1": risk_profile == "aggressive"})
     provider_meta = _provider_meta(provider, provider_name)
+    overall_completeness = build_overall_completeness(contexts)
     data_source_status = {
         "requested_provider": provider_name,
         "provider_used": provider_meta.get("provider_used", provider_name),
@@ -80,6 +91,9 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "provider": provider_name,
         **provider_meta,
         "data_source_status": data_source_status,
+        "source_coverage": source_coverage,
+        "intelligence_completeness": overall_completeness,
+        "reliability_summary": _reliability_summary(source_coverage, overall_completeness),
         "external_signals_status": _external_signals_status(external_signals_path, external_signals, match_ids, external_signal_status),
         "matches_count": len(matches),
         "contexts": contexts,
@@ -90,7 +104,7 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "top_total_goals_observations": _top([item for item in observations if item["play_type"] == "total_goals"], 5, key="probability"),
         "top_score_observations": _top([item for item in observations if item["play_type"] == "correct_score"], 5, key="probability"),
         "missing_signals": sorted({signal for context in contexts for signal in context.get("missing_signals", [])}),
-        "warnings": list(dict.fromkeys(list(provider_meta.get("provider_warnings", [])))),
+        "warnings": list(dict.fromkeys(list(provider_meta.get("provider_warnings", [])) + list(source_coverage.get("warnings", [])))),
         "disclaimer": "赛前情报融合仅用于观察信号、纸面模拟和风险诊断，不构成投注建议。",
     }
 
@@ -123,6 +137,7 @@ def build_next_available_preview(
         )
         if first_available is None and preview.get("matches_count", 0) > 0:
             first_available = preview
+            break
     best = dict(first_available or first_preview or {})
     selected_date = best.get("date") or start.isoformat()
     best["selected_date"] = selected_date
@@ -131,8 +146,9 @@ def build_next_available_preview(
         "start_date": start.isoformat(),
         "end_date": (start + timedelta(days=max_offset)).isoformat(),
         "days_checked": len(attempts),
-        "complete": len(attempts) == max_offset + 1,
-        "selection_rule": "选择扫描窗口内第一个 matches_count > 0 的日期；如果都为空，则返回首日空结果。",
+        "complete": bool(first_available) or len(attempts) == max_offset + 1,
+        "stopped_after_first_available": bool(first_available),
+        "selection_rule": "从今天开始向后查找，找到第一个 matches_count > 0 的日期即停止；如果都为空，则返回首日空结果。",
     }
     best["next_available_version"] = "phase2o_next_available_v0"
     best["top_observations"] = {
@@ -255,7 +271,7 @@ def _context_probs(context: dict) -> dict[str, float]:
 
 
 def _observation(match: dict, play_type: str, outcome: str, odds: float, market_prob: float, model_prob: float, edge: float, ev: float, context: dict) -> dict:
-    return {
+    row = {
         "match_id": match["match_id"],
         "match_no": match.get("match_no", ""),
         "league": match.get("league", ""),
@@ -278,10 +294,12 @@ def _observation(match: dict, play_type: str, outcome: str, odds: float, market_
         "selection_status": "candidate" if ev > 0 and edge > 0 else "rejected",
         "selection_reason": "有观察价值" if ev > 0 and edge > 0 else "无观察价值：赔率未覆盖模型概率或 Edge 不足",
     }
+    row.update(explain_signal_reliability(row, context))
+    return row
 
 
 def _model_only_observation(match: dict, play_type: str, direction: str, probability: float, context: dict) -> dict:
-    return {
+    row = {
         "match_id": match["match_id"],
         "match_no": match.get("match_no", ""),
         "league": match.get("league", ""),
@@ -303,6 +321,9 @@ def _model_only_observation(match: dict, play_type: str, direction: str, probabi
         "selection_status": "model_only",
         "selection_reason": "仅展示模型概率，等待官方赔率接入。",
     }
+    row.update(explain_signal_reliability(row, context))
+    row.update(explain_score_goal_reliability(row))
+    return row
 
 
 def _candidate_from_observation(row: dict) -> dict:
@@ -327,6 +348,13 @@ def _candidate_from_observation(row: dict) -> dict:
         "supporting_factors": row["supporting_factors"],
         "opposing_factors": row["opposing_factors"],
         "missing_signals": row["missing_signals"],
+        "observation_confidence": row.get("observation_confidence"),
+        "confidence_label_zh": row.get("confidence_label_zh"),
+        "confidence_breakdown": row.get("confidence_breakdown", {}),
+        "reliability_explanation_zh": row.get("reliability_explanation_zh"),
+        "recommended_action_zh": row.get("recommended_action_zh"),
+        "odds_status_zh": row.get("odds_status_zh"),
+        "ev_status_zh": row.get("ev_status_zh"),
     }
 
 
@@ -370,3 +398,49 @@ def _provider_meta(provider, requested: str) -> dict:
     warnings = list(dict.fromkeys(list(getattr(provider, "warnings", [])) + list(getattr(provider, "messages", []))))
     provider_used = getattr(provider, "provider_used", getattr(provider, "provider_name", requested))
     return {"provider_requested": requested, "provider_used": provider_used, "fallback_used": bool(getattr(provider, "fallback_used", False)), "provider_warnings": warnings}
+
+
+def _apply_enriched_signals(context: dict, coverage: dict) -> None:
+    signals = context.setdefault("signals", {})
+    mapping = {
+        "injuries": "injuries",
+        "lineup": "lineup",
+        "weather": "weather",
+        "news": "news",
+    }
+    for signal_key, coverage_key in mapping.items():
+        enriched = coverage.get(coverage_key) or {}
+        if not enriched:
+            continue
+        current = signals.get(signal_key) or {}
+        if current.get("status") == "connected":
+            continue
+        signals[signal_key] = {
+            "status": _signal_status_for_context(enriched.get("status")),
+            "raw_status": enriched.get("status"),
+            "impact": enriched.get("impact", "unknown"),
+            "items": enriched.get("items", []),
+            "message_zh": enriched.get("message_zh") or enriched.get("label_zh") or "",
+            "source": "auto_enrichment",
+        }
+
+
+def _signal_status_for_context(status: str | None) -> str:
+    if status in {"connected"}:
+        return "connected"
+    if status in {"covered_empty", "not_found", "not_available"}:
+        return "basic_only"
+    return "not_connected"
+
+
+def _reliability_summary(source_coverage: dict, completeness: dict) -> dict:
+    cards = source_coverage.get("source_cards", []) or []
+    return {
+        "overall_label_zh": completeness.get("label_zh", "unknown"),
+        "overall_score": completeness.get("score", 0),
+        "main_gaps_zh": completeness.get("main_gaps_zh", []),
+        "partial_gaps_zh": completeness.get("partial_gaps_zh", []),
+        "source_cards": cards,
+        "summary_zh": f"{completeness.get('summary_zh', '')} {source_coverage.get('summary_zh', '')}".strip(),
+        "decision_guide_zh": "优先看 Sporttery 官方赔率和已匹配的第三方补充；缺伤停/首发/天气时，信号自动降为观察或弱观察。",
+    }

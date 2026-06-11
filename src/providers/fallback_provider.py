@@ -62,7 +62,10 @@ class FallbackProvider(BaseProvider):
         reason = self._short_error(exc)
         primary_name = getattr(self.primary, "provider_name", getattr(self.primary, "name", "primary"))
         fallback_name = getattr(self.fallback, "provider_name", getattr(self.fallback, "name", "fallback"))
-        return f"{primary_name} provider failed: {reason}; fallback to {fallback_name}"
+        return (
+            f"{primary_name} provider failed: {reason}; fallback to {fallback_name}"
+            "（实时公开数据暂不可用，已平静切换；mock 只用于演示流程，不会伪装成 Sporttery。）"
+        )
 
     @staticmethod
     def _short_error(exc: Exception) -> str:

@@ -10,6 +10,24 @@ def score_candidate(candidate: dict, bankroll: float, config: dict | None = None
     probability = _probability(candidate)
     ev = float(candidate.get("ev") or 0.0)
     edge = float(candidate.get("edge") or 0.0)
+    confidence = float(candidate.get("observation_confidence") or candidate.get("confidence_score") or 0.45)
+    market_prob = float(candidate.get("market_prob") or 0.0)
+    correlation_discount = float(candidate.get("correlation_discount") or 1.0)
+    risk_level = str(candidate.get("risk_level") or "medium")
+    risk_penalty = {"low": 0.0, "medium": 0.08, "high": 0.18, "very_high": 0.32}.get(risk_level, 0.1)
+    market_model_agreement = max(0.0, 1.0 - min(1.0, abs(probability - market_prob) * 4)) if probability and market_prob else 0.35
+    odds_quality = min(1.0, odds / 5.0) if odds else 0.0
+    normalized_ev = max(-1.0, min(1.0, ev / 0.25)) if ev else 0.0
+    drawdown_safety = max(0.0, 1.0 - risk_penalty)
+    combo_score = (
+        0.35 * normalized_ev
+        + 0.20 * confidence
+        + 0.15 * market_model_agreement
+        + 0.10 * odds_quality
+        + 0.10 * max(0.0, min(1.0, correlation_discount))
+        + 0.10 * drawdown_safety
+    )
+    risk_adjusted_score = combo_score - risk_penalty
     kelly_fraction = _kelly_fraction(probability, odds)
     cap = stake_cap_for(kind, bankroll, cfg)
     kelly_stake = float(bankroll) * max(0.0, kelly_fraction) * float(cfg.get("kelly_multiplier", 0.25))
@@ -20,6 +38,11 @@ def score_candidate(candidate: dict, bankroll: float, config: dict | None = None
     return {
         **candidate,
         "score": round(score, 6),
+        "combo_score": round(combo_score, 6),
+        "risk_adjusted_score": round(risk_adjusted_score, 6),
+        "market_model_agreement": round(market_model_agreement, 6),
+        "odds_quality": round(odds_quality, 6),
+        "drawdown_safety": round(drawdown_safety, 6),
         "kelly_fraction": round(kelly_fraction, 6),
         "suggested_paper_stake": round(suggested, 2),
         "stake_cap": round(cap, 2),

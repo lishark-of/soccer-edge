@@ -73,6 +73,16 @@ def test_user_workflow_preflight_quality_estimates_backtest_readiness():
     assert checks["回测准备度"]["status"] == "ready"
 
 
+def test_user_workflow_replay_readiness_summary_is_actionable():
+    result = preview_user_data_workflow("data/fixtures/user_onboarding_sample.csv", "data/fixtures/user_onboarding_mapping_example.json")
+    summary = result["user_view"]["replay_readiness_summary"]
+    assert summary["label"] == "可进入完整复盘"
+    assert summary["score"] >= 80
+    assert "CLI 完整执行" in summary["next_action_zh"]
+    assert "不保证未来表现" in summary["calibration_note_zh"]
+    assert any("赔率覆盖" in item for item in summary["proof_points"])
+
+
 def test_user_workflow_cli_handoff_is_cli_only_and_ignored_outputs():
     result = preview_user_data_workflow("data/fixtures/user_onboarding_sample.csv", "data/fixtures/user_onboarding_mapping_example.json")
     handoff = result["user_view"]["cli_handoff"]

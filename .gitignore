@@ -32,6 +32,8 @@ output/
 data/raw/
 data/imports/
 data/normalized/
+data/cache/
+data/external_signals/
 
 # Generated artifacts and reports
 artifacts/

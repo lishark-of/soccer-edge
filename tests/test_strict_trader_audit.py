@@ -10,6 +10,8 @@ def test_strict_trader_audit_json_shape():
     assert "acceptance_criteria" in report
     assert "phase3_summary" in report
     assert "phase3_readiness" in report
+    assert "goal_summary" in report
+    assert "goal_readiness" in report
 
 
 def test_strict_trader_audit_static_checks_pass():
@@ -50,6 +52,24 @@ def test_strict_trader_audit_phase3_readiness_present():
     assert phases["Phase 3-A"]["title"] == "首页极简化与今日观察"
     assert phases["Phase 3-F"]["title"] == "组合优化器展示被拒组合和原因"
     assert report["phase3_summary"]["total"] >= 6
+    assert report["phase3_summary"]["overall_ready"] is True
+
+
+def test_strict_trader_audit_goal_readiness_all_achieved():
+    report = run_strict_trader_audit(".")
+    assert report["goal_summary"]["overall_ready"] is True
+    failed = [item for item in report["goal_readiness"] if not item["achieved"]]
+    assert failed == []
+
+
+def test_strict_trader_audit_goal_readiness_covers_objective_groups():
+    report = run_strict_trader_audit(".")
+    categories = {item["category"] for item in report["goal_readiness"]}
+    assert {"产品原则", "技术目标", "验收标准"}.issubset(categories)
+    requirements = " ".join(item["requirement"] for item in report["goal_readiness"])
+    assert "DeepSeek" in requirements
+    assert "赔率市场去水概率" in requirements
+    assert "真实用户历史 CSV" in requirements
 
 
 def test_strict_trader_audit_phase3b_mentions_source_health():
@@ -75,6 +95,8 @@ def test_strict_trader_audit_phase3e_mentions_user_readiness():
     assert "preflight_checks=" in evidence
     assert "rows_normalized=" in evidence
     assert "had_odds_coverage=" in evidence
+    assert "replay_readiness=" in evidence
+    assert "calibration_status=" in evidence
     assert "cli_handoff_mode=cli_only_write_step" in evidence
     assert "cli_handoff_outputs=2" in evidence
 
@@ -84,6 +106,8 @@ def test_strict_trader_audit_phase3c_mentions_schedule_and_travel():
     phases = {item["phase"]: item for item in report["phase3_readiness"]}
     evidence = " ".join(phases["Phase 3-C"]["evidence"])
     assert "signal_status_keys=" in evidence
+    assert "intelligence_gap_actions=" in evidence
+    assert "gap_action_status=" in evidence
     assert "schedule" in evidence
     assert "travel" in evidence
     assert "external_signal_connected=" in evidence

@@ -29,10 +29,38 @@ def build_score_goals_view(preview: dict) -> dict:
             "如果官方赔率未接入，总进球和比分只展示模型概率，暂不计算 EV。",
             "新闻、伤停、首发、天气缺失时，信心分会被下调。",
         ],
+        "reliability_notes": _reliability_notes(totals, scores),
         "missing_signals": list(preview.get("missing_signals", []) or []),
+        "intelligence_completeness": preview.get("intelligence_completeness", {}),
         "warnings": list(preview.get("warnings", []) or []),
         "disclaimer": preview.get("disclaimer", "仅用于观察信号、纸面模拟和风险诊断。"),
     }
+
+
+def _reliability_notes(totals: list[dict], scores: list[dict]) -> list[dict]:
+    return [
+        {
+            "type": "总进球",
+            "reliability": "中等",
+            "usage": "用于观察比赛节奏偏大/偏小。",
+            "why": "总进球是区间判断，比精确比分稳定；但缺少首发、伤停、天气时仍需降信心。",
+            "top_example": _example(totals),
+        },
+        {
+            "type": "比分",
+            "reliability": "偏低",
+            "usage": "只作比分倾向参考。",
+            "why": "比分是精确事件，波动最大；当前官方比分赔率未接入，EV 暂不能计算。",
+            "top_example": _example(scores),
+        },
+    ]
+
+
+def _example(rows: list[dict]) -> str:
+    if not rows:
+        return "暂无"
+    first = rows[0]
+    return f"{first.get('match_no','')} {first.get('home_team','')} vs {first.get('away_team','')} {first.get('direction','')}".strip()
 
 
 def _probability_integrity(preview: dict) -> list[dict]:

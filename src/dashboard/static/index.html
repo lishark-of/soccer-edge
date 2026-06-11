@@ -55,6 +55,11 @@
     <main class="productWorkspace glassCard">
       <nav class="tabs" aria-label="页面导航">
         <button class="tab isActive" data-view="today">今日观察</button>
+        <button class="tab" data-view="signalexplain">信号解释</button>
+        <button class="tab" data-view="reliability">数据可靠性</button>
+        <button class="tab" data-view="credibility">可信度审计</button>
+        <button class="tab" data-view="bestparlay">优秀串联</button>
+        <button class="tab" data-view="traderreview">严厉交易者复盘</button>
         <button class="tab" data-view="matches">竞彩足球</button>
         <button class="tab" data-view="optimizer">赛前优化</button>
         <button class="tab" data-view="scoregoals">比分/进球数</button>
@@ -75,6 +80,8 @@
           <p>赛前情报 · 赛前观察总览：自动查找未来 1-3 天可售比赛，默认使用进取风险档位进行纸面观察筛选。</p>
         </div>
         <div id="todayCards" class="contentBox skeletonBlock"></div>
+        <div id="todayReliabilityCards" class="contentBox"></div>
+        <h3>数据源覆盖</h3><div id="todaySourceCoverage"></div>
         <div id="dataSourceStatus" class="noteBox"></div>
         <div class="topGrid">
           <article><h3>Top 单关观察</h3><div id="todaySingles"></div></article>
@@ -85,7 +92,52 @@
         <h3>Top 2串1被拒原因</h3><div id="todayRejectedParlay2"></div>
         <h3>Top 3串1被拒原因</h3><div id="todayRejectedParlay3"></div>
         <h3>最大风险提示</h3><div id="todayRiskTip" class="noteBox"></div>
+        <h3>严厉交易者结论</h3><div id="todayTraderConclusion" class="noteBox"></div>
         <h3>缺失情报</h3><div id="todayMissing" class="noteBox"></div>
+      </section>
+
+      <section id="view-signalexplain" class="view pageLift">
+        <div class="sectionHeading"><p class="eyebrow">Signal discipline</p><h2>信号解释</h2><p>把候选信号分成可观察、弱观察、等待赔率/情报和放弃，并解释为什么。</p></div>
+        <div id="signalExplainCards" class="contentBox"></div>
+        <h3>可观察</h3><div id="signalExplainStrong"></div>
+        <h3>弱观察</h3><div id="signalExplainWeak"></div>
+        <h3>等待赔率/情报</h3><div id="signalExplainWaiting"></div>
+        <h3>放弃</h3><div id="signalExplainRejected"></div>
+        <h3>解释规则</h3><div id="signalExplainNotes" class="noteBox"></div>
+      </section>
+
+      <section id="view-reliability" class="view pageLift">
+        <div class="sectionHeading"><p class="eyebrow">Reliability layer</p><h2>数据可靠性</h2><p>查看 Sporttery、API-Football、The Odds API 和天气/情报的覆盖情况。此页用于判断数据是否足够可靠。</p></div>
+        <div id="reliabilityCards" class="contentBox"></div>
+        <h3>数据源状态</h3><div id="reliabilitySourceCards"></div>
+        <h3>比赛匹配</h3><div id="reliabilityMatchCoverage"></div>
+        <h3>判断建议</h3><div id="reliabilityGuide" class="noteBox"></div>
+      </section>
+
+      <section id="view-credibility" class="view pageLift">
+        <div class="sectionHeading"><p class="eyebrow">Credibility audit</p><h2>可信度审计</h2><p>把数据源、缺失情报、模型一致性、Edge/EV 和组合风险合成一个可读评分。</p></div>
+        <button id="credibilityBtn" class="secondary">刷新可信度审计</button>
+        <div id="credibilityCards" class="contentBox"></div>
+        <h3>评分原因</h3><div id="credibilityReasons" class="noteBox"></div>
+        <h3>缺失与部分覆盖</h3><div id="credibilityMissing"></div>
+        <h3>不能过度相信的点</h3><div id="credibilityMustNot" class="noteBox"></div>
+      </section>
+
+      <section id="view-bestparlay" class="view pageLift">
+        <div class="sectionHeading"><p class="eyebrow">Best parlay</p><h2>优秀串联</h2><p>展示最佳单关、最佳 2串1、最佳 3串1、最高 EV 和风险调整最佳。只做纸面观察。</p></div>
+        <button id="bestParlayBtn" class="secondary">刷新优秀串联</button>
+        <div id="bestParlayCards" class="contentBox"></div>
+        <h3>最佳组合摘要</h3><div id="bestParlayTable"></div>
+        <h3>被拒组合</h3><div id="bestParlayRejected"></div>
+        <div id="bestParlayConclusion" class="noteBox"></div>
+      </section>
+
+      <section id="view-traderreview" class="view pageLift">
+        <div class="sectionHeading"><p class="eyebrow">Strict trader review</p><h2>严厉交易者复盘</h2><p>像交易员一样问：为什么入选、为什么拒绝、缺什么情报、当前应不应该强行组合。</p></div>
+        <button id="traderReviewBtn" class="secondary">刷新严厉复盘</button>
+        <div id="traderReviewCards" class="contentBox"></div>
+        <h3>结论</h3><div id="traderReviewConclusions" class="noteBox"></div>
+        <h3>优秀串联</h3><div id="traderReviewBest"></div>
       </section>
 
       <section id="view-matches" class="view pageLift">

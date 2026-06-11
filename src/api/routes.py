@@ -4,6 +4,9 @@ from src.api.errors import ApiError
 from src.api.read_only import ensure_read_only_operation
 from src.api.schemas import success_response
 from src.application import build_analysis_payload, build_matches_payload
+from src.audit.credibility import audit_credibility
+from src.audit.trader_review import build_trader_review
+from src.audit.user_journey import run_user_acceptance_audit
 from src.backtesting.backtest_engine import run_backtest
 from src.backtesting.historical_loader import load_historical_matches_with_warnings
 from src.backtesting.report import build_backtest_report
@@ -21,7 +24,11 @@ from src.intelligence.fusion import build_intelligence_preview, build_next_avail
 from src.release.metadata import build_release_metadata
 from src.paper_trading.walkforward import run_paper_operation_walkforward
 from src.optimizer.candidate_pool import build_candidate_pool
+from src.optimizer.best_parlay import build_best_parlay_summary
 from src.optimizer.portfolio_optimizer import optimize_portfolio
+from src.config.local_env import save_local_env_values
+from src.providers.free_data_sources import build_free_data_source_status
+from src.providers.third_party_verify import verify_third_party_source
 from src.version import get_build_info
 from src.view_models.analysis_view import build_analysis_view
 from src.view_models.backtest_view import build_backtest_view
@@ -34,7 +41,9 @@ from src.view_models.onboarding_view import build_onboarding_view
 from src.view_models.operation_view import build_operation_view
 from src.view_models.optimizer_view import build_optimizer_view
 from src.view_models.qa_view import build_qa_view
+from src.view_models.reliability_view import build_reliability_view
 from src.view_models.score_goals_view import build_score_goals_view
+from src.view_models.signal_explanation_view import build_signal_explanation_view
 
 
 VERSION = "0.1.0-local"
@@ -87,6 +96,15 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_intelligence",
                     "view_next_available",
                     "view_score_goals",
+                    "view_data_sources",
+                    "view_reliability",
+                    "view_source_coverage",
+                    "view_signal_explain",
+                    "intelligence_enriched_preview",
+                    "audit_user_journey",
+                    "audit_credibility",
+                    "view_best_parlay",
+                    "view_trader_review",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -168,13 +186,42 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         result = _run_next_available_from_query(query)
         view = build_next_available_view(result)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/view/data-sources":
+        payload = build_free_data_source_status()
+        return success_response(payload, [])
+    if path == "/api/data-sources/verify":
+        source = _required(query, "source")
+        payload = verify_third_party_source(source)
+        return success_response(payload, [] if payload.get("status") == "ok" else [payload.get("message_zh", "")])
     if path == "/api/intelligence/preview":
+        result = _run_intelligence_from_query(query)
+        return success_response(result, result.get("warnings", []))
+    if path == "/api/intelligence/enriched-preview":
         result = _run_intelligence_from_query(query)
         return success_response(result, result.get("warnings", []))
     if path == "/api/view/intelligence":
         result = _run_intelligence_from_query(query)
         view = build_intelligence_view(result)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/view/reliability":
+        result = _run_intelligence_from_query(query)
+        view = build_reliability_view(result)
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/view/source-coverage":
+        result = _run_intelligence_from_query(query)
+        coverage = result.get("source_coverage", {})
+        return success_response(coverage, coverage.get("warnings", []))
+    if path == "/api/view/signal-explain":
+        result = _run_intelligence_from_query(query)
+        view = build_signal_explanation_view(result)
+        return success_response(view, view.get("warnings", []))
+    if path == "/api/audit/user-journey":
+        payload = run_user_acceptance_audit(".")
+        return success_response(payload, [] if payload.get("overall_passed") else ["使用者实操验收发现可改进项。"])
+    if path == "/api/audit/credibility":
+        result = _run_intelligence_from_query(query)
+        payload = audit_credibility(result, result.get("optimizer", {}))
+        return success_response(payload, [])
     if path == "/api/view/score-goals":
         result = _run_intelligence_from_query(query)
         view = build_score_goals_view(result)
@@ -186,6 +233,14 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         result = _run_optimizer_from_query(query)
         view = build_optimizer_view(result)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/view/best-parlay":
+        result = _run_optimizer_from_query(query)
+        payload = result.get("best_parlay_summary") or build_best_parlay_summary(result)
+        return success_response(payload, payload.get("warnings", []))
+    if path == "/api/view/trader-review":
+        result = _run_intelligence_from_query(query)
+        payload = build_trader_review(result, result.get("optimizer", {}))
+        return success_response(payload, payload.get("warnings", []))
     if path == "/api/operation/simulate":
         report = _run_operation_from_query(query)
         return success_response(report, report.get("warnings", []))
@@ -230,6 +285,13 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
 
         view = build_qa_view(run_qa(project_root=".", rehearsal=_truthy(query.get("rehearsal"))))
         return success_response(view, view.get("warnings", []))
+    raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
+
+
+def dispatch_post_route(path: str, body: dict) -> dict:
+    if path == "/api/config/local-env":
+        payload = save_local_env_values(body if isinstance(body, dict) else {})
+        return success_response(payload, [])
     raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
 
 

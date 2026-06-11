@@ -8,6 +8,7 @@ def build_optimizer_view(result: dict) -> dict:
     risk = result.get("risk_summary", {}) or {}
     rankings = result.get("candidate_rankings", {}) or {}
     comparison = result.get("profile_comparison", {}) or {}
+    best_parlay = result.get("best_parlay_summary", {}) or {}
     return {
         "title": "赛前组合优化",
         "date": result.get("date") or result.get("selected_date"),
@@ -38,6 +39,9 @@ def build_optimizer_view(result: dict) -> dict:
             "parlay_3x1": [_ranking_row(item) for item in rankings.get("parlay_3x1", []) or []],
         },
         "profile_comparison": [_comparison_row(key, value) for key, value in comparison.items()],
+        "best_parlay_summary": best_parlay,
+        "best_parlay_cards": _best_parlay_cards(best_parlay),
+        "best_parlay_table": _best_parlay_table(best_parlay),
         "rejected_table": [_rejected_row(item) for item in list(result.get("rejected_candidates", []) or [])],
         "risk_summary": risk,
         "explanations": list(result.get("explanations", []) or []),
@@ -57,6 +61,11 @@ def _row(item: dict) -> dict:
         "market_prob": _pct(item.get("market_prob")),
         "ev": _signed_pct(item.get("ev")),
         "edge": _signed_pct(item.get("edge")),
+        "confidence": _pct(item.get("observation_confidence") or item.get("confidence_score")),
+        "confidence_label_zh": item.get("confidence_label_zh", ""),
+        "odds_status_zh": item.get("odds_status_zh", ""),
+        "ev_status_zh": item.get("ev_status_zh", ""),
+        "recommended_action_zh": item.get("recommended_action_zh", ""),
         "paper_stake": _rmb(item.get("suggested_paper_stake")),
         "risk_level": item.get("risk_label") or item.get("risk_level"),
         "reason": item.get("selection_reason") or item.get("correlation_reason") or "满足约束。",
@@ -74,6 +83,9 @@ def _ranking_row(item: dict) -> dict:
         "market_prob": _pct(item.get("market_prob")),
         "ev": _signed_pct(item.get("ev")),
         "edge": _signed_pct(item.get("edge")),
+        "confidence": _pct(item.get("observation_confidence") or item.get("confidence_score")),
+        "confidence_label_zh": item.get("confidence_label_zh", ""),
+        "recommended_action_zh": item.get("recommended_action_zh", ""),
         "correlation_discount": _num(item.get("correlation_discount")),
         "risk_level": item.get("risk_level", ""),
         "paper_stake": _rmb(item.get("paper_stake")),
@@ -104,6 +116,59 @@ def _comparison_row(key: str, value: dict) -> dict:
         "parlay_3x1_count": value.get("parlay_3x1_count", 0),
         "note": value.get("no_2x1_reason", ""),
     }
+
+
+def _best_parlay_cards(best: dict) -> list[dict]:
+    best_single = best.get("best_single") or {}
+    best2 = best.get("best_2x1") or {}
+    best3 = best.get("best_3x1_if_allowed") or {}
+    risk_adjusted = best.get("best_risk_adjusted_combo") or {}
+    return [
+        {"label": "最佳单关", "value": _short_candidate(best_single), "help": best_single.get("selected_reason_zh", "")},
+        {"label": "最佳2串1", "value": _short_candidate(best2), "help": best2.get("reject_reason") or best2.get("selected_reason_zh", "")},
+        {"label": "最佳3串1", "value": _short_candidate(best3), "help": best3.get("reject_reason") or best3.get("selected_reason_zh", "")},
+        {"label": "风险调整最佳", "value": _short_candidate(risk_adjusted), "help": best.get("conclusion_zh", "")},
+    ]
+
+
+def _best_parlay_table(best: dict) -> list[dict]:
+    rows = []
+    for label, key in [
+        ("最佳单关", "best_single"),
+        ("最佳2串1", "best_2x1"),
+        ("最佳3串1", "best_3x1_if_allowed"),
+        ("最稳组合", "safest_combo"),
+        ("最高EV组合", "highest_ev_combo"),
+        ("风险调整最佳", "best_risk_adjusted_combo"),
+    ]:
+        item = best.get(key) or {}
+        rows.append(
+            {
+                "category": label,
+                "candidate": item.get("legs") or item.get("match") or item.get("message_zh", "暂无"),
+                "status": item.get("status", ""),
+                "odds": _num(item.get("odds")),
+                "model_prob": _pct(item.get("model_prob")),
+                "market_prob": _pct(item.get("market_prob")),
+                "ev": _signed_pct(item.get("ev")),
+                "edge": _signed_pct(item.get("edge")),
+                "confidence": _pct(item.get("confidence_score")),
+                "correlation_discount": _num(item.get("correlation_discount")),
+                "risk_adjusted_score": _num(item.get("risk_adjusted_score")),
+                "paper_stake": _rmb(item.get("paper_stake")),
+                "reason": item.get("selected_reason_zh") or item.get("reject_reason") or "",
+                "opposing_factors": item.get("opposing_factors_zh", ""),
+            }
+        )
+    return rows
+
+
+def _short_candidate(item: dict) -> str:
+    if not item or item.get("status") == "empty":
+        return "暂无"
+    label = item.get("legs") or item.get("match") or "候选"
+    status = item.get("status")
+    return f"{status} · {label}" if status else str(label)
 
 
 def _type_label(value) -> str:

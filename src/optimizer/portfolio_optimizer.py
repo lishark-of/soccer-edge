@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from src.optimizer.candidate_pool import build_parlay_candidates
+from src.optimizer.best_parlay import build_best_parlay_summary
 from src.optimizer.constraints import RISK_PROFILES, merge_config, risk_allowed
 from src.optimizer.scoring import score_candidate
 
@@ -40,7 +41,7 @@ def _optimize_single_profile(candidates: list[dict], bankroll: float, cfg: dict)
     }
     rejected = _rejected_summary([item for group in (singles_ranked, parlay_ranked) for item in group if not item.get("selected")][:120])
     no_2x1_reason = _no_2x1_reason(selected, rankings["parlay_2x1"], cfg)
-    return {
+    result = {
         "risk_profile": cfg["risk_profile"],
         "risk_profile_label": cfg["risk_profile_label"],
         "bankroll": round(float(bankroll), 2),
@@ -56,6 +57,8 @@ def _optimize_single_profile(candidates: list[dict], bankroll: float, cfg: dict)
         "warnings": [],
         "disclaimer": "仅供纸面模拟和概率研究，不构成投注建议。本工具不提供投注、下单、支付、代购或自动化购彩能力。",
     }
+    result["best_parlay_summary"] = build_best_parlay_summary(result)
+    return result
 
 
 def _rank_singles(candidates: list[dict], bankroll: float, cfg: dict) -> list[dict]:
@@ -165,6 +168,12 @@ def _ranking_row(item: dict) -> dict:
         "ev": item.get("ev"),
         "edge": item.get("edge"),
         "correlation_discount": item.get("correlation_discount", 1.0),
+        "confidence_score": item.get("observation_confidence") or item.get("confidence_score"),
+        "combo_score": item.get("combo_score"),
+        "risk_adjusted_score": item.get("risk_adjusted_score"),
+        "market_model_agreement": item.get("market_model_agreement"),
+        "odds_quality": item.get("odds_quality"),
+        "drawdown_safety": item.get("drawdown_safety"),
         "risk_level": item.get("risk_level"),
         "paper_stake": item.get("suggested_paper_stake", 0.0),
         "selected": bool(item.get("selected")),
@@ -247,11 +256,28 @@ def _comparison_summary(result: dict) -> dict:
 
 def _label(item: dict) -> str:
     if item.get("legs"):
-        return "；".join(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}".strip() for leg in item.get("legs", []))
-    return f"{item.get('home_team','')} vs {item.get('away_team','')} {item.get('outcome_label','')}".strip()
+        return "；".join(_leg_label(leg) for leg in item.get("legs", []))
+    return _leg_label(item)
 
 
 def _legs_label(item: dict) -> str:
     if not item.get("legs"):
         return ""
-    return "；".join(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}".strip() for leg in item.get("legs", []) or [])
+    return "；".join(_leg_label(leg) for leg in item.get("legs", []) or [])
+
+
+def _leg_label(item: dict) -> str:
+    teams = f"{item.get('home_team','')} vs {item.get('away_team','')}".strip()
+    play = _play_label(item.get("play_type"))
+    direction = str(item.get("outcome_label") or item.get("direction") or "").strip()
+    suffix = "·".join(part for part in [play, direction] if part)
+    return f"{teams}｜{suffix}".strip("｜")
+
+
+def _play_label(value: str | None) -> str:
+    return {
+        "had": "胜平负",
+        "hhad": "让球胜平负",
+        "total_goals": "总进球",
+        "correct_score": "比分",
+    }.get(str(value or ""), str(value or ""))

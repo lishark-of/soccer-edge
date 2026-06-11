@@ -177,6 +177,10 @@ input, select {
   outline: none;
   transition: box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
 }
+input[type="password"] {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
 input:focus, select:focus { border-color: rgba(0, 113, 227, 0.45); box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.12); background: #fff; }
 
 .actions { display: grid; gap: 9px; }
@@ -203,6 +207,24 @@ button.ghost {
 button.secondary:hover,
 button.ghost:hover { background: #fff; box-shadow: var(--shadow-soft); }
 .miniButton { padding: 8px 12px; font-size: 12px; box-shadow: none; }
+
+.secretConfigBox {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.66);
+}
+.secretConfigBox summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+.secretConfigGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
 
 .mainPanel { padding: 18px; overflow: hidden; }
 
@@ -298,6 +320,76 @@ th { background: rgba(245, 245, 247, 0.85); color: var(--muted); font-size: 12px
 td { font-size: 13px; line-height: 1.45; }
 tr:last-child td { border-bottom: 0; }
 
+.signalCardGrid {
+  display: grid;
+  gap: 12px;
+}
+.signalCard {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255,255,255,0.76);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.05);
+}
+.signalCard.isRejected { background: rgba(255, 149, 0, 0.07); }
+.signalHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.signalHead strong {
+  font-size: 15px;
+  line-height: 1.35;
+  letter-spacing: -0.025em;
+}
+.signalHead span {
+  flex: 0 0 auto;
+  max-width: 46%;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(0, 113, 227, 0.10);
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.metricStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.metricStrip div {
+  padding: 9px;
+  border-radius: 14px;
+  background: rgba(245,245,247,0.84);
+}
+.metricStrip span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+.metricStrip b {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.reasonLine {
+  margin: 12px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.mutedLine {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .noteList, .warningList { margin: 0; padding-left: 20px; }
 .noteList li, .warningList li { margin: 6px 0; }
 .warningList li { color: #a45d00; }
@@ -352,6 +444,9 @@ pre {
   .tabs { border-radius: var(--radius-lg); }
   .tab { flex: 1 1 auto; }
   .heroActions, .inlineActions { display: grid; }
+  .metricStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .signalHead { display: grid; }
+  .signalHead span { max-width: 100%; width: fit-content; }
 }
 
 @media (prefers-reduced-motion: reduce) {

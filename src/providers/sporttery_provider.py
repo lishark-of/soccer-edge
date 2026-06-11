@@ -15,6 +15,8 @@ class SportteryProvider(BaseProvider):
     name = "sporttery"
     provider_name = "sporttery"
     base_url = "https://webapi.sporttery.cn/gateway"
+    _SESSION_MATCH_CACHE: dict[str, list[Match]] = {}
+    _SESSION_ODDS_CACHE: dict[str, MatchOdds] = {}
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -30,22 +32,37 @@ class SportteryProvider(BaseProvider):
         self.timeout = timeout
         self._match_cache: dict[str, Match] = {}
         self._odds_cache: dict[str, MatchOdds] = {}
+        self.warnings: list[str] = []
 
     def get_matches(self, date: str | None = None) -> list[Match]:
         target_date = date
-        selling_matches = self._get_selling_matches()
-        if target_date:
-            filtered = [
-                match
-                for match in selling_matches
-                if match.date == target_date or str((match.raw or {}).get("businessDate") or "") == target_date
-            ]
-            if filtered:
-                return filtered
-            return self._get_results_by_date(target_date)
-        if selling_matches:
-            return selling_matches
-        return self._get_recent_results()
+        cache_key = target_date or "__selling__"
+        try:
+            selling_matches = self._get_selling_matches()
+            if target_date:
+                filtered = [
+                    match
+                    for match in selling_matches
+                    if match.date == target_date or str((match.raw or {}).get("businessDate") or "") == target_date
+                ]
+                if filtered:
+                    self._remember_matches(cache_key, filtered)
+                    return filtered
+                results = self._get_results_by_date(target_date)
+                self._remember_matches(cache_key, results)
+                return results
+            if selling_matches:
+                self._remember_matches(cache_key, selling_matches)
+                return selling_matches
+            recent = self._get_recent_results()
+            self._remember_matches(cache_key, recent)
+            return recent
+        except ProviderError:
+            cached = self._restore_matches(cache_key)
+            if cached:
+                self._add_warning("Sporttery 实时读取暂不可用，已使用本次 App 会话内最近一次成功缓存。")
+                return cached
+            raise
 
     def get_match_odds(self, match_id: str) -> MatchOdds:
         if match_id in self._odds_cache:
@@ -187,6 +204,7 @@ class SportteryProvider(BaseProvider):
             markets["hhad"] = hhad_market
         self._match_cache[match.match_id] = match
         self._odds_cache[match.match_id] = MatchOdds(match_id=match.match_id, markets=markets)
+        self._SESSION_ODDS_CACHE[match.match_id] = self._odds_cache[match.match_id]
         return match
 
     def _parse_result_match(self, raw_match: dict[str, object]) -> Match | None:
@@ -245,7 +263,33 @@ class SportteryProvider(BaseProvider):
             match_id=match.match_id,
             markets={"had": had_market} if had_market is not None else {},
         )
+        self._SESSION_ODDS_CACHE[match.match_id] = self._odds_cache[match.match_id]
         return match
+
+    def _remember_matches(self, cache_key: str, matches: list[Match]) -> None:
+        if not matches:
+            return
+        self._SESSION_MATCH_CACHE[cache_key] = list(matches)
+        for match in matches:
+            self._match_cache[match.match_id] = match
+
+    def _restore_matches(self, cache_key: str) -> list[Match]:
+        matches = list(self._SESSION_MATCH_CACHE.get(cache_key, []))
+        if not matches and cache_key != "__selling__":
+            matches = [
+                match
+                for match in self._SESSION_MATCH_CACHE.get("__selling__", [])
+                if match.date == cache_key or str((match.raw or {}).get("businessDate") or "") == cache_key
+            ]
+        for match in matches:
+            self._match_cache[match.match_id] = match
+            if match.match_id in self._SESSION_ODDS_CACHE:
+                self._odds_cache[match.match_id] = self._SESSION_ODDS_CACHE[match.match_id]
+        return matches
+
+    def _add_warning(self, message: str) -> None:
+        if message not in self.warnings:
+            self.warnings.append(message)
 
     def _extract_pool(
         self,

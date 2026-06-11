@@ -35,6 +35,12 @@ def test_intelligence_view_marks_missing_signals_not_connected_unknown():
     assert rows["schedule"]["impact"] == "unknown"
     assert rows["travel"]["status"] == "not_connected"
     assert rows["travel"]["impact"] == "unknown"
+    actions = {row["json_key"]: row for row in view["intelligence_gap_actions"]}
+    assert actions["news"]["confidence_impact"].startswith("降低信心")
+    assert "不会编造" in actions["news"]["confidence_impact"]
+    assert "external_signals JSON" in actions["injuries"]["next_action_zh"]
+    assert actions["travel"]["status"] == "not_connected"
+    assert actions["schedule"]["status"] == "basic_only"
 
 
 def test_intelligence_preview_connects_external_signal_fixture():
@@ -53,6 +59,9 @@ def test_intelligence_preview_connects_external_signal_fixture():
     assert rows["weather"]["status"] == "connected"
     assert rows["motivation"]["status"] == "connected"
     assert rows["travel"]["status"] == "not_connected"
+    actions = {row["json_key"]: row for row in view["intelligence_gap_actions"]}
+    assert actions["news"]["confidence_impact"] == "已接入，仅用于解释信心，不直接替代概率模型。"
+    assert actions["travel"]["confidence_impact"].startswith("降低信心")
 
 
 def test_intelligence_preview_reports_bad_external_signal_json(tmp_path):

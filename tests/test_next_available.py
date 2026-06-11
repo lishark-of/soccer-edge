@@ -79,8 +79,16 @@ def test_next_available_view_includes_source_health():
     assert view["source_health"]["successful_attempts"] == 1
     assert view["source_health"]["all_attempts_stable"] is True
     assert view["source_health"]["fallback_attempts"] == 0
+    assert view["source_health"]["reliability_label_zh"] == "高"
+    assert view["source_health"]["reliability_score"] >= 90
+    assert view["top_2x1_display_mode"] == "nearest_rejected"
+    assert view["top_2x1_display"][0]["reject_reason"] == "组合风险过高"
+    assert "最接近的候选" in view["top_2x1_empty_explanation"]
     assert view["top_rejected_2x1"][0]["reject_reason"] == "组合风险过高"
     assert view["top_rejected_3x1"][0]["reject_reason"] == "3串1 风险过高"
+    assert view["operation_entry"]["title"] == "回测表现怎么看"
+    assert any("资金曲线" in item for item in view["operation_entry"]["metrics"])
+    assert any("玩法贡献" in item for item in view["operation_entry"]["metrics"])
 
 
 def test_next_available_view_marks_degraded_scan_window():
@@ -105,4 +113,7 @@ def test_next_available_view_marks_degraded_scan_window():
     assert health["sporttery_attempts"] == 1
     assert health["fallback_attempts"] == 1
     assert health["partial_fallback_used"] is True
+    assert health["reliability_label_zh"] in {"中", "低"}
+    assert health["reliability_score"] < 90
+    assert "Sporttery 成功" in health["source_action_items"][0]
     assert "mock/fallback" in health["degraded_reason_zh"]

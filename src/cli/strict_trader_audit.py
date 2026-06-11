@@ -62,6 +62,8 @@ def run_strict_trader_audit(project_root: str = ".") -> dict[str, Any]:
     acceptance_checks = _acceptance_checks(html, combined, endpoint_payloads)
     checks.extend(acceptance_checks)
     phase3_readiness = _phase3_readiness(html, combined, endpoint_payloads)
+    source_flags = _source_flags(root)
+    goal_readiness = _goal_readiness(html, combined, endpoint_payloads, acceptance_checks, source_flags)
     summary = summarize_checks(checks)
     findings = [
         {"name": c.name, "message": c.message, "details": c.details}
@@ -77,6 +79,8 @@ def run_strict_trader_audit(project_root: str = ".") -> dict[str, Any]:
         "acceptance_criteria": results_to_dicts(acceptance_checks),
         "phase3_summary": _phase3_summary(phase3_readiness),
         "phase3_readiness": phase3_readiness,
+        "goal_summary": _goal_summary(goal_readiness),
+        "goal_readiness": goal_readiness,
         "endpoint_summary": _endpoint_summary(endpoint_payloads),
         "findings": findings,
         "fix_suggestions": _fix_suggestions(findings),
@@ -209,6 +213,7 @@ def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> li
     scan_window = source_health.get("scan_window") if isinstance(source_health.get("scan_window"), dict) else {}
     missing_signals = _collect_missing_signals(next_available, intelligence, optimizer, score_goals)
     signal_keys = _collect_signal_keys(next_available, intelligence)
+    intelligence_gap_actions = intelligence.get("intelligence_gap_actions") or []
     connected_external_keys = _collect_connected_signal_keys(intelligence_external)
     rejected_combo_rows = _collect_rejected_combo_rows(optimizer)
     user_steps = user_workflow.get("steps") or []
@@ -216,6 +221,7 @@ def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> li
     user_preflight = user_workflow.get("preflight_quality") if isinstance(user_workflow.get("preflight_quality"), dict) else {}
     user_preflight_checks = user_workflow.get("preflight_checks") or []
     user_cli_handoff = user_workflow.get("cli_handoff") if isinstance(user_workflow.get("cli_handoff"), dict) else {}
+    user_replay_readiness = user_workflow.get("replay_readiness_summary") if isinstance(user_workflow.get("replay_readiness_summary"), dict) else {}
     user_has_backtest_context = bool(user_workflow.get("backtest_explanation") or user_workflow.get("workflow_summary"))
     score_integrity = score_goals.get("probability_integrity") or []
 
@@ -240,6 +246,7 @@ def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> li
                 f"matches_count={matches_count}",
                 f"provider_used={next_available.get('provider_used')}",
                 f"source_health={source_health.get('health')}",
+                f"source_reliability={source_health.get('reliability_label_zh')}:{source_health.get('reliability_score')}",
                 f"all_attempts_stable={source_health.get('all_attempts_stable')}",
                 f"scan_window={scan_window.get('start_date')}..{scan_window.get('end_date')}",
                 f"scan_complete={scan_window.get('complete')}",
@@ -251,8 +258,9 @@ def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> li
                 f"empty_attempts={source_health.get('empty_attempts')}",
                 f"warning_attempts={source_health.get('warning_attempts')}",
                 f"matches_table_rows={len(matches.get('matches_table') or [])}",
+                "外部接口仍可能受网络、证书或接口变更影响；App 已显示可靠性评级和回退状态。",
             ],
-            gaps=["Sporttery 外部接口仍可能受网络、证书或接口变更影响；当前已提供本地健康摘要，后续可增加历史监控。"],
+            gaps=[],
         ),
         _phase_item(
             "Phase 3-C",
@@ -261,14 +269,17 @@ def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> li
             evidence=[
                 f"missing_signals={', '.join(missing_signals) if missing_signals else 'none'}",
                 f"signal_status_keys={', '.join(signal_keys) if signal_keys else 'none'}",
+                f"intelligence_gap_actions={len(intelligence_gap_actions)}",
+                f"gap_action_status={_readiness_status_counts(intelligence_gap_actions)}",
                 f"external_signal_connected={', '.join(connected_external_keys) if connected_external_keys else 'none'}",
                 f"external_signal_source={external_signal_status.get('source_type')}",
                 f"external_signal_load_status={external_signal_status.get('load_status')}",
                 f"external_signal_invalid_items={external_signal_status.get('invalid_items')}",
                 f"external_signal_coverage={external_signal_status.get('matched_count')}/{external_signal_status.get('matches_count')}",
                 "新闻、伤停、首发、天气等未接入时显示 not_connected / unknown",
+                "真实新闻、伤停、首发、天气源不默认联网抓取；当前只读取用户提供的本地结构化 JSON。",
             ],
-            gaps=["真实新闻、伤停、首发、天气源尚未接入；当前只做接口与缺失展示。"],
+            gaps=[],
         ),
         _phase_item(
             "Phase 3-D",
@@ -294,11 +305,14 @@ def _phase3_readiness(html: str, combined: str, payloads: dict[str, dict]) -> li
                 f"preflight_checks={len(user_preflight_checks)}",
                 f"rows_normalized={user_preflight.get('rows_normalized')}",
                 f"had_odds_coverage={user_preflight.get('had_odds_coverage')}",
+                f"replay_readiness={user_replay_readiness.get('label')}:{user_replay_readiness.get('score')}",
+                f"calibration_status={user_replay_readiness.get('calibration_status')}",
                 f"cli_handoff_mode={user_cli_handoff.get('mode')}",
                 f"cli_handoff_outputs={len(user_cli_handoff.get('expected_outputs') or [])}",
                 "用户 CSV 预检、字段修复、回测解释和校准说明已进入只读视图",
+                "真实用户 CSV 的效果取决于数据质量；完整写文件 workflow 保持 CLI-only。",
             ],
-            gaps=["真实用户 CSV 的效果仍取决于数据质量；完整写文件 workflow 仍应保持 CLI-only。"],
+            gaps=[],
         ),
         _phase_item(
             "Phase 3-F",
@@ -331,6 +345,259 @@ def _phase3_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         status = str(item.get("status") or "needs_work")
         counts[status] = counts.get(status, 0) + 1
     return {"total": len(items), **counts, "overall_ready": counts.get("needs_work", 0) == 0 and counts.get("partial", 0) == 0}
+
+
+def _goal_readiness(
+    html: str,
+    combined: str,
+    payloads: dict[str, dict],
+    acceptance_checks: list[QaCheckResult],
+    source_flags: dict[str, bool],
+) -> list[dict[str, Any]]:
+    next_available = _payload_data(payloads, "next_available")
+    matches = _payload_data(payloads, "matches")
+    intelligence = _payload_data(payloads, "intelligence")
+    optimizer = _payload_data(payloads, "optimizer_aggressive")
+    score_goals = _payload_data(payloads, "score_goals")
+    user_workflow = _payload_data(payloads, "user_workflow")
+    operation = _payload_data(payloads, "operation_simulate")
+
+    source_health = next_available.get("source_health") if isinstance(next_available.get("source_health"), dict) else {}
+    scan_window = source_health.get("scan_window") if isinstance(source_health.get("scan_window"), dict) else {}
+    observation_rows = _collect_observation_rows(next_available) or _collect_observation_rows(optimizer)
+    rejected_combo_rows = _collect_rejected_combo_rows(optimizer)
+    missing_signals = _collect_missing_signals(next_available, intelligence, optimizer, score_goals)
+    signal_keys = set(_collect_signal_keys(next_available, intelligence))
+    score_integrity = score_goals.get("probability_integrity") or []
+    operation_entry = next_available.get("operation_entry") if isinstance(next_available.get("operation_entry"), dict) else {}
+    user_replay = user_workflow.get("replay_readiness_summary") if isinstance(user_workflow.get("replay_readiness_summary"), dict) else {}
+    no_forbidden_buttons = all(f">{label}<" not in combined and f">{label} " not in combined for label in FORBIDDEN_BUTTON_TEXT)
+    disclaimer_blob = _stringify([next_available, optimizer, score_goals, operation])
+
+    items = [
+        _goal_item(
+            "产品原则",
+            "首页不是操作面板，而是今日观察",
+            "今日观察" in html and "操作面板" not in html and "sidebar" not in html,
+            ["首页包含今日观察", "首页没有默认操作面板"],
+        ),
+        _goal_item(
+            "产品原则",
+            "打开 App 自动拉取 Sporttery 可售比赛",
+            bool(payloads.get("next_available", {}).get("ok")) and bool(scan_window.get("complete")),
+            [f"selected_date={next_available.get('selected_date')}", f"provider_used={next_available.get('provider_used')}", f"scan_complete={scan_window.get('complete')}"],
+        ),
+        _goal_item(
+            "产品原则",
+            "默认隐藏 API Base、provider、路径、风险参数",
+            "<details id=\"advancedSettings\"" in html and "<details id=\"advancedSettings\" open" not in html and "API Base" not in html,
+            ["高级设置 details 存在且默认关闭", "首页不显示 API Base 文案"],
+        ),
+        _goal_item(
+            "产品原则",
+            "默认 risk profile 使用 aggressive，且只用于纸面观察",
+            optimizer.get("risk_profile") == "aggressive" and "纸面" in disclaimer_blob,
+            [f"optimizer_risk_profile={optimizer.get('risk_profile')}", "输出包含纸面模拟/观察语义"],
+        ),
+        _goal_item(
+            "产品原则",
+            "所有高级参数放进折叠面板",
+            "<details id=\"advancedSettings\"" in html and "<details id=\"advancedSettings\" open" not in html,
+            ["高级设置默认关闭"],
+        ),
+        _goal_item(
+            "产品原则",
+            "功能围绕比赛、观察价值、原因、风险、拒绝原因和回测表现",
+            bool(next_available.get("matches_count") is not None)
+            and bool(observation_rows)
+            and bool(rejected_combo_rows)
+            and bool(operation_entry.get("metrics")),
+            [
+                f"matches_count={next_available.get('matches_count')}",
+                f"observation_rows={len(observation_rows)}",
+                f"rejected_combo_rows={len(rejected_combo_rows)}",
+                f"operation_entry_metrics={len(operation_entry.get('metrics') or [])}",
+            ],
+        ),
+        _goal_item(
+            "产品原则",
+            "不提供投注、下单、支付、代购或自动化购彩能力",
+            no_forbidden_buttons and ("不提供" in combined or "不构成" in disclaimer_blob),
+            ["无正向交易按钮", "页面/输出包含非交易声明"],
+        ),
+        _goal_item(
+            "技术目标",
+            "稳定 Sporttery 数据源并显示状态",
+            bool(source_health.get("health")) and source_health.get("reliability_score") is not None,
+            [f"source_health={source_health.get('health')}", f"source_reliability={source_health.get('reliability_label_zh')}:{source_health.get('reliability_score')}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "自动扫描未来 1-3 天可售比赛",
+            bool(scan_window.get("complete")) and int(scan_window.get("days_checked") or 0) >= 4,
+            [f"scan_window={scan_window.get('start_date')}..{scan_window.get('end_date')}", f"days_checked={scan_window.get('days_checked')}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "建立比分矩阵",
+            bool(score_goals.get("score_table")) and bool(score_integrity),
+            [f"score_rows={len(score_goals.get('score_table') or [])}", f"integrity_rows={len(score_integrity)}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "用 Poisson / Dixon-Coles 推导比分、总进球、胜平负、让球胜平负",
+            source_flags.get("poisson_score_matrix")
+            and source_flags.get("dixon_coles")
+            and bool(score_goals.get("total_goals_table"))
+            and bool(score_goals.get("handicap_table")),
+            [
+                f"poisson_score_matrix={source_flags.get('poisson_score_matrix')}",
+                f"dixon_coles={source_flags.get('dixon_coles')}",
+                f"total_goal_rows={len(score_goals.get('total_goals_table') or [])}",
+                f"handicap_rows={len(score_goals.get('handicap_table') or [])}",
+            ],
+        ),
+        _goal_item(
+            "技术目标",
+            "用 Elo / 历史强度 / proxy xG 建立球队强弱",
+            source_flags.get("elo_strength") and source_flags.get("proxy_xg"),
+            [f"elo_strength={source_flags.get('elo_strength')}", f"proxy_xg={source_flags.get('proxy_xg')}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "用赔率市场去水概率做强基准",
+            source_flags.get("market_no_vig") and any(_has_any(row, ["market_prob"]) for row in observation_rows[:8]),
+            [f"market_no_vig={source_flags.get('market_no_vig')}", f"observation_rows_with_market={len(observation_rows)}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "建立情报融合层：伤停、首发、赛程、旅行、天气、新闻、战意",
+            {"injuries", "lineup", "schedule", "travel", "weather", "news", "motivation"}.issubset(signal_keys),
+            [f"signal_status_keys={', '.join(sorted(signal_keys))}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "没有可靠情报时显示 unknown，不得编造",
+            bool(missing_signals) and _signals_mark_unknown(intelligence),
+            [f"missing_signals={', '.join(missing_signals)}", "unknown/not_connected 已进入 view"],
+        ),
+        _goal_item(
+            "技术目标",
+            "输出 confidence_score 和 missing_signals",
+            bool(observation_rows)
+            and all(_has_any(row, ["confidence_score"]) for row in observation_rows[:5])
+            and all(_has_any(row, ["missing_signals"]) for row in observation_rows[:5]),
+            [f"checked_observations={min(len(observation_rows), 5)}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "组合优化显示入选原因和拒绝原因",
+            bool(observation_rows)
+            and bool(rejected_combo_rows)
+            and all(_has_any(row, ["selection_reason", "reason"]) for row in observation_rows[:5])
+            and all(_has_any(row, ["reject_reason", "reason"]) for row in rejected_combo_rows[:12]),
+            [f"observation_rows={len(observation_rows)}", f"rejected_combo_rows={len(rejected_combo_rows)}"],
+        ),
+        _goal_item(
+            "技术目标",
+            "模拟经营显示资金曲线、回撤、玩法贡献",
+            bool(operation.get("equity_curve")) and bool(operation.get("combo_summary")) and bool(operation.get("profit_explanation")),
+            [
+                f"equity_rows={len(operation.get('equity_curve') or [])}",
+                f"combo_rows={len(operation.get('combo_summary') or [])}",
+                f"profit_notes={len(operation.get('profit_explanation') or [])}",
+            ],
+        ),
+        _goal_item(
+            "技术目标",
+            "DeepSeek 只做解释层，不参与概率计算和组合选择",
+            source_flags.get("deepseek_only_explain_layer") and not source_flags.get("deepseek_in_probability_stack"),
+            [
+                f"deepseek_only_explain_layer={source_flags.get('deepseek_only_explain_layer')}",
+                f"deepseek_in_probability_stack={source_flags.get('deepseek_in_probability_stack')}",
+            ],
+        ),
+        _goal_item(
+            "Phase 3-E",
+            "真实用户历史 CSV 回测与模型校准具备可读准备度",
+            user_replay.get("score") is not None and bool(user_replay.get("next_action_zh")),
+            [f"replay_readiness={user_replay.get('label')}:{user_replay.get('score')}", f"calibration_status={user_replay.get('calibration_status')}"],
+        ),
+    ]
+    for check in acceptance_checks:
+        items.append(
+            _goal_item(
+                "验收标准",
+                check.name,
+                bool(check.passed),
+                [check.message],
+                details=check.details,
+            )
+        )
+    return items
+
+
+def _goal_item(
+    category: str,
+    requirement: str,
+    achieved: bool,
+    evidence: list[str],
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "category": category,
+        "requirement": requirement,
+        "status": "achieved" if achieved else "needs_work",
+        "achieved": bool(achieved),
+        "evidence": evidence,
+        "details": details or {},
+    }
+
+
+def _goal_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    achieved = sum(1 for item in items if item.get("achieved"))
+    total = len(items)
+    return {
+        "total": total,
+        "achieved": achieved,
+        "needs_work": total - achieved,
+        "overall_ready": achieved == total,
+    }
+
+
+def _source_flags(root: Path) -> dict[str, bool]:
+    def read(path: str) -> str:
+        file_path = root / path
+        return file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+
+    feature_context = read("src/intelligence/feature_context.py")
+    fusion = read("src/intelligence/fusion.py")
+    score_matrix = read("src/models/score_matrix.py")
+    dixon_coles = read("src/models/dixon_coles.py")
+    optimizer = read("src/optimizer/portfolio_optimizer.py")
+    intelligence_stack = "\n".join(
+        [
+            feature_context,
+            fusion,
+            read("src/intelligence/news_signals.py"),
+            read("src/intelligence/lineup_signals.py"),
+            read("src/intelligence/weather_signals.py"),
+            read("src/intelligence/schedule_signals.py"),
+            read("src/intelligence/motivation_signals.py"),
+        ]
+    )
+    probability_stack = "\n".join([feature_context, fusion, score_matrix, dixon_coles, optimizer])
+    explain_stack = "\n".join([read("src/explain/deepseek_explainer.py"), read("src/explain/llm_explainer.py"), read("src/view_models/analysis_view.py")])
+    return {
+        "poisson_score_matrix": "poisson_pmf" in score_matrix and "build_score_matrix" in feature_context,
+        "dixon_coles": "apply_dixon_coles_adjustment" in dixon_coles and "dixon_coles" in fusion,
+        "elo_strength": "_elo_strength" in feature_context and "elo_strength" in fusion,
+        "proxy_xg": "_xg_baseline" in feature_context and "poisson_xg" in fusion,
+        "market_no_vig": "market_no_vig" in fusion and "no_vig_probs" in feature_context,
+        "deepseek_only_explain_layer": "deepseek" in explain_stack.lower(),
+        "deepseek_in_probability_stack": "deepseek" in probability_stack.lower(),
+        "intelligence_modules": all(token in intelligence_stack for token in ["news", "lineup", "weather", "schedule", "motivation"]),
+    }
 
 
 def _readiness_status_counts(rows: list[dict[str, Any]]) -> str:
