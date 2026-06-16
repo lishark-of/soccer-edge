@@ -16,6 +16,10 @@ RISK_PROFILES = {
         "max_singles": 3,
         "max_parlay_2x1": 0,
         "max_parlay_3x1": 0,
+        "min_parlay_2x1_prob": 0.25,
+        "min_parlay_3x1_prob": 1.0,
+        "min_leg_confidence": 0.55,
+        "longshot_parlay_confidence_min": 0.75,
     },
     "balanced": {
         "risk_profile": "balanced",
@@ -32,6 +36,10 @@ RISK_PROFILES = {
         "max_singles": 3,
         "max_parlay_2x1": 2,
         "max_parlay_3x1": 0,
+        "min_parlay_2x1_prob": 0.22,
+        "min_parlay_3x1_prob": 1.0,
+        "min_leg_confidence": 0.55,
+        "longshot_parlay_confidence_min": 0.75,
     },
     "aggressive": {
         "risk_profile": "aggressive",
@@ -48,6 +56,10 @@ RISK_PROFILES = {
         "max_singles": 3,
         "max_parlay_2x1": 3,
         "max_parlay_3x1": 1,
+        "min_parlay_2x1_prob": 0.20,
+        "min_parlay_3x1_prob": 0.12,
+        "min_leg_confidence": 0.50,
+        "longshot_parlay_confidence_min": 0.75,
     },
 }
 

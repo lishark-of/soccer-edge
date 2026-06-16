@@ -98,6 +98,7 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
             "risk_quality": "串关腿数、相关性折扣、回撤风险会降低评分。",
             "stability": "保守/均衡/进取结果差异越大，越应谨慎。",
         },
+        "prematch_workflow": preview.get("prematch_workflow", {}),
         "disclaimer": "可信度审计只用于观察信号和风险诊断，不构成投注建议。",
     }
     result["credibility_gate"] = build_credibility_gate(result)
@@ -109,21 +110,27 @@ def build_credibility_gate(credibility: dict) -> dict:
     grade = credibility.get("grade", "D")
     missing = list(credibility.get("missing_information") or [])
     reasons = list(credibility.get("reasons") or [])
+    workflow = credibility.get("prematch_workflow") or {}
+    stage_label = workflow.get("stage_label_zh") or ""
+    is_t_plus = str(workflow.get("stage") or "").startswith("t_plus_")
     if score < 50:
         combo_gate = "closed"
         allow_parlay = False
-        label = "不建议串联"
-        reason = "缺失伤停、首发、天气、新闻面等关键信息，且当前信号可能主要来自高赔率冷门，不建议强行串联。"
+        label = "暂不最终串联" if is_t_plus else "不建议串联"
+        if is_t_plus:
+            reason = f"{stage_label}阶段只适合预观察；首发、终盘赔率、临场天气和部分伤停通常待确认，当前不做最终串联。"
+        else:
+            reason = "缺失伤停、首发、天气、新闻面等关键信息，且当前信号可能主要来自高赔率冷门，不建议强行串联。"
     elif score < 65:
         combo_gate = "restricted"
         allow_parlay = "only_low_risk_2x1"
-        label = "限制串联"
-        reason = "可信度中低，仅允许低风险 2串1 纸面观察；高赔率冷门和 3串1 不通过。"
+        label = "候选串联待复核" if is_t_plus else "限制串联"
+        reason = "T+1 阶段可保留低风险 2串1 候选池，但必须等赛日首发、终盘赔率和情报更新后再复核。" if is_t_plus else "可信度中低，仅允许低风险 2串1 纸面观察；高赔率冷门和 3串1 不通过。"
     else:
         combo_gate = "open"
         allow_parlay = True
-        label = "允许正常筛选"
-        reason = "可信度达到组合观察门槛，但仍需遵守 EV、Edge、相关性和风险纪律。"
+        label = "允许预筛组合" if is_t_plus else "允许正常筛选"
+        reason = "可信度达到预筛门槛，但 T+1 组合仍需赛日复核首发、终盘赔率、天气和伤停。" if is_t_plus else "可信度达到组合观察门槛，但仍需遵守 EV、Edge、相关性和风险纪律。"
     return {
         "score": score,
         "grade": grade,
@@ -133,6 +140,8 @@ def build_credibility_gate(credibility: dict) -> dict:
         "reason_zh": reason,
         "missing_information": missing,
         "supporting_reasons": reasons,
+        "prematch_stage": workflow.get("stage"),
+        "prematch_stage_label_zh": stage_label,
     }
 
 

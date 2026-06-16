@@ -102,8 +102,12 @@ def _status_rank(status: str) -> int:
 def _message(key: str, status: str) -> str:
     if status in {"confirmed", "user_supplied"}:
         return f"{FIELD_LABELS[key]}已有可用来源。"
-    if status in {"checked_empty", "fallback_estimated"}:
-        return f"{FIELD_LABELS[key]}已尝试读取或只有部分覆盖，会降低观察可信度。"
+    if status == "checked_empty":
+        return f"{FIELD_LABELS[key]}已检查但未返回，不等于确认没有该信息，会降低观察可信度。"
+    if status == "fallback_estimated":
+        return f"{FIELD_LABELS[key]}当前只有兜底估算，不等于现场真值，会降低观察可信度。"
+    if status == "error":
+        return f"{FIELD_LABELS[key]}查询失败，当前按未知处理，不会编造。"
     return f"{FIELD_LABELS[key]}未接入，当前影响保持 unknown。"
 
 

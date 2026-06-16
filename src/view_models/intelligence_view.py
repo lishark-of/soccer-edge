@@ -7,6 +7,10 @@ from src.intelligence.coverage_status import confidence_zh, normalize_coverage_s
 def build_intelligence_view(preview: dict) -> dict:
     optimizer = preview.get("optimizer", {})
     portfolio = optimizer.get("selected_portfolio", {})
+    coverage_table = build_intelligence_coverage_table(preview)
+    coverage_notes = ((preview.get("source_coverage") or {}).get("audit_notes_zh") or (preview.get("source_coverage") or {}).get("warnings") or [])
+    signal_rows = _signal_status_table(preview)
+    critical_gap_list = _critical_gap_list(preview, signal_rows)
     return {
         "title": "赛前情报总览",
         "summary_cards": [
@@ -25,12 +29,18 @@ def build_intelligence_view(preview: dict) -> dict:
         "reliability_summary": preview.get("reliability_summary", {}),
         "source_coverage_cards": _source_cards(preview),
         "match_coverage_table": _match_coverage_table(preview),
-        "intelligence_coverage": build_intelligence_coverage_table(preview),
+        "intelligence_coverage": coverage_table,
+        "coverage_summary_cards": _coverage_summary_cards(signal_rows),
+        "coverage_audit_title_zh": "情报覆盖审计",
+        "coverage_audit_notes": coverage_notes,
         "external_signals_status": preview.get("external_signals_status", {}) or {},
-        "signal_status": _signal_status_table(preview),
+        "signal_status": signal_rows,
+        "critical_gap_list_zh": critical_gap_list,
+        "homepage_missing_actions": _homepage_missing_actions(preview),
+        "today_focus_summary_zh": _today_focus_summary(preview, critical_gap_list),
         "intelligence_gap_actions": _intelligence_gap_actions(preview),
         "discipline": explain_trade_discipline(preview),
-        "warnings": list(preview.get("warnings", []) or []),
+        "warnings": _filtered_user_warnings(preview, coverage_notes),
         "disclaimer": preview.get("disclaimer", "仅用于观察信号、纸面模拟和风险诊断。"),
     }
 
@@ -47,6 +57,34 @@ def _obs(row: dict) -> dict:
         "edge": _signed_pct(row.get("edge")),
         "ev": _signed_pct(row.get("ev")),
         "ev_status_zh": row.get("ev_status_zh", "可计算 EV" if row.get("ev") is not None else "暂不能计算 EV"),
+        "break_even_prob": _pct(row.get("break_even_prob")),
+        "safety_margin": _signed_pct(row.get("safety_margin")),
+        "safety_margin_label_zh": row.get("safety_margin_label_zh", ""),
+        "odds_reading_zh": row.get("odds_reading_zh", ""),
+        "decision_level": row.get("decision_level", ""),
+        "decision_label_zh": row.get("decision_label_zh", ""),
+        "decision_action_zh": row.get("decision_action_zh", ""),
+        "decision_reason_zh": row.get("decision_reason_zh", ""),
+        "parlay_policy_zh": row.get("parlay_policy_zh", ""),
+        "calibrated_prob": _pct(row.get("calibrated_prob")),
+        "calibrated_ev": _signed_pct(row.get("calibrated_ev")),
+        "signal_category_zh": row.get("signal_category_zh", ""),
+        "recommended_use_zh": row.get("recommended_use_zh", ""),
+        "odds_bucket_zh": row.get("odds_bucket_zh", ""),
+        "calibration_message_zh": row.get("calibration_message_zh", ""),
+        "probability_bin": row.get("probability_bin", ""),
+        "probability_bin_weight": row.get("probability_bin_weight"),
+        "probability_bin_message_zh": row.get("probability_bin_message_zh", ""),
+        "odds_coach_verdict_zh": row.get("odds_coach_verdict_zh", ""),
+        "ml_learning_note_zh": row.get("ml_learning_note_zh", ""),
+        "next_review_zh": row.get("next_review_zh", ""),
+        "user_priority_zh": row.get("user_priority_zh", ""),
+        "learning_scores": row.get("learning_scores", {}),
+        "learning_score_summary_zh": row.get("learning_score_summary_zh", ""),
+        "matchday_review_zh": (row.get("matchday_review") or {}).get("message_zh", ""),
+        "matchday_keep_min_odds": _num((row.get("matchday_review") or {}).get("keep_min_odds")),
+        "matchday_no_value_below_odds": _num((row.get("matchday_review") or {}).get("no_value_below_odds")),
+        "matchday_reverse_drift_watch_odds": _num((row.get("matchday_review") or {}).get("reverse_drift_watch_odds")),
         "confidence_score": _pct(row.get("confidence_score")),
         "observation_confidence": _pct(row.get("observation_confidence")),
         "confidence_label_zh": row.get("confidence_label_zh", ""),
@@ -66,6 +104,7 @@ def _obs(row: dict) -> dict:
 
 def _combo(row: dict) -> dict:
     legs = row.get("legs", []) or []
+    value = _combo_value_fields(row)
     return {
         "type": row.get("candidate_type"),
         "legs": "；".join(_leg_label(leg) for leg in legs),
@@ -73,8 +112,49 @@ def _combo(row: dict) -> dict:
         "model_prob": _pct(row.get("combo_prob")),
         "market_prob": _pct(row.get("market_prob")),
         "ev": _signed_pct(row.get("ev")),
+        **value,
         "risk_level": row.get("risk_level"),
         "paper_stake": _rmb(row.get("suggested_paper_stake")),
+    }
+
+
+def _combo_value_fields(row: dict) -> dict:
+    odds = _float(row.get("combo_odds") or row.get("odds"))
+    prob = _float(row.get("combo_prob") or row.get("model_prob"))
+    if odds is None or odds <= 1 or prob is None:
+        return {
+            "break_even_prob": "N/A",
+            "safety_margin": "N/A",
+            "combo_decision_label_zh": "等待赔率",
+            "combo_action_zh": "组合缺少有效赔率或概率，先不做价值判断。",
+            "combo_value_reading_zh": "组合需要赔率、概率和相关性折扣后才能判断。",
+            "combo_parlay_policy_zh": "不进入串联。",
+        }
+    break_even = 1.0 / odds
+    margin = prob - break_even
+    if margin < 0:
+        label = "未覆盖赔率"
+        action = "暂不组合。"
+        policy = "组合概率低于盈亏线，不进入串联。"
+    elif prob < 0.20:
+        label = "命中率偏低"
+        action = "只作风险观察，不作为优先组合。"
+        policy = "组合命中概率低于 20%，不适合作为核心串联。"
+    elif margin >= 0.05:
+        label = "组合余量尚可"
+        action = "可进入候选池，但还要看可信度门控和每腿质量。"
+        policy = "仅作为纸面组合候选，需继续复核情报和终盘赔率。"
+    else:
+        label = "组合余量偏薄"
+        action = "等待赔率或情报补强。"
+        policy = "一般不进入串联。"
+    return {
+        "break_even_prob": _pct(break_even),
+        "safety_margin": _signed_pct(margin),
+        "combo_decision_label_zh": label,
+        "combo_action_zh": action,
+        "combo_value_reading_zh": f"组合赔率 {odds:.2f} 至少需要 {break_even:.1%} 同时命中；模型扣相关性后约 {prob:.1%}，安全边际 {margin:+.1%}。",
+        "combo_parlay_policy_zh": policy,
     }
 
 
@@ -140,23 +220,76 @@ def _source_cards(preview: dict) -> list[dict]:
     ]
 
 
+def _coverage_summary_cards(signal_rows: list[dict]) -> list[dict]:
+    return [
+        {
+            "label": row.get("signal"),
+            "value": row.get("status"),
+            "help": row.get("message_zh") or row.get("source_zh") or "",
+        }
+        for row in signal_rows
+        if row.get("key") in {"injuries", "lineup", "weather", "news"}
+    ][:4]
+
+
 def _match_coverage_table(preview: dict) -> list[dict]:
     rows = []
     for row in ((preview.get("source_coverage") or {}).get("match_coverage") or []):
         rows.append(
             {
                 "match": row.get("match"),
-                "api_football": (row.get("api_football") or {}).get("label_zh"),
-                "the_odds_api": (row.get("the_odds_api") or {}).get("label_zh"),
-                "injuries": (row.get("injuries") or {}).get("label_zh"),
-                "lineup": (row.get("lineup") or {}).get("label_zh"),
-                "weather": (row.get("weather") or {}).get("label_zh"),
-                "news": (row.get("news") or {}).get("label_zh"),
+                "api_football": _coverage_cell(row.get("api_football") or {}),
+                "the_odds_api": _coverage_cell(row.get("the_odds_api") or {}),
+                "injuries": _coverage_cell(row.get("injuries") or {}),
+                "lineup": _coverage_cell(row.get("lineup") or {}),
+                "weather": _coverage_cell(row.get("weather") or {}),
+                "news": _coverage_cell(row.get("news") or {}),
                 "match_confidence": _pct((row.get("identity") or {}).get("match_confidence")),
                 "message_zh": row.get("message_zh"),
             }
         )
     return rows
+
+
+def _critical_gap_list(preview: dict, signal_rows: list[dict]) -> list[str]:
+    lines = []
+    for row in signal_rows:
+        status = str(row.get("status_raw") or "")
+        signal = str(row.get("signal") or "")
+        if status in {"confirmed", "user_supplied"}:
+            continue
+        if status == "checked_empty":
+            lines.append(f"{signal}：已检查但未返回，今天不能把它当作“没有影响”。")
+        elif status == "fallback_estimated":
+            lines.append(f"{signal}：当前是兜底估算，只能弱参考，不宜放大到组合核心。")
+        elif status == "error":
+            lines.append(f"{signal}：查询失败，今天按未知处理，可信度会下降。")
+        else:
+            lines.append(f"{signal}：当前未接入可靠来源，今天会按未知降权。")
+    if not lines:
+        missing = list(preview.get("missing_signals", []) or [])
+        lines = [f"{item}：当前未接入，今天按未知处理。" for item in missing[:4]]
+    return lines[:4]
+
+
+def _homepage_missing_actions(preview: dict) -> list[str]:
+    rows = _intelligence_gap_actions(preview)
+    bullets = []
+    for row in rows[:4]:
+        bullets.append(f"补 {row.get('signal')}：{row.get('next_action_zh')}")
+    return bullets
+
+
+def _today_focus_summary(preview: dict, critical_gap_list: list[str]) -> str:
+    top_single_count = len(preview.get("top_single_observations", []) or [])
+    gate = (preview.get("credibility_gate") or {}).get("combo_gate")
+    if gate == "closed":
+        return "今天先看 Top 单关和总进球方向，串联先不升级为最终观察。"
+    if top_single_count <= 0:
+        return "今天先看数据源和缺口，再决定是否值得继续观察。"
+    if critical_gap_list:
+        return "今天有可跟踪的 Top 信号，但先补关键信息，再决定是否保留组合。"
+    return "今天可以先看 Top 单关，再根据纪律门控决定是否保留组合观察。"
 
 
 def _status_zh(status: str | None) -> str:
@@ -179,6 +312,7 @@ def build_intelligence_coverage_table(preview: dict) -> dict:
                     "source": signal.get("source_zh") or _coverage_source(key, status),
                     "confidence": confidence_zh(status, fallback_source=signal.get("city_source")),
                     "message_zh": signal.get("message_zh") or signal.get("label_zh") or status_zh(status),
+                    "explanation_zh": _coverage_explanation(label, status, signal),
                 }
             )
     by_status = {}
@@ -188,8 +322,29 @@ def build_intelligence_coverage_table(preview: dict) -> dict:
         "title": "情报覆盖状态",
         "rows": rows,
         "by_status": by_status,
+        "summary_zh": _coverage_summary_zh(by_status),
         "complex_intelligence_note_zh": "战意、中立场影响、国家队阵容完整度、教练轮换、旅行疲劳、更衣室状态和赛事重要性属于复杂情报；未确认时系统会降低可信度，不会编造。",
     }
+
+
+def _coverage_summary_zh(by_status: dict) -> str:
+    ordered = [
+        ("confirmed", "已确认"),
+        ("checked_empty", "已检查但未返回"),
+        ("fallback_estimated", "兜底估算"),
+        ("not_connected", "未接入"),
+        ("user_supplied", "用户补充"),
+        ("unknown", "未知"),
+        ("error", "查询失败"),
+    ]
+    parts = [f"{label} {by_status.get(key, 0)}" for key, label in ordered if by_status.get(key, 0)]
+    return "；".join(parts) if parts else "当前暂无情报覆盖记录。"
+
+
+def _filtered_user_warnings(preview: dict, coverage_notes: list[str]) -> list[str]:
+    preview_warnings = list(preview.get("warnings", []) or [])
+    normalized_notes = {str(item).strip() for item in coverage_notes if str(item).strip()}
+    return [item for item in preview_warnings if str(item).strip() and str(item).strip() not in normalized_notes]
 
 
 def _coverage_source(key: str, status: str) -> str:
@@ -200,6 +355,32 @@ def _coverage_source(key: str, status: str) -> str:
     if key == "news":
         return "GDELT"
     return "自动覆盖审计"
+
+
+def _coverage_cell(signal: dict) -> str:
+    status = normalize_coverage_status(signal.get("status"))
+    label = signal.get("status_zh") or signal.get("label_zh") or status_zh(status)
+    confidence = signal.get("confidence_zh") or confidence_zh(status, fallback_source=signal.get("city_source"))
+    if confidence and confidence != "未知":
+        return f"{label} · {confidence}"
+    return str(label)
+
+
+def _coverage_explanation(label: str, status: str, signal: dict) -> str:
+    if status == "confirmed":
+        return f"{label}已有可核实来源，可参与可信度判断。"
+    if status == "user_supplied":
+        return f"{label}来自用户补充，本地可读，但仍建议保留来源说明。"
+    if status == "checked_empty":
+        return f"{label}已检查但未返回，不等于确认没有该信息。"
+    if status == "fallback_estimated":
+        return f"{label}当前是兜底估算，只能弱参考。"
+    if status == "error":
+        return f"{label}查询失败，当前按未知处理。"
+    message = signal.get("message_zh")
+    if message:
+        return str(message)
+    return f"{label}当前未接入，系统不会编造。"
 
 
 def _leg_label(row: dict) -> str:

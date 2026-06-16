@@ -36,7 +36,7 @@ window.FootballComponents = (() => {
   }
 
   function warnings(items = []) {
-    if (!items.length) return '<p class="okText">当前没有新的 warning。</p>';
+    if (!items.length) return '<p class="okText">当前没有新的提醒。</p>';
     return `<ul class="warningList">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
   }
 

@@ -28,3 +28,25 @@ def test_deepseek_client_missing_key_errors_cleanly(monkeypatch):
     with pytest.raises(DeepSeekClientError) as exc:
         client.explain([])
     assert "missing" in str(exc.value).lower()
+
+
+def test_deepseek_client_marks_reasoning_budget_exhausted(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+
+    def fake_transport(url, headers, body, timeout):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "先思考，再作答。",
+                    },
+                    "finish_reason": "length",
+                }
+            ]
+        }
+
+    client = DeepSeekClient(config=_config(), transport=fake_transport)
+    with pytest.raises(DeepSeekClientError) as exc:
+        client.complete([{"role": "user", "content": "hello"}])
+    assert exc.value.code == "output_budget_exhausted"

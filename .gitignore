@@ -34,6 +34,11 @@ data/imports/
 data/normalized/
 data/cache/
 data/external_signals/
+data/learning_feedback/
+data/learning_observations/
+data/learning_results/
+data/learning_closing_odds/
+data/learning_clv/
 
 # Generated artifacts and reports
 artifacts/

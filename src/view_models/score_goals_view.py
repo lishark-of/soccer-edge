@@ -7,6 +7,8 @@ def build_score_goals_view(preview: dict) -> dict:
     totals = preview.get("top_total_goals_observations", []) or []
     scores = preview.get("top_score_observations", []) or []
     handicap = [row for row in preview.get("top_single_observations", []) or [] if row.get("play_type") == "hhad"]
+    if not handicap:
+        handicap = _handicap_rows_from_contexts(preview)
     integrity = _probability_integrity(preview)
     return {
         "title": "比分 / 进球数",
@@ -37,6 +39,67 @@ def build_score_goals_view(preview: dict) -> dict:
     }
 
 
+
+def _handicap_rows_from_contexts(preview: dict) -> list[dict]:
+    rows: list[dict] = []
+    labels = {"home": "让胜", "draw": "让平", "away": "让负", "win": "让胜", "lose": "让负"}
+    for context in preview.get("contexts", []) or []:
+        if not isinstance(context, dict):
+            continue
+        match = context.get("match", {}) or {}
+        hhad = (context.get("fused_probability", {}) or {}).get("hhad", {}) or {}
+        if not hhad:
+            continue
+        market = (context.get("market_no_vig", {}) or {}).get("hhad", {}) or {}
+        odds = (context.get("sporttery_odds", {}) or {}).get("hhad", {}) or {}
+        for key, probability in sorted(hhad.items(), key=lambda item: float(item[1] or 0.0), reverse=True):
+            official_odds = _odds_for_key(odds, str(key))
+            market_prob = market.get(key)
+            ev = None
+            edge = None
+            if official_odds and market_prob is not None:
+                try:
+                    ev = float(probability) * float(official_odds) - 1.0
+                    edge = float(probability) - float(market_prob)
+                except (TypeError, ValueError):
+                    ev = None
+                    edge = None
+            rows.append(
+                {
+                    "match_no": match.get("match_no") or match.get("match_id") or "",
+                    "match_id": match.get("match_id") or match.get("match_no") or "",
+                    "league": match.get("league", ""),
+                    "home_team": match.get("home_team", ""),
+                    "away_team": match.get("away_team", ""),
+                    "play_type": "hhad",
+                    "direction": labels.get(str(key), str(key)),
+                    "official_odds": official_odds,
+                    "market_prob": market_prob,
+                    "model_prob": round(float(probability or 0.0), 6),
+                    "probability": round(float(probability or 0.0), 6),
+                    "edge": edge,
+                    "ev": ev,
+                    "risk_level": "model_only" if official_odds is None else "medium",
+                    "odds_status_zh": "官方让球赔率已接入" if official_odds else "官方让球赔率未接入",
+                    "ev_status_zh": "可计算 EV" if ev is not None else "暂不能计算 EV",
+                    "recommended_action_zh": "先看让球方向概率，若赔率缺失则只作玩法覆盖参考。",
+                    "reliability_explanation_zh": "该行由 Poisson/xG + Dixon-Coles 让球概率矩阵生成；赔率缺失时不计算 EV。",
+                    "selection_reason": "让球胜平负矩阵覆盖行，非自动强信号。",
+                    "missing_signals": context.get("missing_signals", []),
+                }
+            )
+    rows.sort(key=lambda item: float(item.get("model_prob") or 0.0), reverse=True)
+    return rows[:8]
+
+
+def _odds_for_key(odds: dict, key: str):
+    aliases = {"home": "win", "away": "lose", "win": "win", "draw": "draw", "lose": "lose"}
+    value = odds.get(aliases.get(str(key), str(key))) if isinstance(odds, dict) else None
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
 def _reliability_notes(totals: list[dict], scores: list[dict]) -> list[dict]:
     return [
         {
@@ -52,6 +115,13 @@ def _reliability_notes(totals: list[dict], scores: list[dict]) -> list[dict]:
             "usage": "只作比分倾向参考。",
             "why": "比分是精确事件，波动最大；当前官方比分赔率未接入，EV 暂不能计算。",
             "top_example": _example(scores),
+        },
+        {
+            "type": "让球胜平负",
+            "reliability": "中低",
+            "usage": "用于补齐玩法覆盖，帮助理解让球方向概率。",
+            "why": "让球方向依赖让球盘和球队强弱差；赔率或盘口缺失时只作模型矩阵参考。",
+            "top_example": "查看让球胜平负观察表",
         },
     ]
 

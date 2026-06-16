@@ -15,6 +15,7 @@ from src.optimizer.best_parlay import build_best_parlay_summary
 from src.optimizer.portfolio_optimizer import optimize_portfolio
 from src.providers.factory import create_provider
 from src.models.score_matrix import normalize_probs
+from src.learning.signal_classifier import classify_signal
 
 DEFAULT_WEIGHTS = {
     "market_no_vig": 0.55,
@@ -99,12 +100,19 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "warnings": list(provider_meta.get("provider_warnings", []) or []),
         "message_zh": "已读取可售竞彩足球比赛。" if matches else "当前日期未读取到可售比赛，系统可继续尝试未来日期。",
     }
+    prematch_workflow = _prematch_workflow(
+        target_date,
+        len(matches),
+        provider_meta.get("provider_used", provider_name),
+        overall_completeness,
+    )
     return {
         "intelligence_version": "phase2o_intelligence_fusion_v0",
         "date": target_date,
         "provider": provider_name,
         **provider_meta,
         "data_source_status": data_source_status,
+        "prematch_workflow": prematch_workflow,
         "source_coverage": source_coverage,
         "intelligence_completeness": overall_completeness,
         "reliability_summary": _reliability_summary(source_coverage, overall_completeness),
@@ -120,7 +128,8 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
         "top_total_goals_observations": _top([item for item in observations if item["play_type"] == "total_goals"], 5, key="probability"),
         "top_score_observations": _top([item for item in observations if item["play_type"] == "correct_score"], 5, key="probability"),
         "missing_signals": sorted({signal for context in contexts for signal in context.get("missing_signals", [])}),
-        "warnings": list(dict.fromkeys(list(provider_meta.get("provider_warnings", [])) + list(source_coverage.get("warnings", [])))),
+        "coverage_notes": list(source_coverage.get("warnings", []) or []),
+        "warnings": list(dict.fromkeys(list(provider_meta.get("provider_warnings", [])))),
         "disclaimer": "赛前情报融合仅用于观察信号、纸面模拟和风险诊断，不构成投注建议。",
     }
 
@@ -134,39 +143,42 @@ def build_next_available_preview(
     external_signals_path: str | None = None,
 ) -> dict:
     start = _parse_date(start_date)
-    attempts = []
-    first_preview = None
-    first_available = None
+    if not start_date:
+        start = start + timedelta(days=1)
     max_offset = max(0, days_ahead)
+    attempts = []
+    first_available_date: str | None = None
     for offset in range(max_offset + 1):
         current = (start + timedelta(days=offset)).isoformat()
-        preview = build_intelligence_preview(provider_name, current, external_signals_path, bankroll=bankroll, risk_profile=risk_profile)
-        if first_preview is None:
-            first_preview = preview
-        attempts.append(
-            {
-                "date": current,
-                "matches_count": preview.get("matches_count", 0),
-                "provider_used": preview.get("provider_used", provider_name),
-                "status": preview.get("data_source_status", {}).get("status", "unknown"),
-            }
-        )
-        if first_available is None and preview.get("matches_count", 0) > 0:
-            first_available = preview
-            break
-    best = dict(first_available or first_preview or {})
-    selected_date = best.get("date") or start.isoformat()
+        attempt = _scan_next_available_attempt(provider_name, current)
+        attempts.append(attempt)
+        if first_available_date is None and int(attempt.get("matches_count", 0) or 0) > 0:
+            first_available_date = current
+    selected_date = first_available_date or start.isoformat()
+    best = build_intelligence_preview(provider_name, selected_date, external_signals_path, bankroll=bankroll, risk_profile=risk_profile)
+    selected_date = best.get("date") or selected_date
     best["selected_date"] = selected_date
     best["attempts"] = attempts
     best["scan_window"] = {
         "start_date": start.isoformat(),
         "end_date": (start + timedelta(days=max_offset)).isoformat(),
         "days_checked": len(attempts),
-        "complete": bool(first_available) or len(attempts) == max_offset + 1,
-        "stopped_after_first_available": bool(first_available),
-        "selection_rule": "从今天开始向后查找，找到第一个 matches_count > 0 的日期即停止；如果都为空，则返回首日空结果。",
+        "complete": len(attempts) == max_offset + 1,
+        "stopped_after_first_available": False,
+        "selection_rule": "默认按 T+1 逻辑完整扫描未来 1-3 天窗口，选择第一个 matches_count > 0 的日期作为主观察日；其余日期作为日历参考。",
+        "scan_mode": "lightweight_calendar_then_full_selected_date",
     }
-    best["next_available_version"] = "phase2o_next_available_v0"
+    best["prematch_workflow"] = {
+        **_prematch_workflow(
+            selected_date,
+            int(best.get("matches_count", 0) or 0),
+            best.get("provider_used", provider_name),
+            best.get("intelligence_completeness", {}),
+        ),
+        "scan_window": best["scan_window"],
+        "attempts": attempts,
+    }
+    best["next_available_version"] = "phase2r_full_scan_v2"
     best["top_observations"] = {
         "singles": best.get("top_single_observations", [])[:5],
         "parlay_2x1": (best.get("optimizer", {}).get("selected_portfolio", {}) or {}).get("parlay_2x1", [])[:5],
@@ -178,9 +190,37 @@ def build_next_available_preview(
         "selected_date": selected_date,
         "attempts": attempts,
         "scan_window": best["scan_window"],
-        "message_zh": "已自动找到可售比赛。" if best.get("matches_count", 0) else "未来 1-3 天暂未读取到可售比赛。",
+        "message_zh": "已自动扫描 T+1/T+3 可售比赛窗口，并选中第一个有比赛的日期。" if best.get("matches_count", 0) else "明日起未来 1-3 天暂未读取到可售比赛。",
     }
     return best
+
+
+def _scan_next_available_attempt(provider_name: str, target_date: str) -> dict:
+    provider = create_provider(provider_name)
+    warnings: list[str] = []
+    try:
+        matches = provider.get_matches(target_date)
+    except Exception as exc:
+        matches = []
+        warnings.append(f"数据源扫描失败：{_short_error(exc)}")
+    provider_used = getattr(provider, "provider_used", getattr(provider, "provider_name", provider_name))
+    fallback_used = bool(getattr(provider, "fallback_used", False)) or provider_used == "mock"
+    provider_warnings = list(getattr(provider, "warnings", []) or []) + warnings
+    count = len(matches or [])
+    if fallback_used:
+        status = "fallback" if count else "fallback_empty"
+    elif count:
+        status = "available"
+    else:
+        status = "empty"
+    return {
+        "date": target_date,
+        "matches_count": count,
+        "provider_used": provider_used,
+        "status": status,
+        "fallback_used": fallback_used,
+        "warnings": provider_warnings,
+    }
 
 
 def _external_signal_for_match(signals: dict[str, dict], match) -> dict:
@@ -253,6 +293,7 @@ def _external_signals_status(path: str | None, signals: dict[str, dict], match_i
     matched_ids = sorted(signal_ids & match_id_set)
     unmatched_ids = sorted(signal_ids - match_id_set)
     missing_match_ids = sorted(match_id_set - signal_ids)
+    supplied_fields = _external_supplied_fields(signals)
     return {
         "source_type": load_status.get("source_type") or ("user_json" if provided else "not_provided"),
         "path_provided": provided,
@@ -266,8 +307,37 @@ def _external_signals_status(path: str | None, signals: dict[str, dict], match_i
         "missing_match_count": len(missing_match_ids),
         "matched_match_ids": matched_ids,
         "unmatched_signal_ids": unmatched_ids,
+        "supplied_fields": supplied_fields,
+        "supplied_fields_zh": _external_supplied_fields_zh(supplied_fields),
         "message_zh": load_status.get("message_zh") or ("已读取用户提供的本地 JSON 情报；仅用于解释信心，不参与真实下单。" if provided else "未提供外部情报 JSON；新闻、伤停、首发、天气、战意保持 unknown。"),
     }
+
+
+def _external_supplied_fields(signals: dict[str, dict]) -> list[str]:
+    supplied: list[str] = []
+    for item in {id(value): value for value in signals.values()}.values():
+        if not isinstance(item, dict):
+            continue
+        for key in ("injuries", "lineup", "match_city", "weather", "news", "travel", "motivation", "neutral_ground", "tournament_importance"):
+            signal = item.get(key)
+            if isinstance(signal, dict) and signal.get("status") in {"user_supplied", "confirmed", "connected"}:
+                supplied.append(key)
+    return list(dict.fromkeys(supplied))
+
+
+def _external_supplied_fields_zh(fields: list[str]) -> list[str]:
+    labels = {
+        "injuries": "伤停",
+        "lineup": "首发",
+        "match_city": "比赛城市",
+        "weather": "天气",
+        "news": "新闻",
+        "travel": "旅行",
+        "motivation": "战意",
+        "neutral_ground": "中立场",
+        "tournament_importance": "赛事重要性",
+    }
+    return [labels.get(field, field) for field in fields]
 
 
 def build_observations_from_context(context: dict) -> tuple[list[dict], list[dict]]:
@@ -323,6 +393,55 @@ def _parse_date(value: str | None) -> date:
     return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
+def _prematch_workflow(target_date: str | None, matches_count: int, provider_used: str, completeness: dict | None = None) -> dict:
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    selected = _parse_date(target_date) if target_date else today + timedelta(days=1)
+    days_until = (selected - today).days
+    completeness = completeness or {}
+    if days_until <= 0:
+        stage = "matchday_review"
+        stage_label = "赛日复核"
+        headline = "今天可做赛日复核：重点看首发、终盘赔率和临场天气。"
+    elif days_until == 1:
+        stage = "t_plus_1"
+        stage_label = "T+1 明日预观察"
+        headline = "明日预观察：先筛候选，不把首发和终盘赔率缺失当作最终失败。"
+    else:
+        stage = f"t_plus_{days_until}"
+        stage_label = f"T+{days_until} 提前预观察"
+        headline = "提前预观察：只做候选池和情报缺口整理，临场前必须复核。"
+    pending = [
+        {"item": "首发", "status_zh": "等待临场确认", "why_zh": "通常临近开赛才可靠，T+1 阶段缺失属正常。"},
+        {"item": "终盘赔率 / CLV", "status_zh": "等待收盘线", "why_zh": "需要比较初始观察赔率和临近开赛赔率，判断市场是否支持。"},
+        {"item": "伤停更新", "status_zh": "等待确认", "why_zh": "提前一天可能只有部分消息，关键球员变化会影响信心。"},
+        {"item": "临场天气", "status_zh": "等待复核", "why_zh": "天气预报可参考，但球场临场风雨更关键。"},
+        {"item": "新闻 / 战意", "status_zh": "等待可靠来源", "why_zh": "只接受可追溯来源，不编造动机或内部状态。"},
+    ]
+    return {
+        "stage": stage,
+        "stage_label_zh": stage_label,
+        "today": today.isoformat(),
+        "selected_date": selected.isoformat(),
+        "days_until_match": days_until,
+        "matches_count": matches_count,
+        "provider_used": provider_used,
+        "headline_zh": headline,
+        "valid_use_zh": "当前适合做预观察、候选池排序和情报补齐清单；不适合把串联当作最终结论。",
+        "combo_policy_zh": "T+1 阶段只允许展示候选串联和被拒原因；最终是否保留组合，需要赛日复核首发、终盘赔率、天气和伤停。",
+        "missing_is_expected_zh": "首发、终盘赔率、临场天气在 T+1 阶段通常尚未完整，系统会标记为待确认，而不是臆造。",
+        "trader_instruction_zh": "先看单关观察，再看 2串1 是否通过纪律；若可信度不足，结论应是等待复核或暂不组合。",
+        "pending_confirmations": pending,
+        "checkpoints": [
+            "T+1：读取可售比赛、官方赔率、基础模型，形成预观察。",
+            "T+1 晚间：补伤停、新闻、天气预报和旅行/战意事实。",
+            "赛日临场：复核首发、终盘赔率、天气和异常新闻。",
+            "赛后：用 CLV、命中率、回撤和模拟走盘复盘策略质量。",
+        ],
+        "completeness_score": completeness.get("score"),
+        "completeness_label_zh": completeness.get("label_zh"),
+    }
+
+
 def _weighted_probs(sources: dict[str, dict], weights: dict[str, float]) -> dict[str, float]:
     acc = {"home": 0.0, "draw": 0.0, "away": 0.0}
     active_weight = 0.0
@@ -373,6 +492,35 @@ def _observation(match: dict, play_type: str, outcome: str, odds: float, market_
         "selection_reason": "有观察价值" if ev > 0 and edge > 0 else "无观察价值：赔率未覆盖模型概率或 Edge 不足",
     }
     row.update(explain_signal_reliability(row, context))
+    learning = classify_signal({**row, "odds": odds}, (context.get("intelligence_completeness") or {}).get("score") or context.get("confidence_score", 0.45) * 100)
+    row.update({
+        "calibrated_prob": learning.get("calibrated_prob"),
+        "calibrated_ev": learning.get("calibrated_ev"),
+        "signal_category": learning.get("signal_category"),
+        "signal_category_zh": learning.get("signal_category_zh"),
+        "recommended_use_zh": learning.get("recommended_use_zh"),
+        "odds_bucket_zh": learning.get("odds_bucket_zh"),
+        "break_even_prob": learning.get("break_even_prob"),
+        "safety_margin": learning.get("safety_margin"),
+        "safety_margin_label_zh": learning.get("safety_margin_label_zh"),
+        "odds_reading_zh": learning.get("odds_reading_zh"),
+        "decision_level": learning.get("decision_level"),
+        "decision_label_zh": learning.get("decision_label_zh"),
+        "decision_action_zh": learning.get("decision_action_zh"),
+        "decision_reason_zh": learning.get("decision_reason_zh"),
+        "parlay_policy_zh": learning.get("parlay_policy_zh"),
+        "calibration_message_zh": (learning.get("calibration") or {}).get("message_zh", ""),
+        "probability_bin": learning.get("probability_bin"),
+        "probability_bin_weight": learning.get("probability_bin_weight"),
+        "probability_bin_message_zh": learning.get("probability_bin_message_zh", ""),
+        "odds_coach_verdict_zh": learning.get("odds_coach_verdict_zh", ""),
+        "ml_learning_note_zh": learning.get("ml_learning_note_zh", ""),
+        "next_review_zh": learning.get("next_review_zh", ""),
+        "user_priority_zh": learning.get("user_priority_zh", ""),
+        "learning_scores": learning.get("learning_scores", {}),
+        "learning_score_summary_zh": learning.get("learning_score_summary_zh", ""),
+        "matchday_review": learning.get("matchday_review", {}),
+    })
     return row
 
 
@@ -427,6 +575,30 @@ def _candidate_from_observation(row: dict) -> dict:
         "opposing_factors": row["opposing_factors"],
         "missing_signals": row["missing_signals"],
         "observation_confidence": row.get("observation_confidence"),
+        "calibrated_prob": row.get("calibrated_prob"),
+        "calibrated_ev": row.get("calibrated_ev"),
+        "signal_category": row.get("signal_category"),
+        "signal_category_zh": row.get("signal_category_zh"),
+        "recommended_use_zh": row.get("recommended_use_zh"),
+        "odds_bucket_zh": row.get("odds_bucket_zh"),
+        "break_even_prob": row.get("break_even_prob"),
+        "safety_margin": row.get("safety_margin"),
+        "safety_margin_label_zh": row.get("safety_margin_label_zh"),
+        "odds_reading_zh": row.get("odds_reading_zh"),
+        "decision_level": row.get("decision_level"),
+        "decision_label_zh": row.get("decision_label_zh"),
+        "decision_action_zh": row.get("decision_action_zh"),
+        "decision_reason_zh": row.get("decision_reason_zh"),
+        "parlay_policy_zh": row.get("parlay_policy_zh"),
+        "calibration_message_zh": row.get("calibration_message_zh"),
+        "probability_bin": row.get("probability_bin"),
+        "probability_bin_weight": row.get("probability_bin_weight"),
+        "probability_bin_message_zh": row.get("probability_bin_message_zh"),
+        "odds_coach_verdict_zh": row.get("odds_coach_verdict_zh"),
+        "ml_learning_note_zh": row.get("ml_learning_note_zh"),
+        "next_review_zh": row.get("next_review_zh"),
+        "user_priority_zh": row.get("user_priority_zh"),
+        "matchday_review": row.get("matchday_review", {}),
         "confidence_label_zh": row.get("confidence_label_zh"),
         "confidence_breakdown": row.get("confidence_breakdown", {}),
         "reliability_explanation_zh": row.get("reliability_explanation_zh"),

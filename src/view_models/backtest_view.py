@@ -29,6 +29,7 @@ def build_backtest_view(report: dict) -> dict:
         ],
         "warnings": list(report.get("warnings", []) or []),
         "disclaimer": DISCLAIMER_TEXT,
+        "backtest_credibility": report.get("backtest_credibility", {}),
     }
 
 

@@ -23,12 +23,18 @@ def test_strict_trader_audit_static_checks_pass():
 def test_strict_trader_audit_acceptance_criteria_present():
     report = run_strict_trader_audit(".")
     names = {c["name"] for c in report["acceptance_criteria"]}
-    assert len(names) >= 10
+    assert len(names) >= 17
     assert "acceptance.01_today_observation_default" in names
     assert "acceptance.04_no_transaction_controls" in names
     assert "acceptance.08_rejected_combos_have_reasons" in names
     assert "acceptance.09_operation_profit_explained" in names
     assert "acceptance.10_model_outputs_are_not_guarantees" in names
+    assert "acceptance.12_ai_telemetry_unified" in names
+    assert "acceptance.13_learning_metrics_returned" in names
+    assert "acceptance.14_combo_gate_explicit" in names
+    assert "acceptance.15_learning_digests_present" in names
+    assert "acceptance.16_llm_guidance_present" in names
+    assert "acceptance.17_learning_reports_present" in names
 
 
 def test_strict_trader_audit_acceptance7_requires_visible_context_columns():
@@ -43,6 +49,48 @@ def test_strict_trader_audit_acceptance8_requires_home_rejected_combo_reasons():
     checks = {item["name"]: item for item in report["acceptance_criteria"]}
     assert checks["acceptance.08_rejected_combos_have_reasons"]["passed"] is True
     assert "今日观察首页展示" in checks["acceptance.08_rejected_combos_have_reasons"]["message"]
+
+
+def test_strict_trader_audit_acceptance12_requires_ai_telemetry_fields():
+    report = run_strict_trader_audit(".")
+    checks = {item["name"]: item for item in report["acceptance_criteria"]}
+    assert checks["acceptance.12_ai_telemetry_unified"]["passed"] is True
+    assert "telemetry" in checks["acceptance.12_ai_telemetry_unified"]["message"]
+
+
+def test_strict_trader_audit_acceptance13_requires_learning_metrics():
+    report = run_strict_trader_audit(".")
+    checks = {item["name"]: item for item in report["acceptance_criteria"]}
+    assert checks["acceptance.13_learning_metrics_returned"]["passed"] is True
+    assert "今日和区间指标" in checks["acceptance.13_learning_metrics_returned"]["message"]
+
+
+def test_strict_trader_audit_acceptance14_requires_combo_gate_fields():
+    report = run_strict_trader_audit(".")
+    checks = {item["name"]: item for item in report["acceptance_criteria"]}
+    assert checks["acceptance.14_combo_gate_explicit"]["passed"] is True
+    assert "combo_gate" in checks["acceptance.14_combo_gate_explicit"]["message"]
+
+
+def test_strict_trader_audit_acceptance15_requires_learning_digests():
+    report = run_strict_trader_audit(".")
+    checks = {item["name"]: item for item in report["acceptance_criteria"]}
+    assert checks["acceptance.15_learning_digests_present"]["passed"] is True
+    assert "复盘摘要" in checks["acceptance.15_learning_digests_present"]["message"]
+
+
+def test_strict_trader_audit_acceptance16_requires_llm_guidance():
+    report = run_strict_trader_audit(".")
+    checks = {item["name"]: item for item in report["acceptance_criteria"]}
+    assert checks["acceptance.16_llm_guidance_present"]["passed"] is True
+    assert "配置状态" in checks["acceptance.16_llm_guidance_present"]["message"]
+
+
+def test_strict_trader_audit_acceptance17_requires_learning_reports():
+    report = run_strict_trader_audit(".")
+    checks = {item["name"]: item for item in report["acceptance_criteria"]}
+    assert checks["acceptance.17_learning_reports_present"]["passed"] is True
+    assert "固定返回今日/区间复盘段落" in checks["acceptance.17_learning_reports_present"]["message"]
 
 
 def test_strict_trader_audit_phase3_readiness_present():

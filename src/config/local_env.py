@@ -9,15 +9,24 @@ DEFAULT_ENV_PATH = PROJECT_ROOT / ".env.local"
 ALLOWED_SECRET_KEYS = {
     "JC_EDGE_API_FOOTBALL_KEY": "API-Football / API-Sports",
     "JC_EDGE_THE_ODDS_API_KEY": "The Odds API",
+    "JC_EDGE_DEEPSEEK_API_KEY": "DeepSeek Pro 解释层",
     "JC_EDGE_OPENROUTER_API_KEY": "OpenRouter 解释层",
 }
+ALLOWED_CONFIG_KEYS = {
+    "JC_EDGE_DEEPSEEK_ENABLED": "DeepSeek optional explainer enabled",
+    "JC_EDGE_LLM_PROVIDER": "LLM provider",
+    "JC_EDGE_DEEPSEEK_MODEL": "DeepSeek model",
+    "JC_EDGE_DEEPSEEK_MAX_INPUT_TOKENS": "DeepSeek max input tokens",
+    "JC_EDGE_DEEPSEEK_MAX_OUTPUT_TOKENS": "DeepSeek max output tokens",
+}
+ALLOWED_LOCAL_KEYS = {**ALLOWED_SECRET_KEYS, **ALLOWED_CONFIG_KEYS}
 
 
 def load_local_env(path: str | Path | None = None, override: bool = False) -> dict[str, str]:
     env_path = Path(path) if path else DEFAULT_ENV_PATH
     values = _read_env_file(env_path)
     for key, value in values.items():
-        if key in ALLOWED_SECRET_KEYS and (override or not os.getenv(key)):
+        if key in ALLOWED_LOCAL_KEYS and (override or not os.getenv(key)):
             os.environ[key] = value
     return values
 
@@ -45,7 +54,7 @@ def build_secret_config_status(path: str | Path | None = None) -> dict:
         "notes_zh": [
             ".env.local 已在 .gitignore 中，不会被正常提交。",
             "页面保存时不会返回完整 key，只显示是否配置和尾号掩码。",
-            "OpenRouter/GPT/DeepSeek 等解释层默认关闭，不参与概率计算。",
+            "DeepSeek/OpenRouter/GPT 等解释层只做解释研究，不参与概率、EV 或候选筛选。",
         ],
     }
 
@@ -55,7 +64,7 @@ def save_local_env_values(updates: dict[str, object], path: str | Path | None = 
     env_path.parent.mkdir(parents=True, exist_ok=True)
     current = _read_env_file(env_path)
     changed: list[str] = []
-    for key in ALLOWED_SECRET_KEYS:
+    for key in ALLOWED_LOCAL_KEYS:
         raw = updates.get(key)
         if raw is None:
             continue
@@ -65,6 +74,20 @@ def save_local_env_values(updates: dict[str, object], path: str | Path | None = 
         current[key] = value
         os.environ[key] = value
         changed.append(key)
+    if updates.get("JC_EDGE_DEEPSEEK_API_KEY") and str(updates.get("JC_EDGE_DEEPSEEK_API_KEY")).strip():
+        defaults = {
+            "JC_EDGE_DEEPSEEK_ENABLED": "true",
+            "JC_EDGE_LLM_PROVIDER": "deepseek",
+            "JC_EDGE_DEEPSEEK_MODEL": "deepseek-v4-pro",
+            "JC_EDGE_DEEPSEEK_MAX_INPUT_TOKENS": "24000",
+            "JC_EDGE_DEEPSEEK_MAX_OUTPUT_TOKENS": "4000",
+            "JC_EDGE_DEEPSEEK_TIMEOUT_SECONDS": "120",
+        }
+        for key, value in defaults.items():
+            if not current.get(key):
+                current[key] = value
+                os.environ[key] = value
+                changed.append(key)
     _write_env_file(env_path, current)
     try:
         env_path.chmod(0o600)
@@ -102,7 +125,7 @@ def _read_env_file(path: Path) -> dict[str, str]:
         key, value = stripped.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key in ALLOWED_SECRET_KEYS:
+        if key in ALLOWED_LOCAL_KEYS:
             values[key] = value
     return values
 
@@ -116,10 +139,10 @@ def _write_env_file(path: Path, values: dict[str, str]) -> None:
                 continue
             if stripped.startswith("# JC Edge local-only secrets") or stripped.startswith("# Full keys are read locally"):
                 continue
-            if stripped.startswith("# API-Football") or stripped.startswith("# The Odds API") or stripped.startswith("# OpenRouter"):
+            if stripped.startswith("# API-Football") or stripped.startswith("# The Odds API") or stripped.startswith("# OpenRouter") or stripped.startswith("# DeepSeek") or stripped.startswith("# LLM"):
                 continue
             key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-            if key not in ALLOWED_SECRET_KEYS:
+            if key not in ALLOWED_LOCAL_KEYS:
                 preserved_lines.append(line)
 
     lines = list(preserved_lines)
@@ -133,4 +156,18 @@ def _write_env_file(path: Path, values: dict[str, str]) -> None:
         value = values.get(key, "")
         lines.append(f"# {label}")
         lines.append(f"{key}={value}")
+    config_keys = [
+        "JC_EDGE_DEEPSEEK_ENABLED",
+        "JC_EDGE_LLM_PROVIDER",
+        "JC_EDGE_DEEPSEEK_MODEL",
+        "JC_EDGE_DEEPSEEK_TIMEOUT_SECONDS",
+        "JC_EDGE_DEEPSEEK_MAX_INPUT_TOKENS",
+        "JC_EDGE_DEEPSEEK_MAX_OUTPUT_TOKENS",
+    ]
+    if any(values.get(key) for key in config_keys):
+        lines.append("# DeepSeek optional explainer config")
+        for key in config_keys:
+            value = values.get(key, "")
+            if value:
+                lines.append(f"{key}={value}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

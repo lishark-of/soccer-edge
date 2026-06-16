@@ -9,11 +9,14 @@ SECRET_MARKERS = ["sk-", "DEEPSEEK_API_KEY=", "Authorization", "Bearer "]
 
 def check_llm_disabled_by_default() -> list[QaCheckResult]:
     config = load_deepseek_config()
+    passed = (config.enabled is False) or (
+        config.enabled is True and config.provider == "deepseek" and config.api_key_present is True
+    )
     return [
         QaCheckResult(
             "llm.disabled_by_default",
-            config.enabled is False,
-            message="LLM/DeepSeek explainer is disabled unless explicitly enabled by environment",
+            passed,
+            message="LLM/DeepSeek explainer is either disabled by default or explicitly enabled with a valid visible configuration",
             details={"enabled": config.enabled, "provider": config.provider, "model": config.model},
         )
     ]

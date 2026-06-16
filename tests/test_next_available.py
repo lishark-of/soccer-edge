@@ -3,29 +3,36 @@ from src.view_models.next_available_view import build_next_available_view
 
 
 def test_next_available_returns_selected_date(monkeypatch):
-    calls = []
+    scan_calls = []
+    full_calls = []
+
+    def fake_scan(provider_name, target_date):
+        scan_calls.append(target_date)
+        count = 2 if target_date == "2026-06-12" else 0
+        return {"date": target_date, "matches_count": count, "provider_used": "sporttery" if count else "sporttery", "status": "available" if count else "empty"}
 
     def fake_preview(provider_name="auto", target_date=None, external_signals_path=None, bankroll=10000.0, risk_profile="aggressive"):
-        calls.append(target_date)
-        count = 2 if target_date == "2026-06-12" else 0
+        full_calls.append(target_date)
         return {
             "date": target_date,
-            "provider_used": "sporttery" if count else "mock",
-            "matches_count": count,
+            "provider_used": "sporttery",
+            "matches_count": 2,
             "optimizer": {"selected_portfolio": {"singles": [], "parlay_2x1": [], "parlay_3x1": []}},
             "top_single_observations": [],
             "top_total_goals_observations": [],
             "top_score_observations": [],
             "missing_signals": [],
             "warnings": [],
-            "data_source_status": {"status": "available" if count else "empty"},
+            "data_source_status": {"status": "available"},
         }
 
+    monkeypatch.setattr(fusion, "_scan_next_available_attempt", fake_scan)
     monkeypatch.setattr(fusion, "build_intelligence_preview", fake_preview)
     result = fusion.build_next_available_preview(start_date="2026-06-10")
     assert result["selected_date"] == "2026-06-12"
     assert result["matches_count"] == 2
-    assert calls == ["2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13"]
+    assert scan_calls == ["2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13"]
+    assert full_calls == ["2026-06-12"]
     assert result["scan_window"]["complete"] is True
     assert result["scan_window"]["days_checked"] == 4
 
@@ -45,13 +52,17 @@ def test_next_available_defaults_aggressive(monkeypatch):
 def test_next_available_passes_external_signals_path(monkeypatch):
     seen = []
 
+    def fake_scan(provider_name, target_date):
+        return {"date": target_date, "matches_count": 0, "provider_used": "sporttery", "status": "empty"}
+
     def fake_preview(provider_name="auto", target_date=None, external_signals_path=None, bankroll=10000.0, risk_profile="aggressive"):
         seen.append(external_signals_path)
         return {"date": target_date, "matches_count": 0, "provider_used": "mock", "optimizer": {"selected_portfolio": {}}, "data_source_status": {}}
 
+    monkeypatch.setattr(fusion, "_scan_next_available_attempt", fake_scan)
     monkeypatch.setattr(fusion, "build_intelligence_preview", fake_preview)
     fusion.build_next_available_preview(start_date="2026-06-10", external_signals_path="data/fixtures/signals.json")
-    assert seen == ["data/fixtures/signals.json"] * 4
+    assert seen == ["data/fixtures/signals.json"]
 
 
 def test_next_available_view_includes_source_health():

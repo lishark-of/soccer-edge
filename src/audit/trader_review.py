@@ -48,9 +48,15 @@ def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> 
 def _final_call(credibility: dict, best: dict, p2_count: int, p3_count: int) -> str:
     score = int(credibility.get("credibility_score") or 0)
     gate = credibility.get("credibility_gate", {})
+    workflow = credibility.get("prematch_workflow") or {}
+    is_t_plus = str(workflow.get("stage") or "").startswith("t_plus_")
     if gate.get("combo_gate") == "closed" or score < 50:
+        if is_t_plus:
+            return "T+1 暂不最终串联：先保留预观察，等待首发、终盘赔率、伤停和临场天气复核。"
         return "暂不强行串联：可信度偏低，优先补齐情报或等待更多数据。"
     if score < 55:
+        if is_t_plus:
+            return "T+1 只保留弱观察：候选可以跟踪，但组合需要赛日复核后再决定。"
         return "可信度偏低，只保留弱观察，不应强行组合。"
     if p3_count:
         return "进取档出现 3串1，但严厉交易者只允许纸面跟踪，不建议放大风险。"

@@ -1,0 +1,30 @@
+[
+  {
+    "match_no": "周四001",
+    "match": "葡萄牙 vs 尼日利亚",
+    "home_team": "葡萄牙",
+    "away_team": "尼日利亚",
+    "play_type": "had",
+    "direction": "客胜",
+    "odds": 10.0,
+    "model_prob": 0.139,
+    "market_prob": 0.089,
+    "ev": 0.391,
+    "edge": 0.051,
+    "confidence_score": 0.579
+  },
+  {
+    "match_no": "周四001",
+    "match": "葡萄牙 vs 尼日利亚",
+    "home_team": "葡萄牙",
+    "away_team": "尼日利亚",
+    "play_type": "had",
+    "direction": "平",
+    "odds": 5.5,
+    "model_prob": 0.19,
+    "market_prob": 0.161,
+    "ev": 0.047,
+    "edge": 0.029,
+    "confidence_score": 0.579
+  }
+]

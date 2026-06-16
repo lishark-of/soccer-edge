@@ -35,6 +35,7 @@ def sanitize_explanation(text: str) -> str:
     }
     for source, target in replacements.items():
         cleaned = cleaned.replace(source, target)
+    cleaned = _replace_unqualified_guarantee(cleaned)
     for term in BANNED_OUTPUT_TERMS:
         cleaned = cleaned.replace(term, "高风险表述")
     if not cleaned:
@@ -49,7 +50,7 @@ def validate_explanation_safety(text: str) -> list[str]:
         if term in content:
             issues.append(f"contains banned term: {term}")
     for term in OVERCONFIDENT_TERMS:
-        if term in content:
+        if _has_overconfident_term(content, term):
             issues.append(f"contains overconfident term: {term}")
     if "概率模型不保证结果" not in content and "不保证" not in content:
         issues.append("missing uncertainty reminder")
@@ -58,8 +59,45 @@ def validate_explanation_safety(text: str) -> list[str]:
     return issues
 
 
+def _has_overconfident_term(content: str, term: str) -> bool:
+    if term != "保证":
+        return term in content
+    start = 0
+    while True:
+        index = content.find(term, start)
+        if index < 0:
+            return False
+        prefix = content[max(0, index - 3):index]
+        if prefix.endswith(("不", "无", "无法", "不能", "并不")):
+            start = index + len(term)
+            continue
+        return True
+
+
+def _replace_unqualified_guarantee(content: str) -> str:
+    out = []
+    index = 0
+    term = "保证"
+    while True:
+        found = content.find(term, index)
+        if found < 0:
+            out.append(content[index:])
+            break
+        prefix = content[max(0, found - 3):found]
+        out.append(content[index:found])
+        if prefix.endswith(("不", "无", "无法", "不能", "并不")):
+            out.append(term)
+        else:
+            out.append("无法承诺")
+        index = found + len(term)
+    return "".join(out)
+
+
 def enforce_safe_explanation(text: str, fallback: str) -> str:
-    issues = validate_explanation_safety(text)
+    cleaned = sanitize_explanation(text)
+    if "不保证" not in cleaned and "无法承诺" not in cleaned and "不能保证" not in cleaned:
+        cleaned = cleaned.rstrip() + "\n\n" + DISCLAIMER_TEXT
+    issues = validate_explanation_safety(cleaned)
     if issues:
         return sanitize_explanation(fallback)
-    return sanitize_explanation(text)
+    return cleaned

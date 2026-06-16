@@ -1,0 +1,60 @@
+{
+  "date": "2026-06-11",
+  "source": "manual_fixture_from_public_results",
+  "matches": [
+    {
+      "match": "葡萄牙 vs 尼日利亚",
+      "home_team": "葡萄牙",
+      "away_team": "尼日利亚",
+      "intelligence_score": 45,
+      "result": {
+        "score": "2-1",
+        "home_goals": 2,
+        "away_goals": 1,
+        "actual_outcome": "home",
+        "actual_outcome_zh": "主胜",
+        "actual_handicap_outcome_zh": "未知",
+        "total_goals": 3
+      },
+      "observations": [
+        {
+          "play_type": "had",
+          "direction": "客胜",
+          "odds": 10.0,
+          "model_prob": 0.139,
+          "market_prob": 0.089,
+          "ev": 0.391,
+          "edge": 0.051,
+          "confidence_score": 0.579
+        },
+        {
+          "play_type": "had",
+          "direction": "平",
+          "odds": 5.5,
+          "model_prob": 0.19,
+          "market_prob": 0.161,
+          "ev": 0.047,
+          "edge": 0.029,
+          "confidence_score": 0.579
+        }
+      ]
+    },
+    {
+      "match": "英格兰 vs 哥斯达黎加",
+      "home_team": "英格兰",
+      "away_team": "哥斯达黎加",
+      "intelligence_score": 45,
+      "result": {
+        "score": "3-0",
+        "home_goals": 3,
+        "away_goals": 0,
+        "actual_outcome": "home",
+        "actual_outcome_zh": "主胜",
+        "actual_handicap_outcome_zh": "未知",
+        "total_goals": 3
+      },
+      "observations": []
+    }
+  ],
+  "disclaimer": "该 fixture 只用于赛后学习功能演示。"
+}

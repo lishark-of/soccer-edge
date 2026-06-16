@@ -45,6 +45,8 @@ def run_strict_trader_audit(project_root: str = ".") -> dict[str, Any]:
         "intelligence_external": ("/api/view/intelligence", {"provider": "mock", "date": "2026-06-10", "external_signals": "data/fixtures/external_signals_mock_20260610.json"}),
         "optimizer_aggressive": ("/api/view/optimizer", {"provider": "auto", "date": "2026-06-10", "bankroll": "10000", "risk_profile": "aggressive"}),
         "score_goals": ("/api/view/score-goals", {"provider": "auto", "date": "2026-06-10"}),
+        "llm_status": ("/api/llm/status", {}),
+        "learning_history": ("/api/view/learning-history", {}),
         "user_workflow": ("/api/view/user-workflow", {"input": "data/fixtures/user_onboarding_sample.csv", "mapping": "data/fixtures/user_onboarding_mapping_example.json"}),
         "operation_simulate": ("/api/view/operation", {"historical_data": "data/fixtures/operation_walkforward_sample.csv", "initial_bankroll": "10000"}),
         "qa": ("/api/view/qa", {}),
@@ -98,6 +100,11 @@ def _static_checks(html: str, combined: str) -> list[QaCheckResult]:
         QaCheckResult("audit.home.advanced_closed", "<details id=\"advancedSettings\"" in html and "<details id=\"advancedSettings\" open" not in html, message="高级设置默认关闭"),
         QaCheckResult("audit.home.no_visible_operation_panel", "操作面板" not in html and "sidebar" not in html, message="首页没有默认技术操作面板"),
         QaCheckResult("audit.home.no_api_base_label", "API Base" not in html, message="首页不显示 API Base 文案"),
+        QaCheckResult(
+            "audit.ai.auto_research_default",
+            "auto：自动跑 DS Pro" in html and 'return mode === "auto" ? "auto" : mode' in combined,
+            message="AI 研究模式默认 auto，前端保留 auto 交给后端解析，而不是硬编码为 DeepSeek。",
+        ),
     ]
     for label in FORBIDDEN_BUTTON_TEXT:
         checks.append(
@@ -115,6 +122,11 @@ def _acceptance_checks(html: str, combined: str, payloads: dict[str, dict]) -> l
     optimizer = _payload_data(payloads, "optimizer_aggressive")
     score_goals = _payload_data(payloads, "score_goals")
     operation = _payload_data(payloads, "operation_simulate")
+    llm_status = _payload_data(payloads, "llm_status")
+    learning_history = _payload_data(payloads, "learning_history")
+    ai_research = optimizer.get("ai_combo_research") if isinstance(optimizer.get("ai_combo_research"), dict) else {}
+    gate = optimizer.get("credibility_gate") if isinstance(optimizer.get("credibility_gate"), dict) else {}
+    best_parlay = optimizer.get("best_parlay_summary") if isinstance(optimizer.get("best_parlay_summary"), dict) else {}
 
     matches_count = _safe_int(next_available.get("matches_count"))
     provider_used = str(next_available.get("provider_used") or "")
@@ -123,6 +135,13 @@ def _acceptance_checks(html: str, combined: str, payloads: dict[str, dict]) -> l
     rejected_combo_rows = _collect_rejected_combo_rows(optimizer)
     profit_notes = operation.get("profit_explanation") or []
     disclaimers_blob = _stringify([next_available, optimizer, score_goals, operation])
+    best_risk_adjusted = best_parlay.get("best_risk_adjusted_combo") if isinstance(best_parlay.get("best_risk_adjusted_combo"), dict) else {}
+    best_parlay_final_status = (
+        ((best_risk_adjusted.get("best_parlay_quality") or {}).get("final_status"))
+        or best_risk_adjusted.get("status")
+        or best_parlay.get("status")
+        or ""
+    )
 
     no_forbidden_buttons = all(
         f">{label}<" not in combined and f">{label} " not in combined
@@ -130,6 +149,8 @@ def _acceptance_checks(html: str, combined: str, payloads: dict[str, dict]) -> l
     )
     score_rows = (score_goals.get("score_table") or []) + (score_goals.get("top_scores") or [])
     total_goal_rows = score_goals.get("total_goals_table") or []
+    long_run_score = next_available.get("long_run_score") if isinstance(next_available.get("long_run_score"), dict) else {}
+    score_roadmap = long_run_score.get("score_roadmap") if isinstance(long_run_score.get("score_roadmap"), list) else []
 
     return [
         QaCheckResult(
@@ -193,6 +214,108 @@ def _acceptance_checks(html: str, combined: str, payloads: dict[str, dict]) -> l
             ("不代表未来表现" in disclaimers_blob or "不保证" in disclaimers_blob) and ("不构成" in disclaimers_blob or "纸面" in disclaimers_blob) and bool(score_rows) and bool(total_goal_rows),
             message="模型输出包含非保证声明，并展示比分 Top 与总进球概率。",
             details={"score_rows": len(score_rows), "total_goal_rows": len(total_goal_rows)},
+        ),
+        QaCheckResult(
+            "acceptance.11_long_run_score_roadmap",
+            bool(score_roadmap)
+            and "下一步优先级" in combined
+            and all(_safe_int(row.get("score")) is not None and _safe_int(row.get("score")) < 90 for row in score_roadmap)
+            and all(bool(row.get("next")) for row in score_roadmap),
+            message="Long-run score 输出可执行路线图，且不把满分项列为待办。",
+            details={
+                "roadmap_count": len(score_roadmap),
+                "roadmap": [
+                    {"label": row.get("label"), "score": row.get("score"), "next": row.get("next")}
+                    for row in score_roadmap
+                ],
+            },
+        ),
+        QaCheckResult(
+            "acceptance.12_ai_telemetry_unified",
+            bool(ai_research)
+            and all(key in ai_research for key in ["ds_status", "ds_attempted", "ds_completed", "ds_error_code", "fallback_reason", "token_in", "token_out", "token_total"])
+            and all(key in llm_status for key in ["runtime_status", "runtime_status_zh", "ds_attempted", "ds_completed", "ds_error_code", "last_token_total", "status_detail_zh"]),
+            message="AI 研究和 LLM 状态统一返回 DS telemetry、fallback 原因和 token 消耗。",
+            details={
+                "ai_ds_status": ai_research.get("ds_status"),
+                "ai_fallback_reason": ai_research.get("fallback_reason"),
+                "ai_token_total": ai_research.get("token_total"),
+                "llm_runtime_status": llm_status.get("runtime_status"),
+                "llm_status_detail": llm_status.get("status_detail_zh"),
+            },
+        ),
+        QaCheckResult(
+            "acceptance.13_learning_metrics_returned",
+            isinstance(learning_history.get("daily_metrics"), list)
+            and isinstance(learning_history.get("window_metrics"), list)
+            and isinstance(next_available.get("daily_learning_metrics"), list)
+            and isinstance(next_available.get("window_learning_metrics"), list)
+            and bool(learning_history.get("latest_daily_summary_zh")),
+            message="学习闭环返回今日和区间指标，首页视图也能透传这些指标。",
+            details={
+                "daily_metric_rows": len(learning_history.get("daily_metrics") or []),
+                "window_metric_rows": len(learning_history.get("window_metrics") or []),
+                "next_available_daily_rows": len(next_available.get("daily_learning_metrics") or []),
+                "next_available_window_rows": len(next_available.get("window_learning_metrics") or []),
+            },
+        ),
+        QaCheckResult(
+            "acceptance.14_combo_gate_explicit",
+            gate.get("combo_gate") in {"closed", "restricted", "open"}
+            and bool(optimizer.get("no_combo_reason") or best_parlay.get("no_combo_reason"))
+            and best_parlay_final_status in {"selected", "rejected", "no_combo", "daily_candidate"},
+            message="串联纪律固定返回 combo_gate、no_combo_reason 和 best_parlay final_status。",
+            details={
+                "combo_gate": gate.get("combo_gate"),
+                "no_combo_reason": optimizer.get("no_combo_reason") or best_parlay.get("no_combo_reason"),
+                "best_parlay_final_status": best_parlay_final_status,
+            },
+        ),
+        QaCheckResult(
+            "acceptance.15_learning_digests_present",
+            isinstance(learning_history.get("daily_digest"), dict)
+            and bool((learning_history.get("daily_digest") or {}).get("summary_zh"))
+            and bool((learning_history.get("daily_digest") or {}).get("next_step_zh"))
+            and isinstance(learning_history.get("window_digests"), list)
+            and isinstance(next_available.get("daily_learning_digest"), dict)
+            and bool((next_available.get("daily_learning_digest") or {}).get("summary_zh"))
+            and isinstance(next_available.get("window_learning_digests"), list),
+            message="学习闭环除了原始指标，还会返回今日/区间复盘摘要和下一步动作。",
+            details={
+                "daily_digest_headline": (learning_history.get("daily_digest") or {}).get("headline_zh"),
+                "window_digest_count": len(learning_history.get("window_digests") or []),
+                "next_available_digest_headline": (next_available.get("daily_learning_digest") or {}).get("headline_zh"),
+            },
+        ),
+        QaCheckResult(
+            "acceptance.16_llm_guidance_present",
+            all(key in llm_status for key in ["config_status_zh", "runtime_notice_zh", "next_step_zh"])
+            and all(key in (next_available.get("ai_research_layer") or {}) for key in ["config_status_zh", "runtime_notice_zh", "next_step_zh"])
+            and "配置：" in combined
+            and "学习结论：" in combined,
+            message="DS 状态会返回配置状态、本轮状态和下一步动作，首页也保留学习结论提示。",
+            details={
+                "config_status_zh": llm_status.get("config_status_zh"),
+                "runtime_notice_zh": llm_status.get("runtime_notice_zh"),
+                "next_step_zh": llm_status.get("next_step_zh"),
+            },
+        ),
+        QaCheckResult(
+            "acceptance.17_learning_reports_present",
+            isinstance(learning_history.get("daily_report"), dict)
+            and bool((learning_history.get("daily_report") or {}).get("headline_zh"))
+            and bool((learning_history.get("daily_report") or {}).get("paragraphs_zh"))
+            and isinstance(learning_history.get("window_reports"), list)
+            and isinstance(next_available.get("daily_learning_report"), dict)
+            and bool((next_available.get("daily_learning_report") or {}).get("headline_zh"))
+            and isinstance(next_available.get("window_learning_reports"), list),
+            message="学习闭环固定返回今日/区间复盘段落，前端可直接渲染日报而不必自己拼字段。",
+            details={
+                "daily_report_headline": (learning_history.get("daily_report") or {}).get("headline_zh"),
+                "daily_report_paragraphs": len((learning_history.get("daily_report") or {}).get("paragraphs_zh") or []),
+                "window_report_count": len(learning_history.get("window_reports") or []),
+                "next_available_daily_report_headline": (next_available.get("daily_learning_report") or {}).get("headline_zh"),
+            },
         ),
     ]
 
@@ -500,6 +623,15 @@ def _goal_readiness(
         ),
         _goal_item(
             "技术目标",
+            "被拒组合进入赛后学习闭环",
+            source_flags.get("rejected_combo_learning_snapshot") and source_flags.get("rejected_combo_learning_ui"),
+            [
+                f"snapshot_records_rejected_combo={source_flags.get('rejected_combo_learning_snapshot')}",
+                f"ui_shows_rejected_combo_count={source_flags.get('rejected_combo_learning_ui')}",
+            ],
+        ),
+        _goal_item(
+            "技术目标",
             "模拟经营显示资金曲线、回撤、玩法贡献",
             bool(operation.get("equity_curve")) and bool(operation.get("combo_summary")) and bool(operation.get("profit_explanation")),
             [
@@ -515,6 +647,16 @@ def _goal_readiness(
             [
                 f"deepseek_only_explain_layer={source_flags.get('deepseek_only_explain_layer')}",
                 f"deepseek_in_probability_stack={source_flags.get('deepseek_in_probability_stack')}",
+            ],
+        ),
+        _goal_item(
+            "技术目标",
+            "auto AI 研究自动解析 DS Pro 或本地摘要",
+            source_flags.get("ai_auto_backend_resolves_provider") and source_flags.get("ai_auto_frontend_passes_auto") and source_flags.get("ai_auto_execution_plan"),
+            [
+                f"backend_resolves_auto={source_flags.get('ai_auto_backend_resolves_provider')}",
+                f"frontend_passes_auto={source_flags.get('ai_auto_frontend_passes_auto')}",
+                f"auto_execution_plan={source_flags.get('ai_auto_execution_plan')}",
             ],
         ),
         _goal_item(
@@ -588,6 +730,9 @@ def _source_flags(root: Path) -> dict[str, bool]:
     )
     probability_stack = "\n".join([feature_context, fusion, score_matrix, dixon_coles, optimizer])
     explain_stack = "\n".join([read("src/explain/deepseek_explainer.py"), read("src/explain/llm_explainer.py"), read("src/view_models/analysis_view.py")])
+    ai_combo_research = read("src/explain/ai_combo_research.py")
+    observation_snapshot = read("src/learning/observation_snapshot.py")
+    dashboard_app = read("src/dashboard/static/app.js")
     return {
         "poisson_score_matrix": "poisson_pmf" in score_matrix and "build_score_matrix" in feature_context,
         "dixon_coles": "apply_dixon_coles_adjustment" in dixon_coles and "dixon_coles" in fusion,
@@ -596,7 +741,12 @@ def _source_flags(root: Path) -> dict[str, bool]:
         "market_no_vig": "market_no_vig" in fusion and "no_vig_probs" in feature_context,
         "deepseek_only_explain_layer": "deepseek" in explain_stack.lower(),
         "deepseek_in_probability_stack": "deepseek" in probability_stack.lower(),
+        "ai_auto_backend_resolves_provider": "_resolve_ai_provider" in ai_combo_research and "auto_ds_pro" in ai_combo_research,
+        "ai_auto_execution_plan": "auto_execution_plan" in ai_combo_research and "读取 T+1 可售比赛" in ai_combo_research and "autoPlanSteps" in dashboard_app,
+        "ai_auto_frontend_passes_auto": 'return mode === "auto" ? "auto" : mode' in dashboard_app,
         "intelligence_modules": all(token in intelligence_stack for token in ["news", "lineup", "weather", "schedule", "motivation"]),
+        "rejected_combo_learning_snapshot": "rejected_combo_count" in observation_snapshot and "learning_track\": \"rejected_combo" in observation_snapshot,
+        "rejected_combo_learning_ui": "被拒组合复盘" in dashboard_app and "rejected_combo_count" in dashboard_app,
     }
 
 
@@ -711,10 +861,18 @@ def _collect_signal_keys(*items: dict[str, Any]) -> list[str]:
 def _collect_connected_signal_keys(*items: dict[str, Any]) -> list[str]:
     collected: list[str] = []
     for item in items:
+        status = item.get("external_signals_status")
+        if isinstance(status, dict):
+            fields = status.get("supplied_fields")
+            if isinstance(fields, list):
+                collected.extend(str(field) for field in fields if field)
         rows = item.get("signal_status")
         if isinstance(rows, list):
             for row in rows:
-                if isinstance(row, dict) and row.get("key") and row.get("status") == "connected":
+                if not isinstance(row, dict) or not row.get("key"):
+                    continue
+                raw = str(row.get("status_raw") or row.get("status") or "")
+                if raw in {"connected", "confirmed", "user_supplied"} or row.get("source_zh") == "用户 JSON":
                     collected.append(str(row["key"]))
     return list(dict.fromkeys(collected))
 

@@ -1,0 +1,40 @@
+{
+  "selected_portfolio": {
+    "singles": [
+      {
+        "candidate_type": "single",
+        "match_id": "clv_demo_001",
+        "match_no": "示例001",
+        "league": "示例联赛",
+        "home_team": "Alpha FC",
+        "away_team": "Beta United",
+        "play_type": "had",
+        "outcome_key": "win",
+        "outcome_label": "主胜",
+        "odds": 2.20,
+        "model_prob": 0.52,
+        "market_prob": 0.46,
+        "ev": 0.144,
+        "edge": 0.06
+      },
+      {
+        "candidate_type": "single",
+        "match_id": "clv_demo_002",
+        "match_no": "示例002",
+        "league": "示例联赛",
+        "home_team": "Gamma Town",
+        "away_team": "Delta City",
+        "play_type": "had",
+        "outcome_key": "draw",
+        "outcome_label": "平",
+        "odds": 3.10,
+        "model_prob": 0.34,
+        "market_prob": 0.31,
+        "ev": 0.054,
+        "edge": 0.03
+      }
+    ],
+    "parlay_2x1": [],
+    "parlay_3x1": []
+  }
+}

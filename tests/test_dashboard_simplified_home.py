@@ -90,3 +90,8 @@ def test_home_shows_actionable_intelligence_gap_guidance():
 def test_home_explains_how_to_read_operation_backtest():
     for text in ["回测表现怎么看", "资金曲线", "最大回撤", "玩法贡献", "为什么赚/亏"]:
         assert text in JS
+
+
+def test_home_shows_ds_research_status_summary():
+    for text in ["DS研究", "ai_research_status", "已回退本地摘要", "等待自动研究"]:
+        assert text in JS

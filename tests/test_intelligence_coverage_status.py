@@ -24,9 +24,13 @@ def test_intelligence_coverage_table_uses_layered_status():
     }
     table = build_intelligence_coverage_table(preview)
     rows = {(row["key"], row["status"]): row for row in table["rows"]}
+    assert "已检查但未返回" in table["summary_zh"]
+    assert "兜底估算" in table["summary_zh"]
     assert ("injuries", "checked_empty") in rows
     assert ("weather", "fallback_estimated") in rows
     assert rows[("weather", "fallback_estimated")]["confidence"] == "低"
+    assert "不等于确认没有该信息" in rows[("injuries", "checked_empty")]["explanation_zh"]
+    assert "兜底估算" in rows[("weather", "fallback_estimated")]["explanation_zh"]
 
 
 def test_status_confidence_levels():

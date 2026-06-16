@@ -596,3 +596,59 @@ python3 -m src.cli.optimize_today --provider auto --date 2026-06-10 --bankroll 1
 - 不提供投注、下单、支付、代购或自动化购彩能力；
 - 新闻、伤停、首发、天气未接入时显示 unknown / not_connected，不编造；
 - DeepSeek 默认关闭，不参与概率、EV、筛选或回测。
+
+## Phase 2-R: Parlay Discipline + CLV + CSV Backtest Credibility
+
+Status: implemented
+
+新增：
+- 串联命中率纪律引擎：2串1 / 3串1 必须通过组合命中概率、单腿可信度、风险等级和相关性纪律；
+- 高赔率冷门保护：高赔率冷门可以作为单关观察，但默认不作为串联核心；
+- 今日观察继续 Top 优先：先看 Top 单关、Top 2串1、总进球和比分倾向，数据源和情报细节放入详情；
+- DeepSeek Pro 解释层安全配置：支持 `JC_EDGE_DEEPSEEK_*` 环境变量，默认关闭，只做解释，不改概率、EV 或候选筛选；
+- CLV / 收盘赔率跟踪：记录赛前赔率，等待收盘赔率后做复盘，不做赛前承诺；
+- 用户 CSV 回测可信度：按样本量、赔率覆盖、赛果覆盖、时间跨度和数据来源上限打分；
+- App 赛前优化页展示 CLV 状态；
+- App 数据导入页展示 CSV 回测可信度；
+- Phase 2-R 回归测试覆盖串联纪律、DeepSeek 配置、CLV、CSV 可信度和 dashboard 文案。
+
+示例：
+
+```bash
+python3 -m src.cli.optimize_today --provider auto --date 2026-06-10 --bankroll 10000 --risk-profile aggressive --show-rejected --format json
+python3 -m src.cli.backtest_credibility --input data/fixtures/operation_walkforward_sample.csv --source-type fixture --format json
+python3 -m src.cli.clv_review --observations-json data/fixtures/clv_observations_example.json --closing-odds data/fixtures/closing_odds_example.csv --format json
+python3 -m src.cli.phase2r_acceptance --format json
+```
+
+只读 API：
+
+```text
+GET /api/view/clv?provider=auto&date=2026-06-10&bankroll=10000&risk_profile=aggressive
+GET /api/view/clv-review?observations_json=data/fixtures/clv_observations_example.json&closing_odds=data/fixtures/closing_odds_example.csv
+GET /api/view/backtest-credibility?input=data/fixtures/operation_walkforward_sample.csv&source_type=fixture
+GET /api/view/phase2r-acceptance
+GET /api/llm/status
+```
+
+DeepSeek Pro 本地配置示例：
+
+```text
+JC_EDGE_DEEPSEEK_ENABLED=false
+JC_EDGE_DEEPSEEK_API_KEY=your-token
+JC_EDGE_DEEPSEEK_MODEL=deepseek-chat
+JC_EDGE_DEEPSEEK_MAX_INPUT_TOKENS=6000
+JC_EDGE_DEEPSEEK_MAX_OUTPUT_TOKENS=800
+```
+
+说明：
+- DeepSeek 默认关闭，且只作为用户可读解释层；
+- CLV 需要收盘赔率，未补充时显示“等待收盘赔率”；
+- fixture / mock 回测数据最多只能给中等可信度；
+- 本工具不提供投注、下单、支付、代购或自动化购彩能力。
+
+验收清单：
+
+```text
+docs/phase2r_acceptance_checklist.md
+```

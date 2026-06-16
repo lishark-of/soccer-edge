@@ -10,6 +10,7 @@ const state = {
   signalsPreviewView: null,
   bestParlayView: null,
   traderReviewView: null,
+  learningView: null,
   matchesView: null,
   optimizerView: null,
   scoreGoalsView: null,
@@ -17,6 +18,16 @@ const state = {
   importView: null,
   qaView: null,
   dataSourcesView: null,
+  autoAiResearchKey: "",
+  latestAiResearch: null,
+  lastLearningImpact: null,
+  lastLearningPack: null,
+  lastWorkflowAction: null,
+  workflowActionHistory: [],
+  currentWorkflowScore: null,
+  currentWorkflowBottleneck: null,
+  currentWorkflowItems: [],
+  currentWorkflowTarget: null,
 };
 
 function qs(selector) { return document.querySelector(selector); }
@@ -43,6 +54,30 @@ async function request(path, params = {}, label = "请求") {
   setStatus("Loading", `${label}进行中`);
   try {
     const response = await fetch(endpoint(path, params));
+    const payload = await response.json();
+    state.lastRaw = payload;
+    renderRaw(payload);
+    renderWarnings(payload.warnings || payload.data?.warnings || []);
+    setStatus(payload.ok ? "OK" : "Error", label);
+    return payload;
+  } catch (error) {
+    const payload = { ok: false, error: { code: "connection_error", message: "本地 API 连接失败，请确认服务已启动。" }, warnings: ["本地 API 可能尚未启动，或端口被占用。"] };
+    state.lastRaw = payload;
+    renderRaw(payload);
+    renderWarnings(payload.warnings);
+    setStatus("Offline", "连接失败");
+    return payload;
+  }
+}
+
+async function postRequest(path, body = {}, label = "保存") {
+  setStatus("Loading", `${label}进行中`);
+  try {
+    const response = await fetch(endpoint(path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
     const payload = await response.json();
     state.lastRaw = payload;
     renderRaw(payload);
@@ -88,7 +123,11 @@ function setStatus(status, action) {
   if (qs("#lastAction")) qs("#lastAction").textContent = action || "";
 }
 function renderRaw(payload) { if (qs("#jsonOutput")) qs("#jsonOutput").textContent = JSON.stringify(payload || {}, null, 2); }
-function renderWarnings(warnings = []) { if (qs("#warningsList")) qs("#warningsList").innerHTML = C.warnings(warnings); }
+function renderWarnings(warnings = []) {
+  const panel = qs("#warningsPanel");
+  if (panel) panel.style.display = "none";
+  if (qs("#warningsList")) qs("#warningsList").innerHTML = C.warnings(warnings);
+}
 function switchView(name) {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("isActive", tab.dataset.view === name));
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("isVisible", view.id === `view-${name}`));
@@ -98,25 +137,1544 @@ function tableOrEmpty(rows, columns, message = "暂无数据") {
   return rows && rows.length ? C.table(rows, columns) : `<div class="emptyState">${C.escapeHtml(message)}</div>`;
 }
 
+function setAiAutoStatus(status = "idle", title = "自动研究待启动", body = "打开后会自动读取 T+1 比赛，再自动尝试 DS Pro 研究；若不可用则改用本地研究摘要。") {
+  const strip = qs("#aiAutoStatusStrip");
+  if (!strip) return;
+  const resolvedStatus = status === "idle" ? "ds-auto" : status;
+  strip.dataset.status = resolvedStatus;
+  const label = status === "running" ? "研究中" : status === "done" ? "已完成" : status === "fallback" ? "本地摘要" : status === "error" ? "待检查" : "自动模式";
+  strip.innerHTML = `<span>${C.escapeHtml(label)}</span><strong>${C.escapeHtml(title)}</strong><p>${C.escapeHtml(body)}</p><em>这里的自动模式 = 自动读取 T+1、自动优化、自动尝试 DS Pro 研究；不是单纯的数据源回退。</em>`;
+}
+
+function loadingTopCard(title, body = "正在自动读取数据，稍等几秒。") {
+  return `
+    <div class="loadingTopCard">
+      <div class="loadingDot"></div>
+      <strong>${C.escapeHtml(title)}</strong>
+      <p>${C.escapeHtml(body)}</p>
+    </div>
+  `;
+}
+
+
+function workflowScoreItems(view) {
+  if (!view) {
+    return [
+      { label: "数据源", score: 20, detail: "等待读取比赛", next: "先拿到真实可售比赛。" },
+      { label: "Top信号", score: 15, detail: "等待候选生成", next: "等待赔率与模型生成 Top 信号。" },
+      { label: "组合纪律", score: 15, detail: "等待可信度门控", next: "等待可信度和被拒原因。" },
+      { label: "AI研究", score: 10, detail: "等待自动研究", next: "系统会自动尝试 DS Pro；不可用时改用本地研究摘要。" },
+      { label: "赛后学习", score: 55, detail: "入口已准备", next: "赛后录入结果和收盘赔率可继续加分。" },
+    ];
+  }
+  if (view.long_run_score && Array.isArray(view.long_run_score.items)) {
+    const memory = aiMemoryForDate(view.selected_date || view.date);
+    const learningImpact = state.lastLearningImpact || {};
+    return view.long_run_score.items.map((item) => {
+      if (item.label === "AI研究") {
+        if (memory) {
+          return {
+            ...item,
+            score: aiMemoryLongRunScore(memory, item.score),
+            detail: aiMemoryDetail(memory),
+            next: aiMemoryNext(memory),
+          };
+        }
+        return {
+          ...item,
+          score: workflowClampScore(Math.min(Number(item.score ?? 35), 45)),
+          detail: aiTodayMissingDetail(view),
+          next: aiTodayMissingNext(view),
+        };
+      }
+      if (item.label === "赛后学习" && learningImpact.saved) {
+        return {
+          ...item,
+          score: Math.max(workflowClampScore(item.score), learningImpact.score_after || 72),
+          detail: learningImpact.detail || "刚刚保存赛后学习样本",
+          next: learningImpact.next || "继续累计比分、收盘赔率和被拒组合复盘。",
+        };
+      }
+      return item;
+    });
+  }
+  const singles = view.top_singles || [];
+  const parlay2 = view.top_2x1 || view.top_2x1_display || [];
+  const parlay3 = view.top_3x1 || view.top_3x1_display || [];
+  const gate = view.credibility_gate || view.credibility_audit?.credibility_gate || {};
+  const providerUsed = String(view.provider_used || "");
+  const sourceScore = workflowClampScore(
+    (view.matches_count || 0) > 0
+      ? providerUsed.includes("mock")
+        ? 45
+        : (view.source_health?.reliability_score ?? view.data_source_status?.reliability_score ?? 88)
+      : 15
+  );
+  const signalScore = workflowClampScore(
+    Math.min(100, (singles.length ? 46 : 0)
+      + Math.min(18, singles.length * 6)
+      + ((view.top_total_goals || []).length ? 16 : 0)
+      + ((view.top_scores || []).length ? 12 : 0)
+      + ((view.rejected_combos || view.best_parlay_summary?.rejected_combos || []).length ? 8 : 0))
+  );
+  const gateName = String(gate.combo_gate || "");
+  const hasComboContext = Boolean(parlay2.length || parlay3.length || gate.combo_gate || view.best_parlay_summary?.no_combo_reason);
+  const comboScore = workflowClampScore(
+    gateName === "open" ? 92
+      : gateName === "restricted" ? 78
+      : gateName === "closed" ? 70
+      : hasComboContext ? 62
+      : 25
+  );
+  const memory = aiMemoryForDate(view.selected_date || view.date);
+  const aiStatus = todayAiStatusKey(view);
+  const aiScore = workflowClampScore(
+    memory
+      ? aiMemoryLongRunScore(memory, 78)
+      : aiStatus === "done" ? 78
+        : aiStatus === "cached" ? 68
+        : aiStatus === "ready" ? 45
+        : aiStatus === "fallback" ? 35
+        : 28
+  );
+  const learningHistory = view.learning_history_summary || view.learning_summary || {};
+  const settledCount = Number(learningHistory.settled_count || learningHistory.sample_count || 0);
+  const learningImpact = state.lastLearningImpact || {};
+  const learningScore = workflowClampScore(learningImpact.saved ? (learningImpact.score_after || 72) : settledCount > 30 ? 88 : settledCount > 5 ? 72 : 58);
+  return [
+    { label: "数据源", score: sourceScore, detail: sourceScore >= 80 ? `${view.provider_used || "auto"} · ${view.matches_count || 0} 场` : "未拿到高可靠真实可售比赛", next: "优先保持 Sporttery 主数据稳定，并记录 fallback/缓存状态。" },
+    { label: "Top信号", score: signalScore, detail: singles.length ? `单关 ${singles.length} 条，含进球/比分参考` : "暂无单关候选", next: "补赔率覆盖、校准样本和临场复核，让 Top 信号更少但更硬。" },
+    { label: "组合纪律", score: comboScore, detail: gate.label_zh || gate.reason_zh || "等待门控结论", next: "不要强行串联；先提高单腿可信度、降低相关性和长冷风险。" },
+    { label: "AI研究", score: aiScore, detail: memory ? aiMemoryDetail(memory) : aiTodayMissingDetail(view), next: memory ? aiMemoryNext(memory) : aiTodayMissingNext(view) },
+    { label: "赛后学习", score: learningScore, detail: learningImpact.saved ? (learningImpact.detail || "刚刚保存赛后学习样本") : settledCount ? `已结算样本 ${settledCount} 条` : "赛后可对照结果继续校准", next: learningImpact.saved ? (learningImpact.next || "继续累计比分、收盘赔率和被拒组合复盘。") : "长期提升靠赛后比分、收盘赔率、CLV 和概率校准样本。" },
+  ];
+}
+
+function workflowClampScore(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function todayAiStatus(view = {}) {
+  return view.ai_research_status || {};
+}
+
+function todayAiStatusKey(view = {}) {
+  const ai = todayAiStatus(view);
+  return String(ai.status || "");
+}
+
+function todayAiStatusSummary(view = {}) {
+  const ai = todayAiStatus(view);
+  return ai.summary_zh || view.ai_research_layer?.runtime_notice_zh || view.ai_research_layer?.display_status_zh || view.ai_research_layer?.fallback_reason || view.llm_status?.status_detail_zh || "当前还没有自动研究记录。";
+}
+
+function aiMemoryForDate(date, allowFallback = false) {
+  const rows = readAiResearchMemory();
+  const key = String(date || "");
+  const exact = rows.find((row) => row.selected_date === key);
+  return exact || (allowFallback ? rows[0] || null : null);
+}
+
+function aiTodayMissingDetail(view = {}) {
+  const status = todayAiStatusKey(view);
+  if (status === "running") return "今日 DS Pro 正在研究；完成并保存后才计入今日 AI 分。";
+  if (status === "done") return "今日已有 DS Pro 研究记录；请对照被拒原因、Top 覆盖和赛后学习点。";
+  if (status === "cached") return "今日研究已保留最近一次成功的 DS 结果；可以先看结论，再决定是否稍后刷新。";
+  if (status === "ready") return "今日尚无 DS Pro 复核记录；历史学习趋势不会代替今日判断。";
+  if (status === "fallback") return "今日已自动尝试 DS，但当前临时回退为本地摘要；可继续先看纪律和情报缺口。";
+  if (status === "not_configured") return "DS 还未配置完成；当前先用本地解释层，不影响概率和纪律门控。";
+  return "今日未完成 AI 复核；先显示赔率、模型和纪律门控结果。";
+}
+
+function aiTodayMissingNext(view = {}) {
+  const status = todayAiStatusKey(view);
+  if (status === "running") return "等待自动研究完成后，再看 Top 覆盖、被拒原因和赛后学习点。";
+  if (status === "done") return "保持自动研究开启，接下来重点用赛后结果验证 AI 解释是否真的提高判断质量。";
+  if (status === "cached") return "当前可先用缓存研究；如需最新解释，可稍后刷新并留意 Key、额度或网络。";
+  if (status === "ready") return "让系统自动跑一次 DS Pro；当天有记录后才提高今日 AI 研究分。";
+  if (status === "fallback") return "先看失败原因和本地摘要，再决定是否稍后重试自动研究。";
+  return "确认 DS Pro key 和本地服务状态；不可用时继续保留本地解释兜底。";
+}
+
+function aiMemoryLongRunScore(memory, fallback = 55) {
+  if (!memory) return workflowClampScore(fallback);
+  const quality = Number(memory.ai_quality_score);
+  const dsCalls = Number(memory.ds_call_count || 0);
+  const coverage = parseCoverageRatio(memory.top_coverage);
+  let score = Number.isFinite(quality) ? quality : workflowClampScore(fallback);
+  if (dsCalls > 0) score += 8;
+  if (coverage >= 0.99) score += 8;
+  else if (coverage >= 0.5) score += 3;
+  else score -= 8;
+  if (String(memory.ai_quality_source || "").includes("fallback")) score -= 8;
+  return workflowClampScore(Math.max(score, dsCalls > 0 ? 62 : 48));
+}
+
+function aiMemoryDetail(memory) {
+  if (!memory) return "auto 自动研究完成后会留痕";
+  return `${memory.ai_provider || "local"} · ${memory.ai_status || "done"} · 质量 ${memory.ai_quality_grade || "N/A"}/${memory.ai_quality_score ?? "N/A"} · Top ${memory.top_coverage || "0/0"}`;
+}
+
+function aiMemoryNext(memory) {
+  if (!memory) return "让 DS Pro 自动总结被拒原因、赔率覆盖和赛后学习点。";
+  const coverage = parseCoverageRatio(memory.top_coverage);
+  if (coverage < 1) return "优先提高 DS 逐场覆盖：让 match_notes 覆盖全部 Top 单关、组合和被拒候选。";
+  const quality = Number(memory.ai_quality_score);
+  if (Number.isFinite(quality) && quality < 80) return "提升结构化 JSON 质量，减少本地兜底，并赛后对照 AI 判断是否有帮助。";
+  return "保持 auto DS 研究，赛后用命中、CLV 和被拒组合复盘检验 AI 解释是否真正有用。";
+}
+
+function parseCoverageRatio(text) {
+  const match = String(text || "").match(/(\d+)\s*\/\s*(\d+)/);
+  if (!match) return 0;
+  const got = Number(match[1]);
+  const total = Number(match[2]);
+  return total > 0 ? got / total : 0;
+}
+
+function aiResearchTrendSummary() {
+  const rows = readAiResearchMemory().slice(0, 6);
+  if (!rows.length) return "";
+  const qualityRows = rows.map((row) => Number(row.ai_quality_score)).filter((value) => Number.isFinite(value));
+  const avgQuality = qualityRows.length ? Math.round(qualityRows.reduce((sum, value) => sum + value, 0) / qualityRows.length) : null;
+  const dsCalls = rows.reduce((sum, row) => sum + Number(row.ds_call_count || 0), 0);
+  const coverageRows = rows.map((row) => parseCoverageRatio(row.top_coverage)).filter((value) => Number.isFinite(value) && value >= 0);
+  const avgCoverage = coverageRows.length ? Math.round((coverageRows.reduce((sum, value) => sum + value, 0) / coverageRows.length) * 100) : null;
+  const fallbackCount = rows.filter((row) => String(row.ai_quality_source || "").includes("fallback")).length;
+  const parts = [
+    `近 ${rows.length} 次`,
+    avgQuality === null ? "质量待累计" : `平均质量 ${avgQuality}/100`,
+    avgCoverage === null ? "Top覆盖待累计" : `Top覆盖 ${avgCoverage}%`,
+    `DS ${dsCalls} 次`,
+  ];
+  if (fallbackCount) parts.push(`本地兜底 ${fallbackCount} 次`);
+  return parts.join(" · ");
+}
+
+function aiResearchTrendDetails(rows = readAiResearchMemory().slice(0, 6)) {
+  if (!rows.length) {
+    return {
+      status: "empty",
+      title: "AI 研究趋势待累计",
+      message: "刷新明日预观察后，auto DS / 本地研究记录会保存在这里。",
+      next: "先让 auto 跑出第一份研究摘要。",
+    };
+  }
+  const qualityRows = rows.map((row) => Number(row.ai_quality_score)).filter((value) => Number.isFinite(value));
+  const avgQuality = qualityRows.length ? Math.round(qualityRows.reduce((sum, value) => sum + value, 0) / qualityRows.length) : 0;
+  const coverageRows = rows.map((row) => parseCoverageRatio(row.top_coverage)).filter((value) => Number.isFinite(value) && value >= 0);
+  const avgCoverage = coverageRows.length ? Math.round((coverageRows.reduce((sum, value) => sum + value, 0) / coverageRows.length) * 100) : 0;
+  const fallbackCount = rows.filter((row) => String(row.ai_quality_source || "").includes("fallback")).length;
+  const dsCalls = rows.reduce((sum, row) => sum + Number(row.ds_call_count || 0), 0);
+  const status = avgQuality >= 85 && avgCoverage >= 90 && fallbackCount === 0 ? "good" : avgQuality >= 70 && avgCoverage >= 60 ? "watch" : "needs_work";
+  const next = status === "good"
+    ? "保持当前 auto DS 流程，赛后重点检验 AI 解释是否真的帮助识别被拒组合和冷门风险。"
+    : avgCoverage < 80
+      ? "优先提高 Top 覆盖：让 match_notes 覆盖单关、2串1、3串1和被拒组合。"
+      : fallbackCount > 0
+        ? "减少本地兜底：继续优化 DS 结构化 JSON 输出和短重试。"
+        : "继续提升结构化质量，并用赛后结果检验 AI 判断是否有效。";
+  const primaryAction = status === "good"
+    ? "去赛后检验"
+    : avgCoverage < 80
+      ? "补 Top 覆盖"
+      : fallbackCount > 0
+        ? "重跑结构化研究"
+        : "重新跑 auto 研究";
+  const secondaryAction = status === "good" ? "重新跑 auto 研究" : "去赛后学习";
+  const scoreEffects = [];
+  if (avgQuality >= 85) scoreEffects.push({ label: "质量加分", text: "结构化质量高，AI研究分更稳。" });
+  else scoreEffects.push({ label: "质量拖分", text: "结构化质量不足，会压低 AI研究分。" });
+  if (avgCoverage >= 90) scoreEffects.push({ label: "覆盖加分", text: "Top 卡片覆盖完整，首页解释更可信。" });
+  else scoreEffects.push({ label: "覆盖拖分", text: "Top 覆盖不足，部分卡片只能用分类/本地解释。" });
+  if (fallbackCount > 0) scoreEffects.push({ label: "兜底扣分", text: "出现本地兜底，说明 DS 结构化输出仍不稳定。" });
+  if (dsCalls > 0) scoreEffects.push({ label: "DS参与", text: "DS Pro 已参与研究，但仍要看质量和赛后验证。" });
+  const todos = [];
+  if (avgCoverage < 90) todos.push("补齐 Top 卡片逐场 match_notes，尤其是 2串1、3串1和被拒组合。");
+  if (avgQuality < 85) todos.push("提高 DS 结构化 JSON 质量，减少无法解析或字段缺失。");
+  if (fallbackCount > 0) todos.push("检查本地兜底原因：DS 未返回 JSON、覆盖补洞失败或字段不完整。");
+  if (todos.length < 3) todos.push("赛后录入赛果和收盘赔率，验证 AI 解释是否真的帮到判断。");
+  return {
+    status,
+    title: status === "good" ? "AI 研究趋势稳定" : status === "watch" ? "AI 研究可用但要观察" : "AI 研究仍需补强",
+    avgQuality,
+    avgCoverage,
+    fallbackCount,
+    dsCalls,
+    count: rows.length,
+    metricCards: [
+      { label: "平均质量", value: `${avgQuality}/100` },
+      { label: "Top覆盖", value: `${avgCoverage}%` },
+      { label: "DS调用", value: `${dsCalls}次` },
+      { label: "本地兜底", value: `${fallbackCount}次` },
+    ],
+    scoreEffects,
+    todos: todos.slice(0, 3),
+    message: `近 ${rows.length} 次平均质量 ${avgQuality}/100，Top 覆盖 ${avgCoverage}%，DS 调用 ${dsCalls} 次，本地兜底 ${fallbackCount} 次。`,
+    next,
+    primaryAction,
+    secondaryAction,
+  };
+}
+
+function renderWorkflowScore(view, status = "loading") {
+  const panel = qs("#workflowScorePanel");
+  if (!panel) return;
+  const items = workflowScoreItems(view);
+  const weights = [0.22, 0.22, 0.20, 0.18, 0.18];
+  const score = workflowClampScore(items.reduce((sum, item, index) => sum + workflowClampScore(item.score) * (weights[index] || 0), 0));
+  state.currentWorkflowScore = score;
+  state.currentWorkflowItems = items.map((item) => ({
+    label: item.label || "未知项",
+    score: workflowClampScore(item.score),
+    detail: item.detail || "",
+    next: item.next || "",
+  }));
+  const label = status === "error" ? "需要检查" : score >= 80 ? "可用" : score >= 60 ? "可观察" : "准备中";
+  const weakest = [...items].sort((a, b) => workflowClampScore(a.score) - workflowClampScore(b.score))[0] || {};
+  const aiTrend = aiResearchTrendSummary();
+  const sortedItems = [...items]
+    .sort((a, b) => workflowClampScore(a.score) - workflowClampScore(b.score))
+  const backendRoadmap = view?.long_run_score?.score_roadmap;
+  const itemByLabel = new Map(items.map((item) => [item.label, item]));
+  const syncedBackendRoadmap = Array.isArray(backendRoadmap)
+    ? backendRoadmap.map((row) => {
+      const current = itemByLabel.get(row.label) || row;
+      return { ...row, ...current, score: workflowClampScore(current.score ?? row.score) };
+    }).filter((row) => workflowClampScore(row.score) < 90)
+      .sort((a, b) => workflowClampScore(a.score) - workflowClampScore(b.score))
+    : [];
+  const roadmap = syncedBackendRoadmap.length
+    ? syncedBackendRoadmap.slice(0, 3)
+    : sortedItems.filter((item) => workflowClampScore(item.score) < 90).slice(0, 3);
+  const next = status === "error"
+    ? "先检查本地服务和数据源。"
+    : !view
+      ? "等待比赛、赔率和 DS 研究自动完成。"
+      : score >= 80
+        ? `当前最低分：${weakest.label || "赛后学习"}，下一步：${weakest.next || "继续赛后复盘。"}`
+        : `优先补短板：${weakest.label || "数据源"}，${weakest.next || "先补数据和学习样本。"}`;
+  const bottleneck = workflowBottleneck(weakest, score, status);
+  state.currentWorkflowBottleneck = bottleneck;
+  if (view && status !== "loading") rememberWorkflowScore(view, score, weakest);
+  const learningImpact = state.lastLearningImpact || {};
+  panel.innerHTML = `
+    <article class="workflowScoreCard" data-score="${C.escapeHtml(String(score))}">
+      <div class="workflowScoreMain">
+        <span>LONG-RUN SCORE</span>
+        <strong>${C.escapeHtml(String(score))}/100 · ${C.escapeHtml(label)}</strong>
+        <p>${C.escapeHtml(next)}</p>
+        <div class="workflowBottleneck">
+          <b>${C.escapeHtml(bottleneck.title)}</b>
+          <span>${C.escapeHtml(bottleneck.impact)}</span>
+          <em>${C.escapeHtml(bottleneck.action)}</em>
+        </div>
+        ${workflowNextActionCard(weakest, bottleneck, score, status)}
+        ${renderWorkflowScoreMemory()}
+        ${workflowTargetCard(score, weakest, status)}
+        ${renderAutoResearchCockpit(view, status)}
+        ${learningImpact.saved ? `<div class="workflowImpact">赛后学习已入库：${C.escapeHtml(learningImpact.summary || "比分和收盘赔率已保存到本地学习库。")}</div>` : ""}
+        ${state.lastWorkflowAction ? `<div class="workflowActionImpact" data-status="${C.escapeHtml(state.lastWorkflowAction.status || "running")}">刚刚处理：${C.escapeHtml(state.lastWorkflowAction.label)} · ${C.escapeHtml(state.lastWorkflowAction.message)}${workflowScoreDeltaText(state.lastWorkflowAction)}</div>` : ""}
+        ${renderWorkflowActionTrend()}
+        ${renderWorkflowActionHistory()}
+        ${aiTrend ? `<div class="workflowAiTrend">AI研究趋势：${C.escapeHtml(aiTrend)}</div>` : ""}
+      </div>
+      <div class="workflowScoreItems">
+        ${items.map((item) => `
+          <div class="workflowScoreItem ${workflowClampScore(item.score) >= 70 ? "isPassed" : "isPending"}">
+            <b>${C.escapeHtml(String(workflowClampScore(item.score)))}</b>
+            <span>${C.escapeHtml(item.label)}</span>
+            <em>${C.escapeHtml(item.detail)}</em>
+            <small>${C.escapeHtml(workflowItemNextHint(item))}</small>
+            <i>验收：${C.escapeHtml(workflowAcceptanceSignal(item.label))}</i>
+          </div>
+        `).join("")}
+      </div>
+      <div class="workflowScoreRoadmap">
+        <span>下一步优先级</span>
+        ${(roadmap.length ? roadmap : sortedItems.slice(0, 1)).map((item, index) => `
+          <article>
+            <b>${index + 1}</b>
+            <div>
+              <strong>${C.escapeHtml(item.label)} · ${C.escapeHtml(String(workflowClampScore(item.score)))}/100</strong>
+              <p>${C.escapeHtml(item.next || "继续补齐这个短板。")}</p>
+              ${workflowQuickActionButton(item)}
+            </div>
+          </article>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderAutoResearchCockpit(view, status = "loading") {
+  const today = view || state.todayView || {};
+  const aiMemory = aiMemoryForDate(today.selected_date || today.date, true);
+  const latestAi = state.latestAiResearch || {};
+  const hasMatches = Number(today.matches_count || today.matches_analyzed || 0) > 0;
+  const hasTopSignals = Boolean((today.top_singles || []).length || (today.top_2x1_display || []).length || (today.top_3x1_display || []).length);
+  const hasGate = Boolean(today.credibility_gate || today.credibility_audit?.credibility_gate || today.best_parlay_summary);
+  const dsDone = Boolean(latestAi.ds_completed || aiMemory?.ds_call_count > 0);
+  const localDone = Boolean(latestAi.status || aiMemory);
+  const learningDone = Boolean(state.lastLearningImpact?.saved);
+  const rows = [
+    {
+      label: "T+1比赛读取",
+      status: hasMatches ? "done" : status === "error" ? "error" : "running",
+      text: hasMatches ? `${today.selected_date || "自动日期"} · ${today.matches_count || today.matches_analyzed || 0} 场 · ${today.provider_used || "auto"}` : "正在寻找未来 1-3 天可售比赛。",
+    },
+    {
+      label: "赔率/模型/组合纪律",
+      status: hasTopSignals && hasGate ? "done" : hasTopSignals ? "running" : status === "error" ? "error" : "pending",
+      text: hasTopSignals ? "Top 单关、2串1/3串1纸面候选和被拒原因已生成。" : "等待 Top 观察和可信度门控。",
+    },
+    {
+      label: "DS Pro研究层",
+      status: dsDone ? "done" : localDone ? "fallback" : status === "error" ? "error" : "pending",
+      text: dsDone ? "DS Pro 已参与解释、质检和复盘摘要。" : localDone ? "当前使用本地研究摘要；DS Pro 可用时会自动接管。" : "auto 会在候选生成后自动尝试研究层。",
+    },
+    {
+      label: "赛后学习闭环",
+      status: learningDone ? "done" : "pending",
+      text: learningDone ? "本轮赛后学习样本已保存。" : "赛后录入比分和收盘赔率后，长线评分才会真正变稳。",
+    },
+  ];
+  const weakestItem = workflowWeakestItem(state.currentWorkflowItems);
+  const scoreDirective = workflowScoreDrivenDirective(state.currentWorkflowScore, state.currentWorkflowBottleneck, state.currentWorkflowItems);
+  const copyText = autoResearchCopySummary(rows, today, latestAi, aiMemory);
+  return `
+    <div class="autoResearchCockpit">
+      <div class="autoResearchHead">
+        <span>AUTO RESEARCHER</span>
+        <strong>自动研究员模式</strong>
+        <p>自动跑 T+1 比赛、赔率/模型、组合纪律、DS Pro 研究摘要和赛后学习闭环；不是单纯切换数据源。</p>
+      </div>
+      <div class="autoResearchSteps">
+        ${rows.map((row, index) => `
+          <article data-status="${C.escapeHtml(row.status)}">
+            <b>${index + 1}</b>
+            <div>
+              <strong>${C.escapeHtml(row.label)}</strong>
+              <p>${C.escapeHtml(row.text)}</p>
+            </div>
+          </article>
+        `).join("")}
+      </div>
+      <div class="scoreDrivenDirective" data-level="${C.escapeHtml(scoreDirective.level)}">
+        <span>SCORE-DRIVEN MODE</span>
+        <strong>${C.escapeHtml(scoreDirective.title)}</strong>
+        <p>${C.escapeHtml(scoreDirective.body)}</p>
+        <em>${C.escapeHtml(scoreDirective.rule)}</em>
+        <u>${C.escapeHtml(scoreDirective.avoid)}</u>
+        ${weakestItem ? `<div class="scoreDrivenAction">
+          <small>当前短板动作：${C.escapeHtml(weakestItem.label)} · ${C.escapeHtml(weakestItem.next || "先处理这个分项。")}</small>
+          ${workflowQuickActionButton(weakestItem)}
+        </div>` : ""}
+      </div>
+      <div class="autoResearchActions">
+        <button class="secondary compactButton" type="button" onclick="loadToday()">重新跑完整 auto</button>
+        <button class="ghost compactButton workflowCopyBtn" type="button" data-copy-text="${C.escapeHtml(copyText)}" data-copy-ok="auto 研究复盘任务已复制，可交给 DS Pro 继续分析。" data-copy-fail="复制失败，请手动复制。">复制 auto 复盘任务</button>
+      </div>
+    </div>
+  `;
+}
+
+function workflowWeakestItem(items = []) {
+  const rows = Array.isArray(items) ? items.filter((item) => item && item.label) : [];
+  if (!rows.length) return null;
+  return rows.slice().sort((a, b) => workflowClampScore(a.score) - workflowClampScore(b.score))[0];
+}
+
+function workflowScoreDrivenDirective(score = 0, bottleneck = {}, items = []) {
+  const safeScore = workflowClampScore(score);
+  const weakest = bottleneck?.title || workflowWeakestItem(items)?.label || "长线评分";
+  if (safeScore < 60) {
+    return {
+      level: "repair",
+      title: "先修基础，不急着加复杂模型",
+      body: `${weakest} 正在拖累整体分数；auto 会优先补真实比赛、赔率覆盖、DS 解释和赛后学习入口。`,
+      rule: "规则：低于 60 只做补基础实验，不扩大组合复杂度。",
+      avoid: "先不要做：强行找 2串1/3串1、扩大风险档位、同时改多个参数。",
+    };
+  }
+  if (safeScore < 80) {
+    return {
+      level: "build",
+      title: "进入可用区，按短板做单点实验",
+      body: `${weakest} 是下一轮优先项；每次只改一个变量，复核分数是否真的上升。`,
+      rule: "规则：60-79 分只做一项实验，避免同时改数据源、AI 和组合纪律。",
+      avoid: "先不要做：把高 EV 冷门直接当作强组合核心，或忽略被拒原因。",
+    };
+  }
+  if (safeScore < 90) {
+    return {
+      level: "optimize",
+      title: "开始优化稳定性和赛后学习",
+      body: "当前可用，但仍要用赛后结果、CLV、Brier/Log Loss 和 DS 复盘检验是否真有帮助。",
+      rule: "规则：80-89 分重点看稳定性，不因单日高 EV 放大组合。",
+      avoid: "先不要做：为了提高日内输出数量而牺牲可信度门控。",
+    };
+  }
+  return {
+    level: "maintain",
+    title: "保持高分，持续小步学习",
+    body: "当前长线结构较稳，重点保持数据质量、赛后学习和 DS 复盘覆盖。",
+    rule: "规则：90+ 只做小幅迭代，任何回落都暂停同方向加码。",
+    avoid: "先不要做：大改模型权重；先用更多赛后样本证明必要性。",
+  };
+}
+
+function autoResearchCopySummary(rows = [], today = {}, latestAi = {}, aiMemory = null) {
+  const topSingle = (today.top_singles || [])[0] || {};
+  const top2 = ((today.top_2x1 || []).length ? today.top_2x1 : today.top_2x1_display || [])[0] || {};
+  const top3 = (today.top_3x1_display || [])[0] || {};
+  const gate = today.credibility_gate || today.credibility_audit?.credibility_gate || {};
+  const directive = workflowScoreDrivenDirective(state.currentWorkflowScore, state.currentWorkflowBottleneck, state.currentWorkflowItems);
+  const weakest = workflowWeakestItem(state.currentWorkflowItems);
+  const scoreTrail = workflowScoreTimelineText();
+  const trendDiagnosis = workflowScoreTrendDiagnosis();
+  return [
+    "JC Edge auto 自动研究员复盘任务",
+    `当前长线分：${state.currentWorkflowScore ?? "未知"}/100`,
+    `最近分数轨迹：${scoreTrail}`,
+    `轨迹诊断：${trendDiagnosis}`,
+    `分数驱动策略：${directive.title}；${directive.rule}`,
+    `当前不要做：${directive.avoid}`,
+    `当前短板动作：${weakest ? `${weakest.label} · ${weakest.next || "先处理这个分项。"}` : "暂无"}`,
+    `日期：${today.selected_date || today.date || currentDateParam() || "自动日期"}`,
+    `比赛数：${today.matches_count || today.matches_analyzed || "未知"}；数据源：${today.provider_used || providerParam() || "auto"}`,
+    `可信度门控：${gate.label_zh || gate.combo_gate || "待评估"}；原因：${gate.reason_zh || today.no_combo_reason || "请结合 Top 信号和被拒原因复盘。"}`,
+    `DS状态：${latestAi.ds_completed || Number(aiMemory?.ds_call_count || 0) > 0 ? "DS Pro 已参与" : latestAi.status ? "本地/兜底摘要已生成" : "待运行"}`,
+    "auto流水线：",
+    ...rows.map((row, index) => `${index + 1}. ${row.label}: ${row.status} · ${row.text}`),
+    "Top观察：",
+    `单关：${summarizeComboLegs(topSingle)}`,
+    `2串1：${summarizeComboLegs(top2)}`,
+    `3串1：${summarizeComboLegs(top3)}`,
+    "请复盘：1）哪些信号可观察；2）为什么不串或只作纸面候选；3）缺失情报如何影响可信度；4）赛后应该记录哪些学习字段。",
+  ].join("\n");
+}
+
+function workflowBottleneck(item = {}, totalScore = 0, status = "loading") {
+  if (status === "error") {
+    return {
+      title: "当前瓶颈：本地服务",
+      impact: "页面无法稳定读取结果，后面的模型和 AI 研究都会失真。",
+      action: "先恢复本地 API 和数据源，再重新读取今日观察。",
+    };
+  }
+  const label = item.label || "数据源";
+  const score = workflowClampScore(item.score);
+  const low = score < 60 || totalScore < 60;
+  const impactByLabel = {
+    "数据源": "真实赛程和赔率不稳时，后续概率、EV 和组合判断都会降级。",
+    "Top信号": "候选不够硬时，组合只是把弱信号相乘，不会自然变强。",
+    "组合纪律": "串联放大不确定性，纪律分低时宁可先不组合。",
+    "AI研究": "当天没有 DS Pro 复核时，解释层不能给今日判断加分。",
+    "赛后学习": "没有赛后比分、收盘赔率和被拒组合复盘，长期分数很难提升。",
+  };
+  return {
+    title: `当前瓶颈：${label} ${score}/100`,
+    impact: impactByLabel[label] || "该项正在拖累整体长期评分。",
+    action: low ? (item.next || "优先补齐这个短板，再重新刷新今日观察。") : "短板已不严重，继续累计样本和赛后复盘。",
+  };
+}
+
+function workflowNextActionCard(item = {}, bottleneck = {}, totalScore = 0, status = "loading") {
+  const label = item.label || "数据源";
+  const score = workflowClampScore(item.score);
+  const actionButton = workflowQuickActionButton(item);
+  const expectedLift = workflowExpectedLift(label, score, totalScore, status);
+  return `
+    <div class="workflowNextActionCard">
+      <span>NEXT BEST ACTION</span>
+      <strong>${C.escapeHtml(label)}优先处理</strong>
+      <p>${C.escapeHtml(bottleneck.action || item.next || "先处理当前最低分项。")}</p>
+      <div class="workflowNextActionMeta">
+        <em>当前 ${C.escapeHtml(String(score))}/100</em>
+        <em>${C.escapeHtml(expectedLift)}</em>
+      </div>
+      ${actionButton}
+    </div>
+  `;
+}
+
+function workflowTargetCard(score = 0, weakest = {}, status = "loading") {
+  const target = status === "error" ? 60 : score < 60 ? 60 : score < 80 ? 80 : score < 90 ? 90 : 100;
+  const label = target === 60 ? "先到 60：可观察" : target === 80 ? "冲 80：可用" : target === 90 ? "冲 90：稳定" : "保持 90+：持续学习";
+  const gap = Math.max(0, target - workflowClampScore(score));
+  const focus = weakest.label || "数据源";
+  const message = gap > 0
+    ? `还差 ${gap} 分；优先补 ${focus}，不要同时开太多改动。`
+    : "已超过当前目标档，重点保持数据质量和赛后学习。";
+  const plan = workflowTargetLiftPlan(gap);
+  const experiment = workflowTodayExperiment(plan[0], focus);
+  const guard = workflowExperimentStreakSummary();
+  state.currentWorkflowTarget = { target, label, gap, focus, message, plan, experiment, guard };
+  const copySummary = workflowTargetCopySummary(state.currentWorkflowTarget);
+  return `
+    <div class="workflowTargetCard">
+      <span>LONG-RUN TARGET</span>
+      <strong>${C.escapeHtml(label)}</strong>
+      <p>${C.escapeHtml(message)}</p>
+      <div class="workflowTargetBar" aria-label="长期目标进度">
+        <i style="width:${C.escapeHtml(String(Math.min(100, Math.max(0, score))))}%"></i>
+      </div>
+      <div class="workflowTodayExperiment">
+        <b>今日只做一个实验：${C.escapeHtml(experiment.title)}</b>
+        <small>${C.escapeHtml(experiment.rule)}</small>
+        <ol>
+          ${experiment.steps.map((step) => `<li>${C.escapeHtml(step)}</li>`).join("")}
+        </ol>
+        <div class="workflowExperimentActions">
+          <button class="secondary compactButton workflowExperimentRecordBtn" type="button">记录今日实验</button>
+          <button class="ghost compactButton workflowExperimentReviewBtn" type="button">标记实验已复核</button>
+        </div>
+      </div>
+      ${renderWorkflowExperimentVerdict()}
+      ${renderWorkflowExperimentGuard(guard)}
+      ${renderWorkflowExperimentQueue(plan)}
+      ${plan.length ? `<div class="workflowTargetPlan">${plan.map((item) => `
+        <em>${C.escapeHtml(item.label)}：约 +${C.escapeHtml(String(item.lift))} 分 · ${C.escapeHtml(item.action)}<small>验收：${C.escapeHtml(item.acceptance)}</small></em>
+      `).join("")}</div>` : ""}
+      <button class="ghost compactButton workflowCopyBtn" type="button" data-copy-text="${C.escapeHtml(copySummary)}" data-copy-ok="长线计划已复制，可直接给 DS Pro 继续复盘。" data-copy-fail="长线计划复制失败，请手动复制。">复制长线计划</button>
+    </div>
+  `;
+}
+
+function workflowTargetCopySummary(target = {}) {
+  const today = state.todayView || {};
+  const observationDate = today.selected_date || today.date || currentDateParam() || "自动日期";
+  const providerUsed = today.provider_used || providerParam() || "unknown";
+  const matchesCount = today.matches_count ?? today.matches_analyzed ?? "未知";
+  const scoreLines = (state.currentWorkflowItems || []).map((item, index) => (
+    `${index + 1}. ${item.label}: ${item.score}/100 · ${item.detail || ""} · 下一步：${item.next || ""}`
+  ));
+  const planLines = (target.plan || []).map((item, index) => (
+    `${index + 1}. ${item.label}: 预计 +${item.lift} 分 · ${item.action} · 验收：${item.acceptance || "看分项是否改善"}`
+  ));
+  const queueLines = (target.plan || []).slice(1, 4).map((item, index) => (
+    `${index + 1}. ${item.label}: 预计 +${item.lift} 分 · ${item.action}`
+  ));
+  const verdict = workflowExperimentVerdictDetails();
+  const scoreTrail = workflowScoreTimelineText();
+  const trendDiagnosis = workflowScoreTrendDiagnosis();
+  return [
+    "JC Edge 长线修改计划",
+    `生成时间：${new Date().toLocaleString("zh-CN", { hour12: false })}`,
+    `观察日期：${observationDate}`,
+    `数据源：${providerUsed}；比赛数：${matchesCount}`,
+    `当前总分：${state.currentWorkflowScore ?? "未知"}/100`,
+    `目标档：${target.label || "未知目标"}；差距：${target.gap ?? "未知"} 分`,
+    `当前优先项：${target.focus || "未知项"}`,
+    `目标说明：${target.message || ""}`,
+    `今日实验：${target.experiment?.title || "先处理最低分项"}；规则：${target.experiment?.rule || "只做一个改动，观察分数变化。"}`,
+    `最近实验结论：${verdict.title}；${verdict.body}`,
+    `下一轮策略：${verdict.strategy}`,
+    `实验连续性：${workflowExperimentStreakSummary().text}`,
+    `实验护栏：${workflowExperimentStreakSummary().guard || "无需暂停，继续单点实验。"}`,
+    `最近分数轨迹：${scoreTrail}`,
+    `轨迹诊断：${trendDiagnosis}`,
+    "实验步骤：",
+    ...((target.experiment?.steps || []).map((step, index) => `${index + 1}. ${step}`)),
+    "分项评分：",
+    ...(scoreLines.length ? scoreLines : ["暂无分项评分"]),
+    "候选实验队列：",
+    ...(queueLines.length ? queueLines : ["暂无候选实验队列；先完成今日实验。"]),
+    "建议加分路线：",
+    ...(planLines.length ? planLines : ["暂无加分路线；优先保持数据质量和赛后学习。"]),
+  ].join("\n");
+}
+
+function workflowTodayExperiment(firstPlan = {}, fallbackFocus = "数据源") {
+  const label = firstPlan.label || fallbackFocus || "数据源";
+  const acceptance = firstPlan.acceptance || "对应分项分数上升，且用户下一步更清楚。";
+  return {
+    title: label,
+    rule: acceptance
+      ? `先做 ${label}，完成后只看这个验收信号：${acceptance}`
+      : "先做最低分项，完成后刷新 T+1 并观察总分、分项变化和趋势。",
+    steps: [
+      `执行 ${label} 对应的一键动作或补齐动作。`,
+      `刷新 T+1 今日观察，等待长线分数重新记录。`,
+      `只检查验收信号：${acceptance}`,
+      "如果分项没有改善，复制长线计划给 DS Pro 复盘原因。",
+    ],
+  };
+}
+
+function renderWorkflowExperimentVerdict() {
+  const details = workflowExperimentVerdictDetails();
+  if (!details.row) return "";
+  return `
+    <div class="workflowExperimentVerdict" data-status="${C.escapeHtml(details.status)}">
+      <b>${C.escapeHtml(details.title)}</b>
+      <span>${C.escapeHtml(details.body)}${workflowScoreDeltaText(details.row)}</span>
+      <em>${C.escapeHtml(details.strategy)}</em>
+      <small>${C.escapeHtml(workflowExperimentStreakSummary().text)}</small>
+    </div>
+  `;
+}
+
+function renderWorkflowExperimentGuard(guard = {}) {
+  if (!guard.guard) return "";
+  return `
+    <div class="workflowExperimentGuard" data-status="${C.escapeHtml(guard.status || "mixed")}">
+      <b>实验护栏</b>
+      <span>${C.escapeHtml(guard.guard)}</span>
+    </div>
+  `;
+}
+
+function renderWorkflowExperimentQueue(plan = []) {
+  const queue = (plan || []).slice(1, 4);
+  if (!queue.length) return "";
+  return `
+    <div class="workflowExperimentQueue">
+      <b>候选实验队列</b>
+      ${queue.map((item, index) => `
+        <span>${index + 1}. ${C.escapeHtml(item.label)} · 约 +${C.escapeHtml(String(item.lift))} 分 · ${C.escapeHtml(item.action)}</span>
+      `).join("")}
+      <em>今日只做第一项，后续项等复核后再排；避免一次改太多，看不清哪项真正加分。</em>
+    </div>
+  `;
+}
+
+function workflowExperimentVerdictDetails() {
+  const review = (state.workflowActionHistory || []).find((row) => row.action === "today_experiment_review");
+  const start = (state.workflowActionHistory || []).find((row) => row.action === "today_experiment");
+  const row = review || start;
+  if (!row) {
+    return {
+      row: null,
+      status: "none",
+      title: "暂无实验结论",
+      body: "尚未记录今日实验。",
+      strategy: "先记录今日实验，再执行单点动作。",
+    };
+  }
+  const delta = Number(row.score_delta);
+  const status = review ? delta > 0 ? "up" : delta < 0 ? "down" : "flat" : "pending";
+  const title = review ? "最近实验结论" : "实验已记录，等待复核";
+  const body = review
+    ? row.message || "实验已复核，请查看分数变化。"
+    : row.message || "完成动作并刷新后，点击“标记实验已复核”。";
+  const strategy = review
+    ? delta > 0
+      ? "下一轮策略：保留这个做法，继续处理下一低分项。"
+      : delta < 0
+        ? "下一轮策略：暂停同方向加码，复制长线计划给 DS Pro 复盘为什么回落。"
+        : "下一轮策略：缩小变量，只改一个更具体的子项后再复核。"
+    : "下一轮策略：先执行实验动作，刷新 T+1，再复核。";
+  return { row, status, title, body, strategy };
+}
+
+function workflowExperimentStreakSummary() {
+  const reviews = (state.workflowActionHistory || [])
+    .filter((row) => row.action === "today_experiment_review")
+    .slice(0, 3);
+  if (!reviews.length) {
+    return { status: "none", text: "实验连续性：暂无复核样本。" };
+  }
+  const ups = reviews.filter((row) => Number(row.score_delta) > 0).length;
+  const downs = reviews.filter((row) => Number(row.score_delta) < 0).length;
+  const flats = reviews.length - ups - downs;
+  if (reviews.length >= 2 && ups === reviews.length) {
+    return { status: "up", text: `实验连续性：最近 ${reviews.length} 次都加分，可以保留该类改法。`, guard: "可以继续同方向小步迭代，但仍保持一次只改一个变量。" };
+  }
+  if (reviews.length >= 2 && downs >= 2) {
+    return { status: "down", text: `实验连续性：最近 ${downs} 次回落，建议暂停同方向改动并复盘。`, guard: "暂停同方向加码：先复制长线计划给 DS Pro 复盘，找到回落原因后再继续。" };
+  }
+  if (flats >= 2) {
+    return { status: "flat", text: `实验连续性：最近 ${flats} 次持平，建议缩小实验变量。`, guard: "不要扩大改动范围：把实验拆得更小，只验证一个子项。" };
+  }
+  return { status: "mixed", text: `实验连续性：近 ${reviews.length} 次中，加分 ${ups} 次、回落 ${downs} 次、持平 ${flats} 次。` };
+}
+
+function workflowTargetLiftPlan(gap = 0) {
+  const weightsByLabel = {
+    "数据源": 0.22,
+    "Top信号": 0.22,
+    "组合纪律": 0.20,
+    "AI研究": 0.18,
+    "赛后学习": 0.18,
+  };
+  const rows = (state.currentWorkflowItems || [])
+    .map((item) => {
+      const score = workflowClampScore(item.score);
+      const reachable = Math.max(0, Math.min(90, score + 20) - score);
+      const lift = Math.max(1, Math.round(reachable * (weightsByLabel[item.label] || 0.18)));
+      return {
+        label: item.label || "未知项",
+        score,
+        lift,
+        action: item.next || "补齐该项短板",
+        acceptance: workflowAcceptanceSignal(item.label),
+      };
+    })
+    .filter((item) => item.score < 90 && item.lift > 0)
+    .sort((a, b) => (a.score - b.score) || (b.lift - a.lift));
+  if (!rows.length || gap <= 0) return [];
+  let remaining = gap;
+  const selected = [];
+  for (const row of rows) {
+    if (selected.length >= 3 || remaining <= 0) break;
+    selected.push(row);
+    remaining -= row.lift;
+  }
+  return selected;
+}
+
+function workflowAcceptanceSignal(label = "") {
+  const map = {
+    "数据源": "provider_used 清晰、可售比赛数稳定、无异常 fallback。",
+    "Top信号": "Top 单关/进球/比分卡片有可读结论，弱信号不被误当强信号。",
+    "组合纪律": "2串1/3串1 有入选或拒绝原因，未通过时显示暂不组合。",
+    "AI研究": "DS Pro 或本地研究摘要完成，并写入每日 AI 研究记录。",
+    "赛后学习": "赛果、收盘赔率或 CLV 样本被保存，学习页能看到新复盘。",
+  };
+  return map[label] || "对应分项分数上升，且用户下一步更清楚。";
+}
+
+function workflowExpectedLift(label = "", itemScore = 0, totalScore = 0, status = "loading") {
+  if (status === "error") return "预期：恢复服务后重新评分";
+  if (itemScore >= 80 && totalScore >= 80) return "预期：保持稳定，赛后继续加样本";
+  const map = {
+    "数据源": "预期：让赔率/赛程基础更稳",
+    "Top信号": "预期：减少弱信号进入组合",
+    "组合纪律": "预期：减少高赔率假机会",
+    "AI研究": "预期：补齐解释、被拒原因和复盘摘要",
+    "赛后学习": "预期：用赛果和收盘赔率提升长期校准",
+  };
+  return map[label] || "预期：提高长期工作流分数";
+}
+
+function workflowItemNextHint(item = {}) {
+  const score = workflowClampScore(item.score);
+  if (score >= 90) return "已稳定，继续保留样本。";
+  if (score >= 70) return item.next ? `稳住：${item.next}` : "已可用，继续复盘。";
+  return item.next ? `补强：${item.next}` : "补强：先处理这个短板。";
+}
+
+function workflowScoreContextKey(view = {}) {
+  return [
+    view.selected_date || view.date || currentDateParam() || "auto",
+    view.provider_used || providerParam() || "unknown",
+    view.matches_count ?? view.matches_analyzed ?? "unknown",
+    view.risk_profile || riskProfileParam() || "aggressive",
+  ].join("|");
+}
+
+function readWorkflowScoreMemory() {
+  try {
+    const rows = JSON.parse(window.localStorage.getItem(WORKFLOW_SCORE_MEMORY_KEY) || "[]");
+    return Array.isArray(rows) ? rows.filter(Boolean).slice(0, 10) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function writeWorkflowScoreMemory(rows) {
+  try {
+    window.localStorage.setItem(WORKFLOW_SCORE_MEMORY_KEY, JSON.stringify((rows || []).slice(0, 10)));
+  } catch (error) {
+    // Browser localStorage may be unavailable; keep the UI usable.
+  }
+}
+
+function rememberWorkflowScore(view = {}, score = 0, weakest = {}) {
+  const key = workflowScoreContextKey(view);
+  const row = {
+    context_key: key,
+    saved_at: new Date().toISOString(),
+    score,
+    weakest_label: weakest.label || "未知项",
+    weakest_score: workflowClampScore(weakest.score),
+    date: view.selected_date || view.date || currentDateParam() || "自动日期",
+    provider_used: view.provider_used || providerParam() || "unknown",
+    matches_count: view.matches_count ?? view.matches_analyzed ?? "未知",
+    risk_profile: view.risk_profile || riskProfileParam() || "aggressive",
+    items: (state.currentWorkflowItems || []).map((item) => ({
+      label: item.label || "未知项",
+      score: workflowClampScore(item.score),
+    })),
+  };
+  const rows = readWorkflowScoreMemory().filter((item) => item.context_key !== key);
+  writeWorkflowScoreMemory([row, ...rows]);
+}
+
+function renderWorkflowScoreMemory() {
+  const rows = readWorkflowScoreMemory();
+  const current = rows[0] || {};
+  const previous = rows[1] || {};
+  if (!current.score && current.score !== 0) return "";
+  const delta = Number.isFinite(Number(previous.score)) ? Number(current.score) - Number(previous.score) : null;
+  const trend = delta === null
+    ? "首次记录这个观察窗口"
+    : delta > 0
+      ? `较上次 +${delta}`
+      : delta < 0
+        ? `较上次 ${delta}`
+        : "较上次持平";
+  const status = delta === null ? "new" : delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const itemDelta = workflowItemDeltaSummary(current.items || [], previous.items || []);
+  const response = workflowScoreResponseRule(status, delta);
+  const timeline = workflowScoreTimeline(rows);
+  const diagnosis = workflowScoreTrendDiagnosis(rows);
+  const nextExperiment = workflowNextExperimentSuggestion(diagnosis, current);
+  const copyText = workflowScoreMemoryCopySummary(current, previous, trend, itemDelta, diagnosis, response, nextExperiment);
+  return `
+    <div class="workflowScoreMemory" data-trend="${C.escapeHtml(status)}">
+      <b>长期趋势：${C.escapeHtml(trend)}</b>
+      <span>${C.escapeHtml(current.date || "自动日期")} · ${C.escapeHtml(current.provider_used || "unknown")} · ${C.escapeHtml(String(current.matches_count ?? "未知"))} 场</span>
+      <em>最低项：${C.escapeHtml(current.weakest_label || "未知项")} ${C.escapeHtml(String(current.weakest_score ?? "N/A"))}/100</em>
+      ${timeline}
+      <u>${C.escapeHtml(diagnosis)}</u>
+      <small>${C.escapeHtml(itemDelta)}</small>
+      <i>${C.escapeHtml(response)}</i>
+      <mark>${C.escapeHtml(nextExperiment)}</mark>
+      <button class="secondary compactButton workflowNextExperimentPlanBtn" type="button">记录下一次实验计划</button>
+      <button class="ghost compactButton workflowCopyBtn workflowScoreCopyBtn" type="button" data-copy-text="${C.escapeHtml(copyText)}" data-copy-ok="分数轨迹已复制，可交给 DS Pro 复盘。" data-copy-fail="复制失败，请手动复制。">复制分数轨迹</button>
+    </div>
+  `;
+}
+
+function workflowScoreMemoryCopySummary(current = {}, previous = {}, trend = "", itemDelta = "", diagnosis = "", response = "", nextExperiment = "") {
+  const reviewQuestions = workflowScoreReviewQuestions(diagnosis, current);
+  return [
+    "JC Edge 长线分数轨迹复盘",
+    `当前记录：${current.date || "自动日期"} · ${current.provider_used || "unknown"} · ${current.matches_count ?? "未知"} 场`,
+    `当前分数：${current.score ?? "未知"}/100；最低项：${current.weakest_label || "未知项"} ${current.weakest_score ?? "N/A"}/100`,
+    `上次分数：${previous.score ?? "暂无"}/100`,
+    `趋势：${trend || "暂无趋势"}`,
+    `最近分数轨迹：${workflowScoreTimelineText()}`,
+    diagnosis || "轨迹诊断：暂无。",
+    itemDelta || "分项变化：暂无。",
+    response || "反应规则：先累计记录。",
+    nextExperiment || "下一次实验：先记录基线，再做一个小改动。",
+    "请按下面问题复盘：",
+    ...reviewQuestions.map((question, index) => `${index + 1}. ${question}`),
+  ].join("\n");
+}
+
+function workflowNextExperimentSuggestion(diagnosis = "", current = {}) {
+  const text = String(diagnosis || "");
+  const weakest = current.weakest_label || "最低分项";
+  if (text.includes("整体改善")) {
+    return `下一次实验：保留本次有效做法，只切换到新的最低分项“${weakest}”，不要扩大改动范围。`;
+  }
+  if (text.includes("回落")) {
+    return `下一次实验：暂停加码“${weakest}”，先回看最近一次改动，把变量缩回一个。`;
+  }
+  if (text.includes("横盘")) {
+    return `下一次实验：把“${weakest}”拆成一个更小动作，只验证一个验收信号。`;
+  }
+  return `下一次实验：先让 auto 再跑一次 T+1，累计到 3 次轨迹后再判断方向。`;
+}
+
+function workflowScoreReviewQuestions(diagnosis = "", current = {}) {
+  const text = String(diagnosis || "");
+  const weakest = current.weakest_label || "当前最低分项";
+  if (text.includes("整体改善")) {
+    return [
+      "这次加分主要来自哪一个动作：数据源、Top信号、组合纪律、AI研究还是赛后学习？",
+      "这个动作是否可以保留为日常流程，而不是继续扩大改动范围？",
+      `下一轮是否应该转向新的最低分项：${weakest}？`,
+    ];
+  }
+  if (text.includes("回落")) {
+    return [
+      "最近一次改动是否同时改变了多个变量，导致无法判断回落来源？",
+      "是否为了输出更多组合而牺牲了可信度门控或高赔率冷门纪律？",
+      `是否应该暂停 ${weakest} 方向的加码，先恢复到上一次较高分配置？`,
+    ];
+  }
+  if (text.includes("横盘")) {
+    return [
+      "当前实验是否太粗，例如同时改了数据源、AI解释和组合展示？",
+      `能否把 ${weakest} 拆成一个更小验收项，只观察一次分数变化？`,
+      "是否缺少赛后学习样本，导致页面体验改善但长期分数不动？",
+    ];
+  }
+  return [
+    "当前样本是否足够判断趋势？如果不足，先多跑几次 T+1 auto 记录。",
+    `最低分项 ${weakest} 的验收标准是否已经被满足？`,
+    "下一轮是否只改一个变量，并记录分数变化？",
+  ];
+}
+
+function workflowScoreTimeline(rows = []) {
+  const points = (rows || []).slice(0, 6).reverse();
+  if (points.length < 2) return "";
+  return `
+    <div class="workflowScoreTimeline" aria-label="最近长线分数轨迹">
+      ${points.map((row) => {
+        const score = workflowClampScore(row.score);
+        return `<span style="height:${C.escapeHtml(String(Math.max(12, Math.min(52, score / 2))))}px" title="${C.escapeHtml(`${row.date || "自动日期"} · ${score}/100`)}"><b>${C.escapeHtml(String(score))}</b></span>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function workflowScoreTimelineText(rows = readWorkflowScoreMemory()) {
+  const points = (rows || []).slice(0, 6).reverse();
+  if (!points.length) return "暂无分数轨迹。";
+  return points.map((row) => `${row.date || "自动日期"} ${workflowClampScore(row.score)}/100`).join(" → ");
+}
+
+function workflowScoreTrendDiagnosis(rows = readWorkflowScoreMemory()) {
+  const points = (rows || []).slice(0, 6).reverse().map((row) => workflowClampScore(row.score));
+  if (points.length < 3) return "轨迹诊断：样本还少，先累计至少 3 次刷新/实验记录。";
+  const first = points[0];
+  const last = points[points.length - 1];
+  const deltas = points.slice(1).map((score, index) => score - points[index]);
+  const ups = deltas.filter((delta) => delta > 0).length;
+  const downs = deltas.filter((delta) => delta < 0).length;
+  const flats = deltas.length - ups - downs;
+  if (last - first >= 8 && ups >= downs) return "轨迹诊断：整体改善，保留当前 auto + DS + 单点实验节奏。";
+  if (first - last >= 8 || downs >= 2) return "轨迹诊断：出现回落，暂停扩大组合和权重调整，先复盘最近一次改动。";
+  if (flats >= 2 || Math.abs(last - first) <= 3) return "轨迹诊断：基本横盘，说明实验颗粒太粗，下一轮拆成更小动作。";
+  return "轨迹诊断：波动中，继续只改一个变量，并用赛后学习验证。";
+}
+
+function workflowScoreResponseRule(status = "new", delta = null) {
+  if (status === "up") return "反应规则：这次改动有效，保留做法；下一轮处理新的最低分项。";
+  if (status === "down") return "反应规则：分数回落，暂停同方向加码；复制长线计划给 DS Pro 复盘原因。";
+  if (status === "flat") return "反应规则：分数持平，说明变量太粗；下一轮只改一个更小的子项。";
+  return "反应规则：这是当前窗口基线；先记录，再做单点实验。";
+}
+
+function workflowItemDeltaSummary(currentItems = [], previousItems = []) {
+  if (!currentItems.length) return "分项变化：暂无分项记录。";
+  if (!previousItems.length) {
+    return `分项基线：${currentItems.map((item) => `${item.label} ${workflowClampScore(item.score)}`).join("；")}`;
+  }
+  const previousByLabel = new Map(previousItems.map((item) => [item.label, workflowClampScore(item.score)]));
+  const deltas = currentItems
+    .map((item) => {
+      const current = workflowClampScore(item.score);
+      const previous = previousByLabel.get(item.label);
+      if (!Number.isFinite(Number(previous))) return null;
+      return { label: item.label, delta: current - previous, current };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const changed = deltas.filter((item) => item.delta !== 0).slice(0, 3);
+  if (!changed.length) return "分项变化：五项评分暂无明显变化。";
+  return `分项变化：${changed.map((item) => `${item.label} ${item.delta > 0 ? "+" : ""}${item.delta}`).join("；")}`;
+}
+
+function workflowQuickActionButton(item = {}) {
+  const label = item.label || "";
+  const actions = {
+    "数据源": { action: "refresh_today", text: "重新读取明日比赛" },
+    "Top信号": { action: "run_optimizer", text: "重新生成 Top 信号" },
+    "组合纪律": { action: "best_parlay", text: "查看组合纪律" },
+    "AI研究": { action: "ai_research", text: "运行 DS Pro 自动研究" },
+    "赛后学习": { action: "learning_pack", text: "准备赛后学习包" },
+  };
+  const config = actions[label];
+  if (!config) return "";
+  return `<button class="secondary compactButton workflowQuickActionBtn" type="button" data-workflow-action="${C.escapeHtml(config.action)}">${C.escapeHtml(config.text)}</button>`;
+}
+
+function workflowActionStatusText(action = "") {
+  const messages = {
+    refresh_today: "正在重新读取 T+1 可售比赛、赔率和情报覆盖。",
+    run_optimizer: "正在重新生成 Top 单关、进球/比分和组合观察。",
+    best_parlay: "正在打开组合纪律，查看为什么入选或被拒。",
+    ai_research: "正在启动 DS Pro 自动研究；完成后会写入今日 AI 研究记录。",
+    learning_pack: "正在准备赛后学习包，用比分和收盘赔率校准长期分数。",
+  };
+  return messages[action] || "正在处理当前瓶颈。";
+}
+
+function workflowActionLabel(action = "") {
+  const labels = {
+    refresh_today: "数据源",
+    run_optimizer: "Top信号",
+    best_parlay: "组合纪律",
+    ai_research: "AI研究",
+    learning_pack: "赛后学习",
+    today_experiment: "今日实验",
+    today_experiment_review: "实验复核",
+    next_experiment_plan: "下一次实验",
+  };
+  return labels[action] || "瓶颈动作";
+}
+
+function workflowActionDoneText(action = "") {
+  const messages = {
+    refresh_today: "已完成 T+1 比赛和数据源刷新，请查看分数是否改善。",
+    run_optimizer: "已完成 Top 信号生成，请查看单关、进球/比分和组合候选。",
+    best_parlay: "已打开组合纪律，请重点看入选/被拒原因。",
+    ai_research: "AI 研究动作已完成，请查看今日 DS/本地研究摘要和 Top 覆盖。",
+    learning_pack: "赛后学习包已准备，请继续补比分、收盘赔率和复盘样本。",
+  };
+  return messages[action] || "当前瓶颈动作已完成。";
+}
+
+function recordTodayExperimentStart() {
+  const existing = (state.workflowActionHistory || []).find((row) => row.action === "today_experiment" && row.status === "planned");
+  if (existing) {
+    setStatus("Check", "已有一个待复核的今日实验；请先执行并复核，再记录新的实验。");
+    return;
+  }
+  const target = state.currentWorkflowTarget || {};
+  const experiment = target.experiment || {};
+  const message = experiment.title
+    ? `开始单点实验：${experiment.title}；验收：${experiment.rule || "刷新后看分项变化。"}`
+    : "开始单点实验；刷新后观察总分、分项变化和趋势。";
+  recordWorkflowAction("today_experiment", message, "planned", {
+    score_before: state.currentWorkflowScore,
+  });
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  setStatus("Ready", "今日实验已记录；完成动作后刷新 T+1 观察看分数变化。");
+}
+
+function reviewTodayExperiment() {
+  const start = (state.workflowActionHistory || []).find((row) => row.action === "today_experiment" && row.status === "planned");
+  if (!start) {
+    setStatus("Check", "没有待复核的今日实验；请先记录或开始执行一个实验计划。");
+    return;
+  }
+  const before = Number.isFinite(Number(start.score_before)) ? Number(start.score_before) : Number(start.score_after);
+  const after = Number(state.currentWorkflowScore);
+  const delta = Number.isFinite(before) && Number.isFinite(after) ? after - before : null;
+  const verdict = delta === null
+    ? "无法计算分数变化，请先刷新 T+1 今日观察。"
+    : delta > 0
+      ? `实验有效：长线分数 +${delta}。`
+      : delta < 0
+        ? `实验回落：长线分数 ${delta}，需要复盘原因。`
+        : "实验持平：长线分数未变化，需要看分项是否改善。";
+  const target = state.currentWorkflowTarget || {};
+  const experiment = target.experiment || {};
+  recordWorkflowAction("today_experiment_review", `${verdict} 实验项：${experiment.title || start.label || "未知项"}`, "done", {
+    score_before: Number.isFinite(before) ? before : null,
+    score_after: Number.isFinite(after) ? after : null,
+  });
+  closeWorkflowPlannedAction(start.saved_at, "已完成实验复核。", {
+    score_after: Number.isFinite(after) ? after : null,
+  });
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  setStatus(delta !== null && delta < 0 ? "Check" : "Ready", verdict);
+}
+
+function recordNextExperimentPlan() {
+  const rows = readWorkflowScoreMemory();
+  const current = rows[0] || {};
+  const diagnosis = workflowScoreTrendDiagnosis(rows);
+  const suggestion = workflowNextExperimentSuggestion(diagnosis, current);
+  recordWorkflowAction("next_experiment_plan", suggestion, "planned");
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  setStatus("Ready", "下一次实验计划已记录；执行时只改一个变量。");
+}
+
+function startPlannedExperiment() {
+  const existing = (state.workflowActionHistory || []).find((row) => row.action === "today_experiment" && row.status === "planned");
+  if (existing) {
+    setStatus("Check", "已有今日实验正在等待复核；请先执行并复核它。");
+    return;
+  }
+  const plan = (state.workflowActionHistory || []).find((row) => row.action === "next_experiment_plan" && row.status === "planned");
+  if (!plan) {
+    setStatus("Check", "还没有可执行的实验计划，请先记录下一次实验计划。");
+    return;
+  }
+  recordWorkflowAction("today_experiment", `开始执行已记录计划：${plan.message || "只改一个变量并刷新 T+1。"}`, "planned", {
+    score_before: state.currentWorkflowScore,
+  });
+  closeWorkflowPlannedAction(plan.saved_at, "已转为今日实验，等待执行和复核。");
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  setStatus("Ready", "已把计划转为今日实验；执行动作后刷新 T+1，再标记实验复核。");
+}
+
+function closeWorkflowPlannedAction(savedAt = "", message = "计划已处理。", options = {}) {
+  if (!savedAt) return;
+  state.workflowActionHistory = (state.workflowActionHistory || []).map((row) => {
+    if (row.saved_at !== savedAt) return row;
+    const after = Number.isFinite(Number(options.score_after)) ? Number(options.score_after) : row.score_after;
+    const before = Number.isFinite(Number(row.score_before)) ? Number(row.score_before) : null;
+    return {
+      ...row,
+      status: "done",
+      message: `${row.message || ""} ${message}`.trim(),
+      score_after: after ?? null,
+      score_delta: before !== null && Number.isFinite(Number(after)) ? Number(after) - before : row.score_delta,
+    };
+  });
+  writeWorkflowActionHistory(state.workflowActionHistory);
+}
+
+function recordWorkflowAction(action = "", message = "", status = "running", options = {}) {
+  const before = Number.isFinite(Number(options.score_before)) ? Number(options.score_before) : null;
+  const after = Number.isFinite(Number(options.score_after)) ? Number(options.score_after) : null;
+  const label = workflowActionLabel(action);
+  const entry = {
+    action,
+    label,
+    message,
+    status,
+    time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+    saved_at: new Date().toISOString(),
+    score_before: before,
+    score_after: after,
+    score_delta: before !== null && after !== null ? after - before : null,
+  };
+  const history = state.workflowActionHistory || [];
+  const latest = history[0] || {};
+  const shouldUpdateLatest = latest.label === label && latest.status === "running" && status !== "running";
+  const nextHistory = shouldUpdateLatest
+    ? [{ ...latest, ...entry, time: latest.time || entry.time, score_before: latest.score_before ?? entry.score_before }, ...history.slice(1)]
+    : [entry, ...history];
+  state.lastWorkflowAction = entry;
+  state.workflowActionHistory = nextHistory.slice(0, 6);
+  writeWorkflowActionHistory(state.workflowActionHistory);
+}
+
+function renderWorkflowActionHistory() {
+  const rows = (state.workflowActionHistory || []).slice(1, 3);
+  if (!rows.length) return "";
+  return `
+    <div class="workflowActionHistory">
+      <div class="workflowActionHistoryHead">
+        <span>最近处理</span>
+        <button class="ghost compactButton workflowClearHistoryBtn" type="button">清空</button>
+      </div>
+      ${rows.map((row) => `<p data-status="${C.escapeHtml(row.status || "running")}">${C.escapeHtml(workflowActionTimeLabel(row))} · ${C.escapeHtml(row.label)} · ${C.escapeHtml(row.message)}${workflowScoreDeltaText(row)}</p>`).join("")}
+    </div>
+  `;
+}
+
+function workflowActionTimeLabel(row = {}) {
+  const savedAt = row.saved_at ? new Date(row.saved_at) : null;
+  if (!savedAt || Number.isNaN(savedAt.getTime())) return row.time || "--:--";
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startSaved = new Date(savedAt.getFullYear(), savedAt.getMonth(), savedAt.getDate()).getTime();
+  const hhmm = savedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  if (startSaved === startToday) return `今天 ${hhmm}`;
+  if (startSaved === startToday - 24 * 60 * 60 * 1000) return `昨天 ${hhmm}`;
+  return `${savedAt.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })} ${hhmm}`;
+}
+
+function renderWorkflowActionTrend() {
+  const recent = (state.workflowActionHistory || []).slice(0, 6);
+  if (recent.length < 2) return "";
+  const scoreRows = recent.filter((row) => row.status === "done" && !["next_experiment_plan", "today_experiment"].includes(row.action));
+  const failedRows = recent.filter((row) => row.status === "error");
+  const plannedRows = recent.filter((row) => row.status === "planned");
+  const failedCount = failedRows.length;
+  const retryAction = failedRows[0]?.action || "";
+  const deltas = scoreRows.map((row) => Number(row.score_delta)).filter((value) => Number.isFinite(value));
+  if (!deltas.length && !failedCount && plannedRows.length) {
+    const plannedSummary = workflowTrendCopySummary({
+      label: "已有实验计划",
+      recent,
+      scoreSummary: "计划已记录，尚未执行完成动作",
+      failedCount: 0,
+      next: "顺序：先点“开始执行计划”，完成对应动作并刷新 T+1，再点“执行后复核”。",
+    });
+    return `
+      <div class="workflowActionTrend" data-trend="planned">
+        <b>已有实验计划</b>
+        <span>最近记录了 ${C.escapeHtml(String(plannedRows.length))} 个计划，尚未形成可计算的分数变化。</span>
+        <em>先执行计划，刷新 T+1，再用实验复核判断是否真的加分。</em>
+        <div class="workflowTrendActions">
+          <button class="secondary compactButton workflowStartPlannedExperimentBtn" type="button">开始执行计划</button>
+          <button class="ghost compactButton workflowExperimentReviewBtn" type="button">执行后复核</button>
+          <button class="secondary compactButton workflowCopyBtn" type="button" data-copy-text="${C.escapeHtml(plannedSummary)}" data-copy-ok="计划摘要已复制，可交给 DS Pro 复盘。" data-copy-fail="计划摘要复制失败，请手动选中文本。">复制计划摘要</button>
+        </div>
+      </div>
+    `;
+  }
+  if (!deltas.length && !failedCount) return "";
+  const total = deltas.reduce((sum, value) => sum + value, 0);
+  const avg = deltas.length ? Math.round((total / deltas.length) * 10) / 10 : 0;
+  const improved = deltas.filter((value) => value > 0).length;
+  const label = failedCount && avg <= 0 ? "最近需要复查" : avg > 0 ? "最近修分有效" : avg < 0 ? "最近修分回落" : "最近修分持平";
+  const next = avg > 0
+    ? "继续沿着最低分项处理，优先保留有效动作。"
+    : failedCount
+      ? "先处理失败动作，再继续叠加新的优化。"
+      : avg < 0
+      ? "先复查最近失败或降分动作，不要继续盲目叠加。"
+      : "需要更多动作样本，或优先处理更低分短板。";
+  const scoreSummary = deltas.length
+    ? `完成动作平均变化 ${avg > 0 ? "+" : ""}${String(avg)} 分，${improved}/${deltas.length} 次提升`
+    : "完成动作暂无可计算分数";
+  const trendSummary = workflowTrendCopySummary({ label, recent, scoreSummary, failedCount, next });
+  return `
+    <div class="workflowActionTrend" data-trend="${avg > 0 ? "up" : avg < 0 || failedCount ? "down" : "flat"}">
+      <b>${C.escapeHtml(label)}</b>
+      <span>近 ${recent.length} 次中，${C.escapeHtml(scoreSummary)}${failedCount ? `，${failedCount} 次需要检查` : ""}。</span>
+      <em>${C.escapeHtml(next)}</em>
+      <div class="workflowTrendActions">
+        ${retryAction ? `<button class="secondary compactButton workflowQuickActionBtn" type="button" data-workflow-action="${C.escapeHtml(retryAction)}">重试最近失败项</button>` : ""}
+        <button class="secondary compactButton workflowCopyBtn" type="button" data-copy-text="${C.escapeHtml(trendSummary)}" data-copy-ok="趋势摘要已复制，可用于复盘或 DS 研究。" data-copy-fail="趋势摘要复制失败，请手动选中文本。">复制趋势摘要</button>
+        <button class="ghost compactButton workflowClearHistoryBtn" type="button">重置观察窗口</button>
+      </div>
+    </div>
+  `;
+}
+
+function workflowTrendCopySummary({ label = "", recent = [], scoreSummary = "", failedCount = 0, next = "" } = {}) {
+  const bottleneck = state.currentWorkflowBottleneck || {};
+  const today = state.todayView || {};
+  const observationDate = today.selected_date || today.date || currentDateParam() || "自动日期";
+  const providerUsed = today.provider_used || providerParam() || "unknown";
+  const matchesCount = today.matches_count ?? today.matches_analyzed ?? "未知";
+  const riskProfile = today.risk_profile || riskProfileParam() || "aggressive";
+  const generatedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const ai = state.latestAiResearch || {};
+  const aiProvider = ai.ai_provider_resolved || ai.ai_provider_requested || ai.provider || ai.ai_summary?.provider || "未运行";
+  const aiStatus = ai.ai_summary?.status || ai.status || (ai.ds_completed ? "loaded" : "unknown");
+  const dsStatus = ai.ds_completed ? "DS Pro 已完成" : ai.ds_attempted ? "DS Pro 已尝试但未完成" : "DS Pro 未参与/未记录";
+  const scoreLines = (state.currentWorkflowItems || []).map((item, index) => (
+    `${index + 1}. ${item.label}: ${item.score}/100${item.detail ? ` · ${item.detail}` : ""}${item.next ? ` · 下一步：${item.next}` : ""}`
+  ));
+  const doneCount = recent.filter((row) => row.status === "done" && !["next_experiment_plan", "today_experiment"].includes(row.action)).length;
+  const plannedCount = recent.filter((row) => row.status === "planned" || row.action === "next_experiment_plan").length;
+  const runningCount = recent.filter((row) => row.status === "running").length;
+  const actionLines = recent.slice(0, 6).map((row, index) => {
+    const status = row.status === "done" ? "完成" : row.status === "error" ? "需检查" : row.status === "planned" ? "计划" : "处理中";
+    const delta = workflowScoreDeltaPlain(row);
+    return `${index + 1}. ${workflowActionTimeLabel(row)} · ${row.label || "未知短板"} · ${status}${delta ? ` · ${delta}` : ""} · ${row.message || ""}`;
+  });
+  return [
+    `生成时间：${generatedAt}`,
+    `观察日期：${observationDate}`,
+    `数据上下文：数据源 ${providerUsed}，可售/分析比赛 ${matchesCount} 场，风险档位 ${riskProfile}`,
+    `AI上下文：${aiProvider} · ${aiStatus} · ${dsStatus}`,
+    `当前总分：${state.currentWorkflowScore ?? "未知"}/100`,
+    `长线目标：${state.currentWorkflowTarget?.label || "未知目标"}；差距：${state.currentWorkflowTarget?.gap ?? "未知"} 分`,
+    "分项评分：",
+    ...(scoreLines.length ? scoreLines : ["暂无分项评分"]),
+    `当前瓶颈：${bottleneck.title || "未知"}；${bottleneck.impact || "暂无影响说明"}；建议：${bottleneck.action || "继续按最低分项处理。"}`,
+    `动作结构：完成 ${doneCount} 次；计划 ${plannedCount} 次；处理中 ${runningCount} 次；需检查 ${failedCount} 次。计划和实验基线不参与平均分变化。`,
+    `${label}：近 ${recent.length} 次中，${scoreSummary}${failedCount ? `，${failedCount} 次需要检查` : ""}。`,
+    `下一步：${next}`,
+    "最近动作：",
+    ...actionLines,
+  ].join("\n");
+}
+
+function workflowScoreDeltaPlain(row = {}) {
+  const before = Number(row.score_before);
+  const after = Number(row.score_after);
+  if (!Number.isFinite(before) || !Number.isFinite(after)) return "";
+  const delta = after - before;
+  const sign = delta > 0 ? "+" : "";
+  return `分数 ${before}→${after} (${delta ? `${sign}${delta}` : "0"})`;
+}
+
+function workflowScoreDeltaText(row = {}) {
+  const before = Number(row.score_before);
+  const after = Number(row.score_after);
+  if (!Number.isFinite(before) || !Number.isFinite(after)) return "";
+  const delta = after - before;
+  const sign = delta > 0 ? "+" : "";
+  const status = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const label = delta ? `${sign}${delta}` : "0";
+  return ` <span class="workflowScoreDelta" data-delta="${status}" title="分数 ${C.escapeHtml(String(before))}→${C.escapeHtml(String(after))}">${C.escapeHtml(label)}</span>`;
+}
+
+function workflowActionErrorText(action = "", error = null) {
+  const suffix = error && error.message ? `；细节：${error.message}` : "";
+  const messages = {
+    refresh_today: "重新读取比赛失败，请检查本地服务、数据源 key 或稍后重试",
+    run_optimizer: "Top 信号生成失败，请先确认比赛和赔率数据是否已读到",
+    best_parlay: "组合纪律读取失败，请先刷新今日观察再重试",
+    ai_research: "DS Pro 自动研究未完成，请检查 key、本地服务状态或稍后重试",
+    learning_pack: "赛后学习包准备失败，请确认赛果/收盘赔率样本是否存在",
+  };
+  return `${messages[action] || "当前瓶颈动作未完成"}${suffix}`;
+}
+
+async function workflowRunQuickAction(action = "") {
+  if (action === "refresh_today") return loadToday();
+  if (action === "run_optimizer") return runOptimizer(true);
+  if (action === "best_parlay") return loadBestParlay();
+  if (action === "ai_research") return loadAiComboResearch();
+  if (action === "learning_pack") return prepareDailyLearningPack();
+  setStatus("Ready", "未识别的瓶颈动作，已保持当前页面。");
+  return null;
+}
+
+function clearWorkflowActionHistory() {
+  state.lastWorkflowAction = null;
+  state.workflowActionHistory = [];
+  writeWorkflowActionHistory([]);
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  setStatus("Ready", "已清空最近处理历史，长线趋势将从下一次动作重新累计。");
+}
+
+async function copyTextToClipboard(text = "") {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "readonly");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  return ok;
+}
+
+function renderScanCalendar(view) {
+  const panel = qs("#scanCalendarPanel");
+  if (!panel) return;
+  const attempts = view?.attempts || view?.source_health?.attempts || [];
+  const selected = view?.selected_date || view?.date || "";
+  if (!attempts.length) {
+    panel.innerHTML = `
+      <div class="scanCalendarCard isLoading">
+        <span>SCAN</span>
+        <strong>正在扫描未来比赛窗口</strong>
+        <p>会完整查看 T+1 到 T+3 窗口，选第一个有可售比赛的日期作为主观察日。</p>
+      </div>
+    `;
+    return;
+  }
+  const windowInfo = view.source_health?.scan_window || view.scan_window || {};
+  panel.innerHTML = `
+    <div class="scanCalendarHead">
+      <span>DATE SCAN</span>
+      <strong>未来窗口日历</strong>
+      <p>${C.escapeHtml(windowInfo.selection_rule || "完整扫描未来窗口，选择第一个有可售比赛的日期。")}</p>
+    </div>
+    <div class="scanCalendarGrid">
+      ${attempts.map((item) => {
+        const count = Number(item.matches_count || 0);
+        const status = count > 0 ? "available" : String(item.status || "empty");
+        const selectedClass = item.date === selected ? " isSelected" : "";
+        const label = count > 0 ? `${count} 场` : "暂无";
+        const provider = item.provider_used || item.provider || "unknown";
+        return `
+          <article class="scanDay scanDay-${C.escapeHtml(status)}${selectedClass}">
+            <span>${C.escapeHtml(item.date || "日期待定")}</span>
+            <strong>${C.escapeHtml(label)}</strong>
+            <p>${C.escapeHtml(provider)} · ${C.escapeHtml(status)}</p>
+            ${item.date === selected ? `<em>主观察日</em>` : `<em>参考日</em>`}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+
+function renderExternalSignalsStrip(view) {
+  const panel = qs("#externalSignalsStrip");
+  if (!panel) return;
+  const status = view?.external_signals_status || {};
+  if (!view) {
+    panel.innerHTML = `
+      <article class="externalSignalsCard isLoading">
+        <span>INTEL</span>
+        <strong>等待情报覆盖审计</strong>
+        <p>如果高级设置里填写了本地情报 JSON，首页会显示已提供字段和匹配情况。</p>
+      </article>
+    `;
+    return;
+  }
+  const supplied = status.supplied_fields_zh || status.supplied_fields || [];
+  const matched = Number(status.matched_count || 0);
+  const total = Number(status.matches_count || 0);
+  const loaded = status.load_status === "loaded" && status.source_type === "user_json";
+  const quality = !loaded ? "notProvided" : matched > 0 ? "matched" : "unmatched";
+  const title = !loaded ? "本地情报未接入" : matched > 0 ? "本地情报已匹配部分比赛" : "本地情报已读取但未匹配当前比赛";
+  const body = !loaded
+    ? "伤停、首发、天气、新闻和战意保持未知；系统不会编造。"
+    : matched > 0
+      ? `已识别字段：${supplied.join("、") || "暂无"}；匹配 ${matched}/${total || "?"} 场。`
+      : `已读取 ${status.path_label || "情报 JSON"}，但没有匹配当前主观察日；可检查 match_no / 队名 / 日期。`;
+  const missing = Array.isArray(view.missing_signals) ? view.missing_signals.slice(0, 6) : [];
+  panel.innerHTML = `
+    <article class="externalSignalsCard ${quality}">
+      <span>INTEL COVERAGE</span>
+      <strong>${C.escapeHtml(title)}</strong>
+      <p>${C.escapeHtml(body)}</p>
+      <div class="externalSignalsTags">
+        ${(supplied.length ? supplied : ["伤停", "首发", "天气", "新闻", "战意"].filter(Boolean)).slice(0, 8).map((item) => `<em class="${supplied.length ? "isSupplied" : "isMissing"}">${C.escapeHtml(item)}</em>`).join("")}
+      </div>
+      ${missing.length ? `<small>仍影响信心：${C.escapeHtml(missing.join("、"))}</small>` : ""}
+    </article>
+  `;
+}
+
+function renderTodayLoadingState() {
+  renderWorkflowScore(null, "loading");
+  renderScanCalendar(null);
+  renderExternalSignalsStrip(null);
+  setAiAutoStatus("running", "自动研究 T+1 比赛中", "先找 T+1 可售比赛，随后自动尝试 DeepSeek Pro 研究摘要。若暂不可用，会改用本地研究摘要。");
+  if (qs("#todayOneLook")) {
+    qs("#todayOneLook").innerHTML = `
+      <article class="oneLookHero signalLight signalLight-wait">
+        <span>今日总灯</span>
+        <div class="signalLightRow"><b>读取中</b><strong>正在生成明日预观察</strong></div>
+        <p>系统正在读取比赛、赔率、可信度门控和组合纪律，Top 卡片会自动出现。</p>
+      </article>
+    `;
+  }
+  const loadingMap = {
+    "#todaySingles": ["Top 单关读取中", "先筛单关，再判断是否能做组合。"],
+    "#todayParlay2": ["2串1纪律读取中", "组合需要同时命中，会先过可信度和相关性折扣。"],
+    "#todayParlay3": ["3串1纸面候选读取中", "只作为高风险纸面候选，不自动升级为强观察。"],
+    "#todayTotalGoals": ["总进球倾向读取中", "用于判断节奏，不替代胜平负观察。"],
+    "#todayScores": ["比分倾向读取中", "比分波动较高，只显示模型倾向。"],
+  };
+  Object.entries(loadingMap).forEach(([selector, [title, body]]) => {
+    const target = qs(selector);
+    if (target) target.innerHTML = loadingTopCard(title, body);
+  });
+  const box = qs("#aiComboResearchBox");
+  if (box) {
+    box.innerHTML = `
+      <div class="aiRunningCard">
+        <span>自动研究队列</span>
+        <strong>等待 auto 自动研究</strong>
+        <p>比赛与候选回来后会自动触发，无需再手动点第二次。</p>
+      </div>
+    `;
+  }
+}
+
+
 function signalCards(rows, kind = "single", message = "暂无观察信号") {
   if (!rows || !rows.length) return `<div class="emptyState">${C.escapeHtml(message)}</div>`;
-  return `<div class="signalCardGrid">${rows.slice(0, 4).map((row) => {
+  return `<div class="signalCardGrid">${rows.slice(0, 4).map((row, index) => {
     const isCombo = kind === "combo";
     const title = isCombo ? (row.legs || row.match || "组合观察") : (row.match || "观察信号");
     const tag = isCombo ? (row.status || row.type || "组合") : `${row.play_type || "玩法"} · ${row.direction || "方向"}`;
     const reason = isCombo ? (row.discipline_summary_zh || row.reject_reason || row.reason || "通过组合纪律筛选。") : (row.recommended_action_zh || row.selection_reason || "查看概率、EV 和风险。");
+    const decision = isCombo ? (row.combo_decision_label_zh || row.status || "") : (row.decision_label_zh || row.signal_category_zh || "");
+    const comboReview = isCombo ? comboMatchdayReview(row) : null;
+    const learningScores = !isCombo && row.learning_scores ? row.learning_scores : null;
     const metrics = isCombo
       ? [
-          ["赔率", row.odds],
-          ["概率", row.model_prob],
-          ["EV", row.ev],
-          ["风险", row.risk_level],
+          ["组合赔率", row.odds],
+          ["盈亏线", row.break_even_prob || "N/A"],
+          ["组合概率", row.model_prob],
+          ["安全边际", row.safety_margin || "N/A"],
+          ["判断", row.combo_decision_label_zh || row.risk_level],
         ]
       : [
           ["赔率", row.official_odds],
-          ["融合概率", row.model_prob],
-          ["EV", row.ev],
-          ["可信度", [row.confidence_label_zh, row.observation_confidence || row.confidence_score].filter(Boolean).join(" ")],
+          ["盈亏线", row.break_even_prob || "N/A"],
+          ["校准概率", row.calibrated_prob || row.model_prob],
+          ["安全边际", row.safety_margin || "N/A"],
+          ["判断", row.safety_margin_label_zh || row.signal_category_zh || "观察"],
         ];
     return `
       <article class="signalCard ${isCombo && row.status === "未入选" ? "isRejected" : ""}">
@@ -124,13 +1682,411 @@ function signalCards(rows, kind = "single", message = "暂无观察信号") {
           <strong>${C.escapeHtml(title)}</strong>
           <span>${C.escapeHtml(tag)}</span>
         </div>
+        ${decision ? `<div class="coachDecision">${C.escapeHtml(decision)}</div>` : ""}
+        ${!isCombo && row.signal_category_zh ? `<div class="signalTypeLine">${C.escapeHtml(row.signal_category_zh)} · ${C.escapeHtml(row.odds_bucket_zh || "")}</div>` : ""}
         <div class="metricStrip">${metrics.map(([label, value]) => `
           <div><span>${C.escapeHtml(label)}</span><b>${C.escapeHtml(value ?? "N/A")}</b></div>
         `).join("")}</div>
+        ${!isCombo && row.odds_coach_verdict_zh ? `<p class="coachActionLine">${C.escapeHtml(row.odds_coach_verdict_zh)}</p>` : ""}
+        ${learningScores ? `<div class="learningScoreStrip">
+          <strong>${C.escapeHtml(learningScores.verdict_zh || "机器学习结论：待评估")}</strong>
+          <div><span>赔率价值</span><b>${C.escapeHtml(learningScores.odds_value_score ?? "N/A")}</b></div>
+          <div><span>历史学习</span><b>${C.escapeHtml(learningScores.history_score ?? "N/A")}</b></div>
+          <div><span>CLV价格</span><b>${C.escapeHtml(learningScores.clv_score ?? "N/A")}</b></div>
+          <div><span>临场复核</span><b>${C.escapeHtml(learningScores.matchday_review_score ?? "N/A")}</b></div>
+          <div><span>串联资格</span><b>${C.escapeHtml(learningScores.parlay_fit_score ?? "N/A")}</b></div>
+        </div>` : ""}
+        ${!isCombo && row.learning_score_summary_zh ? `<p class="edgeCoachLine">${C.escapeHtml(row.learning_score_summary_zh)}</p>` : ""}
         <p class="reasonLine">${C.escapeHtml(reason)}</p>
+        ${isCombo && row.combo_action_zh ? `<p class="coachActionLine">${C.escapeHtml(row.combo_action_zh)}</p>` : ""}
+        ${isCombo && row.combo_value_reading_zh ? `<p class="edgeCoachLine">${C.escapeHtml(row.combo_value_reading_zh)}</p>` : ""}
+        ${isCombo && row.combo_parlay_policy_zh ? `<p class="mutedLine">串联纪律：${C.escapeHtml(row.combo_parlay_policy_zh)}</p>` : ""}
+        ${isCombo && comboReview ? `<div class="oddsReviewMini comboOddsReview">
+          <strong>组合赔率复核</strong>
+          <p>${C.escapeHtml(comboReview.message_zh)}</p>
+          <span>保留观察最低组合赔率：${C.escapeHtml(comboReview.keepMinText)}</span>
+          <span>失去覆盖低于：${C.escapeHtml(comboReview.noValueBelowText)}</span>
+          <span>反向漂移警戒：${C.escapeHtml(comboReview.reverseWatchText)}</span>
+          <div class="matchdayReviewTool">
+            <input inputmode="decimal" placeholder="填最新组合赔率，如 3.50" aria-label="临场组合赔率">
+            <button class="matchdayReviewBtn"
+              data-keep-min="${C.escapeHtml(comboReview.keepMin)}"
+              data-no-value-below="${C.escapeHtml(comboReview.noValueBelow)}"
+              data-reverse-watch="${C.escapeHtml(comboReview.reverseWatch)}"
+              data-target="${C.escapeHtml(title)}-${index}">复核组合</button>
+            <div class="matchdayReviewResult">输入赛日前最新组合赔率后，判断继续观察、降级或跳过。</div>
+          </div>
+        </div>` : ""}
+        ${!isCombo && row.decision_action_zh ? `<p class="coachActionLine">${C.escapeHtml(row.decision_action_zh)}</p>` : ""}
+        ${!isCombo && row.decision_reason_zh ? `<p class="mutedLine">${C.escapeHtml(row.decision_reason_zh)}</p>` : ""}
+        ${!isCombo && row.parlay_policy_zh ? `<p class="mutedLine">串联纪律：${C.escapeHtml(row.parlay_policy_zh)}</p>` : ""}
+        ${!isCombo && row.recommended_use_zh ? `<p class="mutedLine">${C.escapeHtml(row.recommended_use_zh)}</p>` : ""}
+        ${!isCombo && row.odds_reading_zh ? `<p class="edgeCoachLine">${C.escapeHtml(row.odds_reading_zh)}</p>` : ""}
+        ${!isCombo && row.calibration_message_zh ? `<p class="mutedLine">${C.escapeHtml(row.calibration_message_zh)}</p>` : ""}
+        ${!isCombo && row.probability_bin_message_zh ? `<p class="mutedLine">${C.escapeHtml(row.probability_bin_message_zh)}</p>` : ""}
+        ${!isCombo && row.ml_learning_note_zh ? `<p class="mutedLine">${C.escapeHtml(row.ml_learning_note_zh)}</p>` : ""}
+        ${!isCombo && row.next_review_zh ? `<p class="mutedLine">${C.escapeHtml(row.next_review_zh)}</p>` : ""}
+        ${!isCombo && row.matchday_review_zh ? `<div class="oddsReviewMini">
+          <strong>赛日赔率复核</strong>
+          <p>${C.escapeHtml(row.matchday_review_zh)}</p>
+          <span>保留观察最低赔率：${C.escapeHtml(row.matchday_keep_min_odds || "N/A")}</span>
+          <span>失去覆盖低于：${C.escapeHtml(row.matchday_no_value_below_odds || "N/A")}</span>
+          <span>反向漂移警戒：${C.escapeHtml(row.matchday_reverse_drift_watch_odds || "N/A")}</span>
+          <div class="matchdayReviewTool">
+            <input inputmode="decimal" placeholder="填临场赔率，如 2.10" aria-label="临场赔率">
+            <button class="matchdayReviewBtn"
+              data-keep-min="${C.escapeHtml(row.matchday_keep_min_odds || "")}"
+              data-no-value-below="${C.escapeHtml(row.matchday_no_value_below_odds || "")}"
+              data-reverse-watch="${C.escapeHtml(row.matchday_reverse_drift_watch_odds || "")}"
+              data-target="${C.escapeHtml(title)}-${index}">复核动作</button>
+            <div class="matchdayReviewResult">输入赛日前最新赔率后，判断继续观察、降级或跳过。</div>
+          </div>
+        </div>` : ""}
+        ${!isCombo && row.user_priority_zh ? `<p class="mutedLine">${C.escapeHtml(row.user_priority_zh)}</p>` : ""}
         ${!isCombo && longshotText(row) ? `<p class="warningLine">${C.escapeHtml(longshotText(row))}</p>` : ""}
         ${!isCombo && row.reliability_explanation_zh ? `<p class="mutedLine">${C.escapeHtml(row.reliability_explanation_zh)}</p>` : ""}
         ${!isCombo && row.opposing_factors ? `<p class="mutedLine">${C.escapeHtml(row.opposing_factors)}</p>` : ""}
+      </article>`;
+  }).join("")}</div>`;
+}
+
+function todayCompactCards(rows, kind = "single", message = "暂无观察信号", sharedMissing = []) {
+  if (!rows || !rows.length) return `<div class="emptyState">${C.escapeHtml(message)}</div>`;
+  return `<div class="todayCompactGrid">${rows.slice(0, 3).map((row) => {
+    const isCombo = kind === "combo";
+    const title = isCombo ? (row.legs || row.match || "组合观察") : (row.match || "观察信号");
+    const tag = isCombo ? "组合观察" : `${row.play_type || "玩法"} · ${row.direction || "方向"}`;
+    const odds = isCombo ? row.odds : (row.official_odds || row.odds);
+    const probability = row.calibrated_prob || row.model_prob || row.observation_confidence || "N/A";
+    const margin = row.safety_margin || row.edge || row.ev || "N/A";
+    const verdict = isCombo
+      ? (row.combo_decision_label_zh || row.status || "待复核")
+      : (row.decision_label_zh || row.signal_category_zh || row.confidence_label_zh || "待复核");
+    const why = isCombo
+      ? (row.discipline_summary_zh || row.combo_action_zh || row.reject_reason || "组合需要同时命中，优先看风险纪律。")
+      : (row.odds_coach_verdict_zh || row.decision_reason_zh || row.recommended_action_zh || "看赔率是否覆盖校准概率。");
+    const next = isCombo
+      ? (row.combo_parlay_policy_zh || row.combo_action_zh || "不通过时不要强行组合。")
+      : (row.next_review_zh || row.parlay_policy_zh || row.recommended_use_zh || "赛日前复核赔率、首发、伤停和天气。");
+    const tags = reasonTags(`${why} ${next} ${row.reject_reason || ""}`);
+    const aiHint = aiHintForTodayCard(row, isCombo, kind);
+    const rowMissing = Array.isArray(row.missing_signals_zh)
+      ? row.missing_signals_zh
+      : Array.isArray(row.missing_signals)
+        ? row.missing_signals
+        : [];
+    const gapList = rowMissing.length ? rowMissing : (Array.isArray(sharedMissing) ? sharedMissing : []);
+    const gapText = gapList.length ? `关键缺口：${gapList.slice(0, 4).join("、")}` : "";
+    return `
+      <article class="todayCompactCard ${isCombo && row.status === "未入选" ? "isRejected" : ""}">
+        <div class="todayCardTop">
+          <span>${C.escapeHtml(tag)}</span>
+          <b>${C.escapeHtml(verdict)}</b>
+        </div>
+        <strong>${C.escapeHtml(title)}</strong>
+        <div class="todayMiniMetrics">
+          <div><span>赔率</span><b>${C.escapeHtml(odds || "N/A")}</b></div>
+          <div><span>概率</span><b>${C.escapeHtml(probability || "N/A")}</b></div>
+          <div><span>边际</span><b>${C.escapeHtml(margin || "N/A")}</b></div>
+        </div>
+        ${tags.length ? `<div class="reasonTags miniTags">${tags.map((tag) => `<em>${C.escapeHtml(tag)}</em>`).join("")}</div>` : ""}
+        <p>${C.escapeHtml(shortText(why, 86))}</p>
+        ${gapText ? `<p class="mutedLine">${C.escapeHtml(gapText)}</p>` : ""}
+        <div class="aiCardHint">
+          <span>${C.escapeHtml(aiHint.label)}</span>
+          <p>${C.escapeHtml(aiHint.text)}</p>
+        </div>
+        <em>${C.escapeHtml(shortText(next, 72))}</em>
+      </article>
+    `;
+  }).join("")}</div>`;
+}
+
+function renderTodayTopSections(view) {
+  if (!view) return;
+  const sharedMissing = Array.isArray(view.missing_signals)
+    ? view.missing_signals
+    : Array.isArray(view.critical_gap_list_zh)
+      ? view.critical_gap_list_zh.map((line) => String(line || "").split("：")[0]).filter(Boolean)
+      : [];
+  if (qs("#todaySingles")) {
+    qs("#todaySingles").innerHTML = todayCompactCards(view.top_singles || [], "single", "当前没有通过纪律筛选的单关观察。若无 Edge，显示无观察价值。", sharedMissing);
+  }
+  const parlay2Selected = view.top_2x1 || [];
+  const parlay2Display = parlay2Selected.length ? parlay2Selected : (view.top_2x1_display || []);
+  const parlay2Intro = `<div class="note">${C.escapeHtml(view.top_2x1_empty_explanation || "2串1 需要多场同时命中，风险纪律会更严格。")}</div>`;
+  if (qs("#todayParlay2")) {
+    qs("#todayParlay2").innerHTML = parlay2Intro + todayCompactCards(parlay2Display, "combo", "当前没有 2串1 入选，也没有可排序的候选。", sharedMissing);
+  }
+  if (qs("#todayParlay3")) {
+    const parlay3Display = view.top_3x1_display || [];
+    const parlay3Intro = `<div class="note">${C.escapeHtml(view.top_3x1_empty_explanation || "3串1 每天只作最高风险纸面候选，默认不升级为强观察。")}</div>`;
+    qs("#todayParlay3").innerHTML = parlay3Intro + todayCompactCards(parlay3Display, "combo", "当前没有可排序的 3串1 候选。", sharedMissing);
+  }
+  if (qs("#todayTotalGoals")) {
+    qs("#todayTotalGoals").innerHTML = todayCompactCards(view.top_total_goals || [], "total_goals", "当前没有总进球观察。 ", sharedMissing);
+  }
+  if (qs("#todayScores")) {
+    qs("#todayScores").innerHTML = todayCompactCards(view.top_scores || [], "score", "当前没有比分观察。 ", sharedMissing);
+  }
+  if (qs("#todayRejectedParlay2")) {
+    qs("#todayRejectedParlay2").innerHTML = rejectedComboCards(view.top_rejected_2x1 || [], "当前没有 2串1 被拒候选。");
+  }
+  if (qs("#todayRejectedParlay3")) {
+    qs("#todayRejectedParlay3").innerHTML = rejectedComboCards(view.top_rejected_3x1 || [], "当前没有 3串1 被拒候选。");
+  }
+}
+
+function rejectedComboCards(rows, message = "当前没有被拒组合。") {
+  if (!rows || !rows.length) return `<div class="emptyState">${C.escapeHtml(message)}</div>`;
+  return `<div class="rejectedComboGrid">${rows.slice(0, 6).map((row) => {
+    const title = row.legs || row.match || "组合候选";
+    const reason = row.reject_reason || row.reason || row.discipline_summary_zh || "未通过组合纪律。";
+    const tags = reasonTags(reason);
+    const quality = comboRejectQuality(row, reason);
+    return `
+      <article class="rejectedComboCard">
+        <div class="rejectedComboHead">
+          <span>${C.escapeHtml(row.type || "组合")}</span>
+          <b>${C.escapeHtml(row.combo_decision_label_zh || row.status || "未入选")}</b>
+        </div>
+        <strong>${C.escapeHtml(title)}</strong>
+        <div class="rejectedComboMetrics">
+          <div><span>组合赔率</span><b>${C.escapeHtml(row.odds || "N/A")}</b></div>
+          <div><span>组合概率</span><b>${C.escapeHtml(row.model_prob || "N/A")}</b></div>
+          <div><span>盈亏线</span><b>${C.escapeHtml(row.break_even_prob || "N/A")}</b></div>
+          <div><span>安全边际</span><b>${C.escapeHtml(row.safety_margin || row.edge || "N/A")}</b></div>
+        </div>
+        <div class="rejectQuality">
+          ${quality.map((item) => `
+            <div class="${item.pass ? "pass" : "fail"}">
+              <span>${C.escapeHtml(item.label)}</span>
+              <b>${C.escapeHtml(item.pass ? "通过" : "未过")}</b>
+            </div>
+          `).join("")}
+        </div>
+        ${tags.length ? `<div class="reasonTags miniTags">${tags.map((tag) => `<em>${C.escapeHtml(tag)}</em>`).join("")}</div>` : ""}
+        <p>${C.escapeHtml(shortText(reason, 150))}</p>
+        <em>${C.escapeHtml(row.discipline_summary_zh || "组合不是赔率越高越好，必须同时通过命中概率、相关性、可信度和赛前情报纪律。")}</em>
+      </article>
+    `;
+  }).join("")}</div>`;
+}
+
+function comboRejectQuality(row, reason) {
+  const text = String(reason || "");
+  const risk = String(row.risk_level || "").toLowerCase();
+  return [
+    { label: "EV/Edge", pass: !/EV 不足|Edge 不足|优势偏薄/.test(text) },
+    { label: "可信度", pass: !/可信度|信心|情报/.test(text) },
+    { label: "相关性", pass: !/相关性/.test(text) },
+    { label: "风险", pass: !/风险|very_high|高风险/.test(text) && !["high", "very_high"].includes(risk) },
+  ];
+}
+
+function aiHintForTodayCard(row, isCombo, kind = "single") {
+  const memory = state.latestAiResearch || {};
+  const source = memory.provider === "deepseek" || memory.ds_completed ? "DS Pro提示" : "研究提示";
+  const contextual = aiContextHintForKind(kind, memory, row);
+  const odds = parseNumberLike(isCombo ? row.odds : (row.official_odds || row.odds));
+  const status = String(row.status || "");
+  const play = String(row.play_type || row.direction || "");
+  if (isCombo && status.includes("未入选")) {
+    return {
+      label: source,
+      text: contextual || "这类组合先看被拒原因：可信度门控、单腿纪律、相关性和组合命中率，任何一项不过都不升级为强观察。",
+    };
+  }
+  if (isCombo) {
+    return {
+      label: source,
+      text: contextual || "组合只在每一腿都有价值、相关性可控、组合概率覆盖赔率时才保留；赛日前还要复核赔率漂移。",
+    };
+  }
+  if (Number.isFinite(odds) && odds >= 6) {
+    return {
+      label: source,
+      text: contextual || "这是高赔率冷门观察，波动很大；可单独跟踪，不适合作为串联核心，除非赛前情报和收盘赔率继续支持。",
+    };
+  }
+  if (kind === "score" || /比分/.test(play)) {
+    return {
+      label: source,
+      text: contextual || "比分属于高波动倾向，只用于理解节奏和比分矩阵，不当作强信号。",
+    };
+  }
+  if (kind === "total_goals" || /总进球/.test(play)) {
+    return {
+      label: source,
+      text: contextual || "总进球更适合判断比赛节奏；若官方赔率缺失，只看模型概率，不计算 EV。",
+    };
+  }
+  return {
+    label: source,
+    text: contextual || (memory.body ? shortText(memory.body, 96) : "先看赔率是否覆盖校准概率，再看情报完整度和赛日赔率复核。"),
+  };
+}
+
+function aiContextHintForKind(kind, memory, row = {}) {
+  const structured = memory.structured_notes || {};
+  const matchedNote = structuredMatchNote(row, structured);
+  if (matchedNote) return matchedNote;
+  const structuredNote = structuredNoteForKind(kind, structured);
+  if (structuredNote) return structuredNote;
+  const cards = Array.isArray(memory.cards) ? memory.cards : [];
+  const byKicker = (needles) => {
+    const found = cards.find((card) => needles.some((needle) => String(card.kicker || card.title || "").includes(needle)));
+    return found ? shortText(found.body || found.title || "", 110) : "";
+  };
+  if (kind === "combo") return byKicker(["组合", "纪律"]);
+  if (kind === "total_goals") return findAiLine(memory.full_text, ["总进球", "进球节奏", "节奏"], byKicker(["今日", "结论"]));
+  if (kind === "score") return findAiLine(memory.full_text, ["比分", "比分倾向"], "比分属于高波动倾向，只作节奏参考。");
+  return byKicker(["最强", "单关", "观察"]) || findAiLine(memory.full_text, ["优先单关", "最强观察", "Top 单关"], "");
+}
+
+function structuredMatchNote(row, structured) {
+  const rows = Array.isArray(structured.match_notes) ? structured.match_notes : [];
+  if (!rows.length) return "";
+  const candidates = [
+    row.match,
+    row.legs,
+    row.label_zh,
+    row.home_team && row.away_team ? `${row.home_team} vs ${row.away_team}` : "",
+  ].filter(Boolean);
+  const keys = candidates.map(noteKey);
+  const found = rows.find((note) => {
+    const target = String(note.target || "");
+    const noteKeyValue = String(note.key || noteKey(target));
+    return keys.some((key) => key && (noteKeyValue.includes(key) || key.includes(noteKeyValue))) || candidates.some((value) => value && target.includes(String(value)));
+  });
+  if (!found) return "";
+  const prefix = found.role_zh ? `${found.role_zh}：` : "";
+  return shortText(`${prefix}${found.note_zh || found.usage_zh || ""}`, 116);
+}
+
+function noteKey(text) {
+  return String(text || "").toLowerCase().split("").filter((ch) => /[a-z0-9]/.test(ch) || /[\u4e00-\u9fff]/.test(ch)).join("").slice(0, 80);
+}
+
+function structuredNoteForKind(kind, structured) {
+  const pick = (key) => {
+    const rows = Array.isArray(structured[key]) ? structured[key] : [];
+    const first = rows[0] || {};
+    return first.note_zh ? shortText(first.note_zh, 116) : "";
+  };
+  if (kind === "combo") return pick("combo_notes");
+  if (kind === "total_goals") return pick("total_goals_notes");
+  if (kind === "score") return pick("score_notes");
+  return pick("single_notes");
+}
+
+function findAiLine(text, patterns, fallback = "") {
+  const lines = String(text || "").split(/\n+/).map((line) => line.replace(/[*#`>-]/g, "").trim()).filter(Boolean);
+  for (const pattern of patterns) {
+    const found = lines.find((line) => line.includes(pattern));
+    if (found) return shortText(found.replace(/^[:：\s]+/, ""), 110);
+  }
+  return fallback;
+}
+
+function shortText(text, max = 80) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+function comboMatchdayReview(row) {
+  const odds = parseNumberLike(row.odds);
+  const prob = parseProbabilityLike(row.model_prob);
+  if (!Number.isFinite(odds) || odds <= 1 || !Number.isFinite(prob) || prob <= 0) return null;
+  const noValueBelow = 1 / prob;
+  const desiredMargin = prob < 0.20 ? 0.05 : 0.035;
+  const keepMin = prob > desiredMargin ? 1 / (prob - desiredMargin) : noValueBelow;
+  const reverseWatch = odds * (prob < 0.20 ? 1.15 : 1.10);
+  return {
+    keepMin: keepMin.toFixed(4),
+    noValueBelow: noValueBelow.toFixed(4),
+    reverseWatch: reverseWatch.toFixed(4),
+    keepMinText: keepMin.toFixed(2),
+    noValueBelowText: noValueBelow.toFixed(2),
+    reverseWatchText: reverseWatch.toFixed(2),
+    message_zh: `组合需要同时命中。当前组合概率约 ${fmtPct(prob)}，组合赔率至少要高于 ${noValueBelow.toFixed(2)} 才覆盖盈亏线；低于 ${keepMin.toFixed(2)} 时安全边际偏薄。`,
+  };
+}
+
+function parseNumberLike(value) {
+  if (typeof value === "number") return value;
+  const text = String(value || "").replace(/[,，¥￥]/g, "").trim();
+  const match = text.match(/-?\d+(\.\d+)?/);
+  return match ? Number.parseFloat(match[0]) : NaN;
+}
+
+function parseProbabilityLike(value) {
+  if (typeof value === "number") return value > 1 ? value / 100 : value;
+  const text = String(value || "").trim();
+  const parsed = parseNumberLike(text);
+  if (!Number.isFinite(parsed)) return NaN;
+  return text.includes("%") || parsed > 1 ? parsed / 100 : parsed;
+}
+
+function evaluateMatchdayOdds(button) {
+  const wrap = button.closest(".matchdayReviewTool");
+  if (!wrap) return;
+  const input = wrap.querySelector("input");
+  const output = wrap.querySelector(".matchdayReviewResult");
+  const current = Number.parseFloat((input && input.value || "").trim());
+  const keepMin = Number.parseFloat(button.dataset.keepMin || "");
+  const noValueBelow = Number.parseFloat(button.dataset.noValueBelow || "");
+  const reverseWatch = Number.parseFloat(button.dataset.reverseWatch || "");
+  if (!output) return;
+  if (!Number.isFinite(current) || current <= 1) {
+    output.textContent = "请输入大于 1.00 的临场赔率。";
+    output.dataset.status = "wait";
+    return;
+  }
+  if (Number.isFinite(noValueBelow) && current < noValueBelow) {
+    output.textContent = `复核结果：跳过。当前赔率 ${current.toFixed(2)} 已低于失去覆盖线 ${noValueBelow.toFixed(2)}，校准概率不再覆盖赔率。`;
+    output.dataset.status = "stop";
+    return;
+  }
+  if (Number.isFinite(keepMin) && current < keepMin) {
+    output.textContent = `复核结果：降级为弱观察。当前赔率 ${current.toFixed(2)} 低于保留观察线 ${keepMin.toFixed(2)}，安全边际变薄。`;
+    output.dataset.status = "downgrade";
+    return;
+  }
+  if (Number.isFinite(reverseWatch) && current >= reverseWatch) {
+    output.textContent = `复核结果：警惕反向漂移。当前赔率 ${current.toFixed(2)} 已高于 ${reverseWatch.toFixed(2)}，如果没有新增情报支持，应降级观察。`;
+    output.dataset.status = "watch";
+    return;
+  }
+  output.textContent = `复核结果：可继续观察。当前赔率 ${current.toFixed(2)} 尚未触发降级线，但仍要复核伤停、首发、天气和新闻面。`;
+  output.dataset.status = "keep";
+}
+
+function scoreGoalCards(rows, kind = "total", message = "暂无模型观察") {
+  if (!rows || !rows.length) return `<div class="emptyState">${C.escapeHtml(message)}</div>`;
+  return `<div class="scoreGoalGrid">${rows.slice(0, 6).map((row) => {
+    const title = row.match || "比赛";
+    const tag = row.direction || row.play_type || "观察";
+    const probability = row.model_prob || row.observation_confidence || "N/A";
+    const status = row.ev_status_zh || row.odds_status_zh || "仅模型概率";
+    const action = row.recommended_action_zh || (kind === "score" ? "只作比分倾向参考" : "观察比赛节奏");
+    const reliability = row.reliability_label_zh || row.confidence_label_zh || "谨慎";
+    const explanation = row.reliability_explanation_zh || row.why_zh || row.selection_reason || "该项由 Poisson/xG + Dixon-Coles 概率矩阵推导。";
+    const missing = row.missing_signals ? `缺失：${row.missing_signals}` : "";
+    return `
+      <article class="scoreGoalCard">
+        <div class="signalHead">
+          <strong>${C.escapeHtml(title)}</strong>
+          <span>${C.escapeHtml(tag)}</span>
+        </div>
+        <div class="scoreHeroMetric">
+          <div><span>模型概率</span><b>${C.escapeHtml(probability)}</b></div>
+          <div><span>赔率 / EV</span><b>${C.escapeHtml(status)}</b></div>
+          <div><span>可信度</span><b>${C.escapeHtml(reliability)}</b></div>
+        </div>
+        <p class="reasonLine">${C.escapeHtml(action)}</p>
+        <p class="mutedLine">${C.escapeHtml(explanation)}</p>
+        ${missing ? `<p class="mutedLine">${C.escapeHtml(missing)}</p>` : ""}
       </article>`;
   }).join("")}</div>`;
 }
@@ -169,7 +2125,10 @@ const rejectedComboColumns = [
   { key: "type", label: "类型" },
   { key: "legs", label: "组合" },
   { key: "odds", label: "组合赔率" },
+  { key: "break_even_prob", label: "盈亏线" },
   { key: "model_prob", label: "组合概率" },
+  { key: "safety_margin", label: "安全边际" },
+  { key: "combo_decision_label_zh", label: "组合判断" },
   { key: "market_prob", label: "市场概率" },
   { key: "ev", label: "EV" },
   { key: "edge", label: "Edge" },
@@ -180,47 +2139,763 @@ const rejectedComboColumns = [
 ];
 
 async function loadToday() {
+  renderTodayLoadingState();
   const payload = await request("/api/view/next-available", {
     provider: providerParam(),
     date: currentDateParam(),
     bankroll: bankrollParam(),
     risk_profile: riskProfileParam(),
-  }, "自动读取今日观察");
-  if (payload.ok) renderToday(payload.data);
+    external_signals: externalSignalsParam(),
+  }, "自动读取明日预观察");
+  if (payload.ok) {
+    renderToday(payload.data);
+    setAiAutoStatus("running", "比赛读取完成，准备自动研究", "Top 观察已更新；下一步会自动调用 DeepSeek Pro 生成研究摘要。");
+    maybeAutoRunAiResearch(payload.data);
+  } else {
+    renderWorkflowScore(null, "error");
+    setAiAutoStatus("error", "明日比赛读取失败", payload.error?.message || "请检查本地 API 或数据源状态。");
+  }
   switchView("today");
+}
+
+function aiProviderParam() {
+  const mode = value("#explainMode", "auto");
+  return mode === "auto" ? "auto" : mode;
+}
+
+function aiRunParam() {
+  const mode = value("#explainMode", "auto");
+  return mode === "local" ? "" : "1";
+}
+
+function maybeAutoRunAiResearch(view) {
+  const mode = value("#explainMode", "auto");
+  if (mode !== "auto") return;
+  const key = `${view?.selected_date || view?.date || "auto"}:${view?.matches_count || 0}:${view?.provider_used || "unknown"}`;
+  if (state.autoAiResearchKey === key) return;
+  state.autoAiResearchKey = key;
+  setAiAutoStatus("running", "DeepSeek Pro 自动研究中", "正在读取 Top 单关、每日 2串1 / 3串1候选和被拒原因，完成后会自动保存研究记录。");
+  const box = qs("#aiComboResearchBox");
+  if (box) {
+    box.innerHTML = `
+      <div class="aiRunningCard">
+        <span>DS Pro 自动研究</span>
+        <strong>正在进入 auto AI 研究层</strong>
+        <p>后端会自动判断 DS Pro 是否可用；可用就调用 DS Pro，不可用就改用本地研究摘要。AI 只做解释和复盘，不改概率和组合筛选。</p>
+      </div>
+    `;
+  }
+  window.setTimeout(() => loadAiComboResearch(), 250);
+}
+
+async function loadAiComboResearch() {
+  const explainMode = value("#explainMode", "auto");
+  const aiProvider = aiProviderParam();
+  const runAi = aiRunParam();
+  const box = qs("#aiComboResearchBox");
+  setAiAutoStatus("running", runAi ? "自动 AI 研究中" : "正在生成本地研究包", runAi ? "后端会自动选择 DS Pro 或本地研究摘要；AI 只做解释和学习摘要。" : "本地模式不会消耗 token。");
+  if (box) {
+    box.innerHTML = `
+      <div class="aiRunningCard">
+        <span>${runAi ? "DS Pro 自动研究" : "本地研究"}</span>
+        <strong>${runAi ? "自动 AI 研究中" : "正在生成本地研究包"}</strong>
+        <p>${runAi ? "后端会自动判断 DS Pro 是否可用；可用时才消耗 token 做长分析，否则改用本地研究摘要。AI 不参与概率、EV、候选筛选或组合决策。" : "本地模式不会消耗 token。"}</p>
+      </div>
+    `;
+  }
+  const payload = await request("/api/view/ai-combo-research", {
+    provider: providerParam(),
+    date: state.todayView?.selected_date || currentDateParam(),
+    bankroll: bankrollParam(),
+    risk_profile: riskProfileParam(),
+    external_signals: externalSignalsParam(),
+    ai_provider: aiProvider,
+    run: runAi,
+  }, runAi ? "自动生成 AI 组合研究摘要" : "生成本地组合研究包");
+  if (payload.ok) renderAiComboResearch(payload.data || {});
+  if (!payload.ok) setAiAutoStatus("fallback", "AI 研究未完成", payload.error?.message || "已保留本地研究摘要，可稍后重试。");
+  if (!payload.ok && box) {
+    box.innerHTML = `
+      <div class="emptyState">
+        DeepSeek Pro 自动研究未完成：${C.escapeHtml(payload.error?.message || "已保留本地研究摘要，请稍后重试。")}
+      </div>
+    `;
+  }
+}
+
+
+const AI_RESEARCH_MEMORY_KEY = "jcEdgeAiResearchMemoryV1";
+const WORKFLOW_ACTION_MEMORY_KEY = "jcEdgeWorkflowActionHistoryV1";
+const WORKFLOW_SCORE_MEMORY_KEY = "jcEdgeWorkflowScoreMemoryV1";
+
+function aiResearchDate(view) {
+  const packet = view.research_packet || {};
+  return packet.selected_date || packet.date || view.selected_date || currentDateParam() || "待定日期";
+}
+
+function summarizeComboLegs(candidate) {
+  if (!candidate) return "暂无";
+  return candidate.legs || candidate.match || candidate.label_zh || candidate.reason_zh || "暂无";
+}
+
+function readAiResearchMemory() {
+  try {
+    const raw = window.localStorage.getItem(AI_RESEARCH_MEMORY_KEY);
+    const rows = raw ? JSON.parse(raw) : [];
+    return Array.isArray(rows) ? rows.map(normalizeAiMemoryRecord) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function normalizeAiMemoryRecord(row) {
+  const record = row && typeof row === "object" ? row : {};
+  return {
+    schema_version: record.schema_version || "ai_memory_v1",
+    saved_at: record.saved_at || "",
+    selected_date: record.selected_date || "待定日期",
+    provider_used: record.provider_used || "unknown",
+    ai_provider: record.ai_provider || "local",
+    ai_status: record.ai_status || "unknown",
+    run_ai: Boolean(record.run_ai),
+    ds_call_count: Number(record.ds_call_count || 0),
+    ai_quality_grade: record.ai_quality_grade || "N/A",
+    ai_quality_score: record.ai_quality_score ?? "N/A",
+    ai_quality_source: record.ai_quality_source || "unknown",
+    top_coverage: record.top_coverage || "0/0",
+    top_coverage_message: record.top_coverage_message || "",
+    cache_key: record.cache_key || `${record.selected_date || "unknown"}|${record.ai_provider || "local"}`,
+    headline: record.headline || "今日研究摘要",
+    best_single: record.best_single || "暂无",
+    daily_2x1: record.daily_2x1 || "暂无",
+    daily_3x1: record.daily_3x1 || "暂无",
+    summary_preview: record.summary_preview || "",
+  };
+}
+
+function writeAiResearchMemory(rows) {
+  try {
+    window.localStorage.setItem(AI_RESEARCH_MEMORY_KEY, JSON.stringify(rows.slice(0, 12).map(normalizeAiMemoryRecord)));
+  } catch (error) {
+    // Browser localStorage may be unavailable; skip without blocking the app.
+  }
+}
+
+function readWorkflowActionHistory() {
+  try {
+    const raw = window.localStorage.getItem(WORKFLOW_ACTION_MEMORY_KEY);
+    const rows = raw ? JSON.parse(raw) : [];
+    return Array.isArray(rows) ? rows.map(normalizeWorkflowActionRecord).map(normalizePersistedWorkflowActionRecord).filter((row) => row.label) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function normalizeWorkflowActionRecord(row) {
+  const record = row && typeof row === "object" ? row : {};
+  const before = Number(record.score_before);
+  const after = Number(record.score_after);
+  const delta = Number(record.score_delta);
+  const label = String(record.label || "");
+  return {
+    action: String(record.action || workflowActionFromLabel(label)),
+    label,
+    message: String(record.message || ""),
+    status: ["running", "done", "error", "planned"].includes(record.status) ? record.status : "running",
+    time: String(record.time || ""),
+    saved_at: String(record.saved_at || ""),
+    score_before: Number.isFinite(before) ? before : null,
+    score_after: Number.isFinite(after) ? after : null,
+    score_delta: Number.isFinite(delta) ? delta : null,
+  };
+}
+
+function workflowActionFromLabel(label = "") {
+  const actions = {
+    "数据源": "refresh_today",
+    "Top信号": "run_optimizer",
+    "组合纪律": "best_parlay",
+    "AI研究": "ai_research",
+    "赛后学习": "learning_pack",
+    "下一次实验": "next_experiment_plan",
+  };
+  return actions[label] || "";
+}
+
+function normalizePersistedWorkflowActionRecord(row = {}) {
+  if (row.status !== "running") return row;
+  return {
+    ...row,
+    status: "error",
+    message: "上次页面刷新或关闭前未确认完成，请按需重试。",
+  };
+}
+
+function writeWorkflowActionHistory(rows) {
+  try {
+    window.localStorage.setItem(WORKFLOW_ACTION_MEMORY_KEY, JSON.stringify((rows || []).slice(0, 6).map(normalizeWorkflowActionRecord)));
+  } catch (error) {
+    // Browser localStorage may be unavailable; skip without blocking the app.
+  }
+}
+
+function saveAiResearchMemory(view, text) {
+  const packet = view.research_packet || {};
+  const ai = view.ai_summary || {};
+  const qualityAudit = (view.structured_notes || {}).quality_audit || {};
+  const costLedger = view.ai_cost_ledger || {};
+  const topCoverage = qualityAudit.top_card_coverage || {};
+  const selectedDate = aiResearchDate(view);
+  const aiProvider = ai.provider || view.ai_provider || packet.ai_provider || "local";
+  const aiStatus = view.ds_status || ai.ds_status || ai.status || view.ai_status || packet.ai_status || "unknown";
+  const cacheKey = `${selectedDate}|${packet.provider_used || view.provider_used || "unknown"}|${aiProvider}`;
+  const cards = buildAiBriefCards(view, text);
+  const record = {
+    schema_version: "ai_memory_v2",
+    saved_at: new Date().toLocaleString("zh-CN", { hour12: false }),
+    selected_date: selectedDate,
+    provider_used: packet.provider_used || view.provider_used || "unknown",
+    ai_provider: aiProvider,
+    ai_status: aiStatus,
+    run_ai: Boolean(view.run_ai || packet.run_ai),
+    ds_call_count: costLedger.deepseek_call_count ?? 0,
+    ai_quality_grade: qualityAudit.grade || "N/A",
+    ai_quality_score: qualityAudit.score ?? "N/A",
+    ai_quality_source: qualityAudit.structured_source || "unknown",
+    top_coverage: `${topCoverage.matched_count ?? 0}/${topCoverage.expected_count ?? 0}`,
+    top_coverage_message: topCoverage.message_zh || "",
+    cache_key: cacheKey,
+    headline: cards[0]?.value || "今日研究摘要",
+    best_single: summarizeComboLegs(packet.best_single || packet.top_single || packet.daily_single_candidate),
+    daily_2x1: summarizeComboLegs(packet.daily_2x1_candidate || packet.best_2x1),
+    daily_3x1: summarizeComboLegs(packet.daily_3x1_candidate || packet.best_3x1),
+    summary_preview: shortText(text || view.local_summary_zh || view.ai_summary_zh || "", 260),
+  };
+  const rows = readAiResearchMemory().filter((item) => item.cache_key !== cacheKey);
+  writeAiResearchMemory([record, ...rows]);
+  renderAiResearchMemory();
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  const usedDeepSeek = aiProvider === "deepseek" && aiStatus === "loaded";
+  setAiAutoStatus(
+    usedDeepSeek ? "done" : "fallback",
+    usedDeepSeek ? "DS Pro 研究已完成" : "本地研究摘要已完成",
+    usedDeepSeek ? "摘要已自动保存到每日 AI 研究记录，赛后可对照学习。" : "没有使用外部 AI 或外部 AI 不可用；摘要仍会保存在本地记录。"
+  );
+}
+
+function renderAiResearchMemory() {
+  const panel = qs("#aiResearchMemoryPanel");
+  if (!panel) return;
+  const rows = readAiResearchMemory();
+  if (!rows.length) {
+    panel.innerHTML = `<div class="researchMemoryEmpty">每日 AI 研究记录会在刷新后自动保存在本浏览器，用于赛后对照学习。</div>`;
+    return;
+  }
+  const trend = aiResearchTrendDetails(rows.slice(0, 6));
+    panel.innerHTML = `
+    <div class="researchMemoryHead">
+      <div><span>本地记录</span><strong>每日 AI 研究记录</strong></div>
+      <em>仅保存在本机浏览器，最多保留 12 条。</em>
+    </div>
+    <article class="aiTrendCard ${C.escapeHtml(trend.status || "watch")}">
+      <span>AI 学习趋势</span>
+      <strong>${C.escapeHtml(trend.title || "AI 研究趋势")}</strong>
+      <p>${C.escapeHtml(trend.message || "")}</p>
+      ${Array.isArray(trend.metricCards) ? `
+        <div class="aiTrendMetrics">
+          ${trend.metricCards.map((metric) => `
+            <article>
+              <span>${C.escapeHtml(metric.label)}</span>
+              <b>${C.escapeHtml(metric.value)}</b>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+      ${Array.isArray(trend.scoreEffects) && trend.scoreEffects.length ? `
+        <div class="aiTrendEffects">
+          ${trend.scoreEffects.slice(0, 4).map((effect) => `
+            <div>
+              <b>${C.escapeHtml(effect.label)}</b>
+              <span>${C.escapeHtml(effect.text)}</span>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+      ${Array.isArray(trend.todos) && trend.todos.length ? `
+        <ul class="aiTrendTodos">
+          ${trend.todos.map((todo) => `<li>${C.escapeHtml(todo)}</li>`).join("")}
+        </ul>
+      ` : ""}
+      <em>${C.escapeHtml(trend.next || "")}</em>
+      <div class="aiTrendActions">
+        <button type="button" class="secondary" onclick="${trend.status === "good" ? "switchView('learning')" : "loadAiComboResearch()"}">${C.escapeHtml(trend.primaryAction || "重新跑 auto 研究")}</button>
+        <button type="button" class="ghost" onclick="${trend.status === "good" ? "loadAiComboResearch()" : "switchView('learning')"}">${C.escapeHtml(trend.secondaryAction || "去赛后学习")}</button>
+      </div>
+    </article>
+    <div class="researchMemoryGrid">${rows.slice(0, 3).map((row) => `
+      <article class="researchMemoryCard">
+        <div><span>${C.escapeHtml(row.selected_date || "待定日期")}</span><b>${C.escapeHtml(row.ai_provider || "local")} · ${C.escapeHtml(row.ai_status || "unknown")}</b></div>
+        <strong>${C.escapeHtml(row.headline || "今日研究摘要")}</strong>
+        <p>${C.escapeHtml(row.summary_preview || "暂无摘要")}</p>
+        <div class="researchMemoryMeta">
+          <span>DS ${C.escapeHtml(row.ds_call_count ?? 0)} 次</span>
+          <span>质量 ${C.escapeHtml(row.ai_quality_grade || "N/A")} / ${C.escapeHtml(row.ai_quality_score ?? "N/A")}</span>
+          <span>Top ${C.escapeHtml(row.top_coverage || "0/0")}</span>
+        </div>
+        <ul>
+          <li>单关：${C.escapeHtml(shortText(row.best_single || "暂无", 54))}</li>
+          <li>2串1：${C.escapeHtml(shortText(row.daily_2x1 || "暂无", 54))}</li>
+          <li>3串1：${C.escapeHtml(shortText(row.daily_3x1 || "暂无", 54))}</li>
+        </ul>
+        ${row.top_coverage_message ? `<p class="mutedLine">${C.escapeHtml(row.top_coverage_message)}</p>` : ""}
+        <em>${C.escapeHtml(row.saved_at || "")} · 赛后可到“赛后学习”对照。</em>
+      </article>
+    `).join("")}</div>
+  `;
+}
+
+function renderAiComboResearch(view) {
+  const box = qs("#aiComboResearchBox");
+  if (!box) return;
+  const ai = view.ai_summary || {};
+  const aiStatus = view.ai_research_status || (view.llm_status || {}).ai_research_status || {};
+  const budget = view.token_budget || {};
+  const autoPolicy = view.auto_policy || {};
+  const autoPlan = view.auto_execution_plan || {};
+  const qualityAudit = (view.structured_notes || {}).quality_audit || {};
+  const structuredRetry = ai.structured_retry || {};
+  const coverageRetry = ai.structured_coverage_retry || {};
+  const costLedger = view.ai_cost_ledger || {};
+  const text = ai.text || view.local_summary_zh || "暂无摘要。";
+  const briefCards = buildAiBriefCards(view, text);
+  state.latestAiResearch = {
+    provider: ai.provider || view.ai_provider_resolved || autoPolicy.resolved_provider || "local",
+    status: aiStatus.status || view.ds_status || ai.ds_status || ai.status || "unknown",
+    ds_completed: Boolean(view.ds_completed || ai.ds_completed || (ai.provider === "deepseek" && ai.status === "loaded")),
+    ai_research_status: aiStatus,
+    auto_mode: autoPlan.mode || autoPolicy.mode || "local",
+    structured_notes: view.structured_notes || {},
+    quality_audit: qualityAudit,
+    cards: briefCards,
+    full_text: text,
+    title: briefCards[0]?.title || "今日研究摘要",
+    body: briefCards[0]?.body || shortText(text, 180),
+  };
+  box.innerHTML = `
+    <div class="aiBriefGrid">
+      ${briefCards.map((card) => `
+        <article class="aiBriefCard">
+          <span>${C.escapeHtml(card.kicker)}</span>
+          <strong>${C.escapeHtml(card.title)}</strong>
+          <p>${C.escapeHtml(card.body)}</p>
+        </article>
+      `).join("")}
+    </div>
+    <details class="tokenLedger">
+      <summary>DeepSeek / auto 研究账本</summary>
+      ${autoPolicy.message_zh ? `
+        <div>
+          <span>auto 解析</span>
+          <strong>${C.escapeHtml(autoPolicy.resolved_provider || ai.provider || "local")}</strong>
+          <p>${C.escapeHtml(autoPolicy.message_zh || "")}</p>
+          <p class="mutedLine">${C.escapeHtml(autoPolicy.scope_zh || "AI 只做解释和复盘，不改写概率、EV 或组合筛选。")}</p>
+        </div>
+      ` : ""}
+      ${Array.isArray(autoPlan.steps) && autoPlan.steps.length ? `
+        <div>
+          <span>auto 流水线</span>
+          <strong>${C.escapeHtml(autoPlan.mode || "auto")}</strong>
+          <div class="autoPlanSteps">
+            ${autoPlan.steps.map((step) => `
+              <article class="autoPlanStep ${C.escapeHtml(step.status || "pending")}">
+                <b>${C.escapeHtml(step.name || "自动步骤")}</b>
+                <em>${C.escapeHtml(step.status || "unknown")}</em>
+                <p>${C.escapeHtml(step.message_zh || "")}</p>
+              </article>
+            `).join("")}
+          </div>
+          <p class="mutedLine">${C.escapeHtml(autoPlan.token_policy_zh || "只有 DS Pro 就绪时才消耗 token。")}</p>
+        </div>
+      ` : ""}
+      ${qualityAudit.score !== undefined ? `
+        <div>
+          <span>AI 结构化质量</span>
+          <strong>${C.escapeHtml(qualityAudit.grade || "N/A")} / ${C.escapeHtml(qualityAudit.score)}</strong>
+          <p>${C.escapeHtml(qualityAudit.message_zh || "结构化研究质量待评估。")}</p>
+          <div class="tokenLedgerGrid">
+            <article><span>覆盖项</span><b>${C.escapeHtml(`${qualityAudit.covered_count ?? 0}/${qualityAudit.required_count ?? 0}`)}</b></article>
+            <article><span>来源</span><b>${C.escapeHtml(qualityAudit.structured_source || "unknown")}</b></article>
+            <article><span>兜底</span><b>${C.escapeHtml(qualityAudit.fallback_used ? "是" : "否")}</b></article>
+            <article><span>Top覆盖</span><b>${C.escapeHtml(`${qualityAudit.top_card_coverage?.matched_count ?? 0}/${qualityAudit.top_card_coverage?.expected_count ?? 0}`)}</b></article>
+          </div>
+          ${qualityAudit.top_card_coverage?.missing_targets?.length ? `
+            <p class="mutedLine">未覆盖 Top 项：${C.escapeHtml(qualityAudit.top_card_coverage.missing_targets.slice(0, 4).join("；"))}</p>
+          ` : ""}
+        </div>
+      ` : ""}
+      ${structuredRetry.attempted ? `
+        <div>
+          <span>结构化短重试</span>
+          <strong>${C.escapeHtml(structuredRetry.success ? "已补齐" : "已兜底")}</strong>
+          <p>${C.escapeHtml(structuredRetry.message_zh || "DS 结构化短重试已执行。")}</p>
+        </div>
+      ` : ""}
+      ${coverageRetry.attempted ? `
+        <div>
+          <span>Top 覆盖补洞</span>
+          <strong>${C.escapeHtml(coverageRetry.success ? "已补洞" : "已兜底")}</strong>
+          <p>${C.escapeHtml(coverageRetry.message_zh || "DS Top 覆盖补洞已执行。")}</p>
+        </div>
+      ` : ""}
+      ${costLedger.version ? `
+        <div>
+          <span>AI 成本账本</span>
+          <strong>${C.escapeHtml(`${costLedger.deepseek_call_count ?? 0} 次 DS Pro`)}</strong>
+          <p>${C.escapeHtml(costLedger.message_zh || "本次 AI 调用账本已记录。")}</p>
+          <div class="tokenLedgerGrid">
+            <article><span>调用步骤</span><b>${C.escapeHtml(costLedger.call_count ?? 0)}</b></article>
+            <article><span>实际输入</span><b>${C.escapeHtml(costLedger.actual_input_tokens ?? "N/A")}</b></article>
+            <article><span>实际输出</span><b>${C.escapeHtml(costLedger.actual_output_tokens ?? "N/A")}</b></article>
+            <article><span>实际合计</span><b>${C.escapeHtml(costLedger.actual_total_tokens ?? "N/A")}</b></article>
+            <article><span>输入估算</span><b>${C.escapeHtml(costLedger.estimated_input_tokens ?? "N/A")}</b></article>
+            <article><span>输出上限/次</span><b>${C.escapeHtml(costLedger.max_output_tokens_per_call ?? "N/A")}</b></article>
+            <article><span>预算状态</span><b>${C.escapeHtml(costLedger.within_auto_budget ? "预算内" : "超预算")}</b></article>
+            <article><span>单次上界</span><b>${C.escapeHtml(costLedger.per_call_upper_bound_tokens ?? "N/A")}</b></article>
+            <article><span>总上界</span><b>${C.escapeHtml(costLedger.estimated_upper_bound_tokens ?? "N/A")}</b></article>
+          </div>
+          <p class="mutedLine">${C.escapeHtml(costLedger.estimate_policy_zh || "这是 token 上限估算，不是实际账单。")}</p>
+          ${Array.isArray(costLedger.calls) && costLedger.calls.length ? `
+            <ul class="aiCostCalls">
+              ${costLedger.calls.map((call) => `<li><b>${C.escapeHtml(call.step || "step")}</b> · ${C.escapeHtml(call.status || "unknown")} · ${C.escapeHtml(call.reason_zh || "")}</li>`).join("")}
+            </ul>
+          ` : ""}
+        </div>
+      ` : ""}
+      <div>
+        <span>调用状态</span>
+        <strong>${C.escapeHtml(aiStatus.label_zh || (view.ds_completed || ai.provider === "deepseek" ? "本次已调用 DeepSeek Pro" : "本次未调用 DeepSeek Pro"))}</strong>
+        <p>${C.escapeHtml(aiStatus.summary_zh || view.fallback_reason || ai.fallback_reason || view.auto_mode_semantics_zh || view.token_learning_zh || "自动研究模式会在刷新后自动尝试调用 DeepSeek Pro；本地研究摘要不消耗 token。")}</p>
+        ${(view.token_total || ai.token_total) ? `<em>本次真实消耗：输入 ${C.escapeHtml(view.token_in ?? ai.token_in ?? "N/A")} / 输出 ${C.escapeHtml(view.token_out ?? ai.token_out ?? "N/A")} / 合计 ${C.escapeHtml(view.token_total ?? ai.token_total ?? "N/A")} token</em>` : ""}
+      </div>
+      <div class="tokenLedgerGrid">
+        <article><span>预计输入</span><b>${C.escapeHtml(budget.estimated_input_tokens ?? "N/A")}</b></article>
+        <article><span>输出上限</span><b>${C.escapeHtml(budget.max_output_tokens ?? "N/A")}</b></article>
+        <article><span>最大合计</span><b>${C.escapeHtml(budget.estimated_max_total_tokens ?? "N/A")}</b></article>
+        <article><span>缓存键</span><b>${C.escapeHtml(budget.research_cache_key || "local")}</b></article>
+      </div>
+      <p class="mutedLine">${C.escapeHtml(budget.cost_control_zh || "自动研究模式默认用 DeepSeek Pro 做研究解释；失败时自动改用本地研究摘要。")}</p>
+      ${view.no_combo_reason ? `<div class="insightCard">
+        <strong>当前为何暂不组合</strong>
+        <p>${C.escapeHtml(view.no_combo_reason)}</p>
+      </div>` : ""}
+      ${(view.latest_daily_summary_zh || (Array.isArray(view.window_learning_summaries_zh) && view.window_learning_summaries_zh.length)) ? `
+        <div class="insightCard">
+          <strong>赛后学习快照</strong>
+          ${view.latest_daily_summary_zh ? `<p>${C.escapeHtml(view.latest_daily_summary_zh)}</p>` : ""}
+          ${Array.isArray(view.window_learning_summaries_zh) && view.window_learning_summaries_zh.length ? C.list(view.window_learning_summaries_zh.slice(0, 2)) : ""}
+        </div>
+      ` : ""}
+    </details>
+    <details class="fullResearchDrawer">
+      <summary>查看完整研究原文</summary>
+      <pre class="researchSummary">${C.escapeHtml(text)}</pre>
+      <h4>研究边界</h4>
+      ${C.list([
+        view.safety_zh || "AI 只做研究解释，不参与真实下单。",
+        `AI 状态：${aiStatus.label_zh || ai.provider || "local"} / ${aiStatus.status || view.ds_status || ai.ds_status || ai.status || "not_requested"}`,
+        view.no_combo_reason ? `暂不组合原因：${view.no_combo_reason}` : "",
+        ((view.credibility_gate || {}).reason_zh) ? `可信度门控：${(view.credibility_gate || {}).reason_zh}` : "",
+        aiStatus.summary_zh || view.fallback_reason || ai.fallback_reason || "当前没有额外回退说明。",
+        (view.research_packet || {}).task_zh || "判断今天是否存在可研究组合。",
+      ].filter(Boolean))}
+    </details>
+  `;
+  saveAiResearchMemory(view, text);
+  if (state.todayView) {
+    renderTodayOneLook(state.todayView);
+    renderTodayTopSections(state.todayView);
+  }
+}
+
+function buildAiBriefCards(view, text) {
+  const structured = view.structured_notes || {};
+  const structuredCards = buildStructuredAiBriefCards(structured);
+  if (structuredCards.length) return structuredCards;
+  const packet = view.research_packet || {};
+  const findLine = (patterns, fallback) => {
+    const lines = String(text || "").split(/\n+/).map((line) => line.replace(/[*#`>-]/g, "").trim()).filter(Boolean);
+    for (const pattern of patterns) {
+      const found = lines.find((line) => line.includes(pattern));
+      if (found) return found.replace(/^[:：\s]+/, "");
+    }
+    return fallback;
+  };
+  const bestSingle = packet.best_single?.match || packet.top_single?.match || findLine(["优先单关", "当前“优先”单关", "当前优先单关"], "先看 Top 单关，但需要赔率、情报和校准同时支持。");
+  const closestCombo = packet.daily_2x1_candidate?.legs || packet.closest_2x1?.legs || packet.best_2x1?.legs || findLine(["每日 2串1候选", "最接近的 2", "最接近 2串1", "2 串 1"], "若 2串1 未过门控，只保留为被拒复盘对象。");
+  const closestCombo3 = packet.daily_3x1_candidate?.legs || packet.best_3x1?.legs || findLine(["每日 3串1候选", "3 串 1", "3串1"], "3串1 只作最高风险纸面候选。");
+  const noCombo = view.no_combo_reason || packet.no_combo_reason || findLine(["不强行组合", "不存在任何", "被拒"], "没有通过可信度、赔率覆盖和风险纪律时，不强行拼组合。");
+  const missing = findLine(["伤停", "首发", "天气", "新闻"], "临场必须复核伤停、首发、天气、新闻面和赔率漂移。");
+  return [
+    {
+      kicker: "今日结论",
+      title: cleanAiTitle(findLine(["核心结论", "今日不强行组合", "不强行组合", "强观察"], "先看信号，不强行组合")),
+      body: noCombo,
+    },
+    {
+      kicker: "最强观察",
+      title: cleanAiTitle(bestSingle),
+      body: missing,
+    },
+    {
+      kicker: "组合纪律",
+      title: "组合纪律",
+      body: `2串1：${closestCombo}；3串1：${closestCombo3}`,
+    },
+  ];
+}
+
+function buildStructuredAiBriefCards(structured) {
+  if (!structured || !structured.version) return [];
+  const single = (structured.single_notes || [])[0] || {};
+  const combo = (structured.combo_notes || [])[0] || {};
+  return [
+    {
+      kicker: "今日结论",
+      title: cleanAiTitle(structured.daily_summary_zh || "先看信号，不强行组合"),
+      body: structured.missing_review_zh || "赛日前继续复核关键情报。",
+    },
+    {
+      kicker: "最强观察",
+      title: cleanAiTitle(single.target || "Top 单关"),
+      body: single.note_zh || single.usage_zh || "先看赔率覆盖与临场复核。",
+    },
+    {
+      kicker: "组合纪律",
+      title: cleanAiTitle(combo.target || "Top 2串1"),
+      body: combo.note_zh || combo.usage_zh || "组合必须通过可信度、相关性和风险纪律。",
+    },
+  ];
+}
+
+function cleanAiTitle(text) {
+  const value = String(text || "").replace(/^核心结论[:：]?\s*/, "").trim();
+  return value.length > 34 ? `${value.slice(0, 34)}…` : value;
+}
+
+function buildTodaySignalLight(view, single, combo, combo3) {
+  const gate = view.credibility_gate || view.credibility_audit?.credibility_gate || {};
+  const score = Number(view.credibility_audit?.credibility_score ?? view.credibility_score ?? gate.score ?? 0);
+  const hasSelectedCombo = [combo, combo3].some((row) => row && row.status === "入选");
+  const hasSingle = Boolean(single && (single.match || single.direction));
+  if (gate.combo_gate === "open" && hasSelectedCombo && score >= 65) {
+    return {
+      level: "strong",
+      label: "强观察",
+      title: "有组合通过纪律",
+      body: "先看入选组合，再逐腿复核赔率、伤停、首发和天气。",
+    };
+  }
+  if (hasSingle && score >= 50) {
+    return {
+      level: "watch",
+      label: "弱观察",
+      title: "先看单关，不强行串联",
+      body: gate.reason_zh || "有单关可继续观察，但组合仍需要更高可信度和临场确认。",
+    };
+  }
+  if (hasSingle) {
+    return {
+      level: "wait",
+      label: "等待情报",
+      title: "有候选，但可信度不足",
+      body: gate.reason_zh || "先补齐伤停、首发、天气、新闻面和终盘赔率，再复核。",
+    };
+  }
+  return {
+    level: "pass",
+    label: "放弃",
+    title: "暂无可用观察",
+    body: "没有足够赔率价值或可信度支撑，今天先跳过。",
+  };
+}
+
+function reasonTags(text) {
+  const value = String(text || "");
+  const tags = [];
+  if (/可信度|信心|情报/.test(value)) tags.push("可信度不足");
+  if (/伤停|首发|天气|新闻|战意|旅行/.test(value)) tags.push("情报缺口");
+  if (/相关性/.test(value)) tags.push("相关性折扣");
+  if (/风险|very_high|高风险/.test(value)) tags.push("风险偏高");
+  if (/命中概率|纪律门槛/.test(value)) tags.push("命中率不足");
+  if (/EV 不足|Edge 不足|安全边际/.test(value)) tags.push("优势偏薄");
+  return Array.from(new Set(tags)).slice(0, 4);
+}
+
+function renderTodayOneLook(view) {
+  const box = qs("#todayOneLook");
+  if (!box) return;
+  const single = (view.top_singles || [])[0] || {};
+  const combo = (view.top_parlay_2x1 || view.top_2x1 || view.top_2x1_display || [])[0] || {};
+  const combo3 = (view.top_3x1 || view.top_3x1_display || [])[0] || {};
+  const totalGoal = (view.top_total_goals || view.total_goals || [])[0] || {};
+  const score = (view.top_scores || view.scores || [])[0] || {};
+  const gate = view.credibility_gate || view.credibility_audit?.credibility_gate || {};
+  const credibility = view.credibility_audit?.credibility_score ?? view.credibility_score ?? "N/A";
+  const missing = view.missing_information || view.missing_signals || view.intelligence_completeness?.missing_items || [];
+  const missingText = Array.isArray(missing) ? missing.slice(0, 5).join("、") : String(missing || "伤停、首发、天气、新闻面");
+  const comboLabel = combo.legs || combo.match || gate.label_zh || "暂无合格 2串1";
+  const comboReason = combo.combo_action_zh || combo.reject_reason || gate.reason_zh || "当前不强行组合，先看单关和临场复核。";
+  const signalLight = buildTodaySignalLight(view, single, combo, combo3);
+  const topTags = reasonTags(`${comboReason} ${combo3.reject_reason || ""} ${gate.reason_zh || ""}`);
+  const aiLayer = view.ai_research_layer || {};
+  const aiDigest = state.latestAiResearch || {};
+  const aiTitle = aiDigest.title || (aiLayer.runtime_status === "loaded" ? "DS Pro 已参与研究" : (aiLayer.enabled ? "DS Pro 可自动研究" : (aiLayer.status_zh || "本地研究摘要")));
+  const aiBody = aiDigest.body || aiLayer.runtime_notice_zh || aiLayer.display_status_zh || aiLayer.message_zh || "DS Pro 可用时会自动总结为什么看、为什么不串、赛后要学习什么；不可用时回退本地摘要。";
+  const learningDigest = view.daily_learning_digest || view.learning_panel?.daily_digest || {};
+  const learningReport = view.daily_learning_report || view.learning_panel?.daily_report || {};
+  const learningSummary = learningDigest.summary_zh || view.daily_learning_summary_zh || view.learning_panel?.latest_daily_summary_zh || "赛后摘要待累计。";
+  const learningVerdict = learningDigest.verdict_zh || learningDigest.next_step_zh || "赛后补比分与收盘赔率后，再看长期学习是否改善。";
+  const learningWindows = view.window_learning_summaries_zh || view.learning_panel?.window_summaries_zh || [];
+  const learningHeadline = learningReport.headline_zh || learningDigest.headline_zh || "赛后学习待累计";
+  const learningCardValue = learningDigest.verdict_zh || learningHeadline;
+  const learningCardHelp = (learningReport.paragraphs_zh || [])[0] || learningSummary;
+  const windowCardValue = (learningWindows[0] || "").replace(/^近\d+[天周月季度年]+\s*/, "") || "区间复盘待累计";
+  const windowCardHelp = learningDigest.next_step_zh || "赛后持续累计 Brier、Log Loss、ROI 和 CLV，才能判断长期稳定性。";
+  const comboSummary = view.combo_gate_summary_zh || gate.reason_zh || comboReason;
+  const noComboReason = view.no_combo_reason || gate.reason_zh || comboReason;
+  const gateMode = String(gate.combo_gate || "");
+  const disciplineTitle = gateMode === "open"
+    ? "当前允许正常筛选组合"
+    : gateMode === "restricted"
+      ? "当前只建议低风险 2串1"
+      : "当前暂不强行串联";
+  const disciplineBody = gateMode === "open"
+    ? "可信度、风险和情报覆盖暂时允许继续看组合，但仍要先看单关质量。"
+    : gateMode === "restricted"
+      ? "可信度还不够高，只适合继续观察低风险 2串1，不建议放大组合腿数。"
+      : noComboReason || "当前更适合先观察单关、进球节奏和临场情报，不建议强行做组合。";
+  const aiStateLine = aiLayer.ds_completed
+    ? `DS 已参与 · 合计 ${aiLayer.last_token_total ?? aiLayer.token_total ?? "N/A"} token`
+    : aiLayer.ds_attempted
+      ? `DS 已尝试但未完成 · ${aiLayer.last_error_label_zh || aiLayer.ds_error_code || "已回退本地摘要"}`
+      : (aiLayer.display_status_zh || aiLayer.runtime_status_zh || aiLayer.status_zh || "待检查");
+  box.innerHTML = `
+    <article class="oneLookHero signalLight signalLight-${C.escapeHtml(signalLight.level)}">
+      <span>今日总灯</span>
+      <div class="signalLightRow">
+        <b>${C.escapeHtml(signalLight.label)}</b>
+        <strong>${C.escapeHtml(signalLight.title)}</strong>
+      </div>
+      <p>${C.escapeHtml(signalLight.body)}</p>
+      <div class="coachDecision">${C.escapeHtml(disciplineTitle)}</div>
+      <p>${C.escapeHtml(disciplineBody)}</p>
+      ${topTags.length ? `<div class="reasonTags">${topTags.map((tag) => `<em>${C.escapeHtml(tag)}</em>`).join("")}</div>` : ""}
+    </article>
+    <div class="oneLookGrid">
+      <article>
+        <span>今日结论</span>
+        <strong>${C.escapeHtml(disciplineTitle)}</strong>
+        <p>${C.escapeHtml(disciplineBody)}</p>
+      </article>
+      <article>
+        <span>Top 单关</span>
+        <strong>${C.escapeHtml(single.match || "暂无强单关")}</strong>
+        <p>${C.escapeHtml(single.play_type || "玩法")} · ${C.escapeHtml(single.direction || "方向")} · ${C.escapeHtml(single.decision_label_zh || single.signal_category_zh || "待复核")}</p>
+      </article>
+      <article>
+        <span>2串1纪律</span>
+        <strong>${C.escapeHtml(comboLabel)}</strong>
+        <p>${C.escapeHtml(comboReason)}</p>
+      </article>
+      <article>
+        <span>3串1纸面候选</span>
+        <strong>${C.escapeHtml(combo3.legs || combo3.match || "暂无可排序 3串1")}</strong>
+        <p>${C.escapeHtml(combo3.reject_reason || combo3.discipline_summary_zh || "3串1 是最高风险组合，只作为纸面候选和被拒复盘。")}</p>
+      </article>
+      <article>
+        <span>进球节奏</span>
+        <strong>${C.escapeHtml(totalGoal.match || totalGoal.direction || "只作倾向参考")}</strong>
+        <p>${C.escapeHtml(totalGoal.recommended_action_zh || totalGoal.reliability_explanation_zh || "总进球用于判断节奏，不当作强信号。")}</p>
+      </article>
+      <article>
+        <span>比分倾向</span>
+        <strong>${C.escapeHtml(score.match || score.direction || "高波动参考")}</strong>
+        <p>${C.escapeHtml(score.recommended_action_zh || score.reliability_explanation_zh || "比分预测波动大，只看 Top 倾向。")}</p>
+      </article>
+      <article class="aiDigestOneLook">
+        <span>${C.escapeHtml(aiDigest.provider === "deepseek" ? "DS Pro 研究" : "AI 研究摘要")}</span>
+        <strong>${C.escapeHtml(aiTitle)}</strong>
+        <p>${C.escapeHtml(aiBody)}</p>
+        <em>${C.escapeHtml(aiStateLine)}</em>
+        ${aiLayer.next_step_zh ? `<em>${C.escapeHtml(aiLayer.next_step_zh)}</em>` : ""}
+        ${aiDigest.quality_audit?.message_zh ? `<em>${C.escapeHtml(aiDigest.quality_audit.grade || "N/A")} · ${C.escapeHtml(aiDigest.quality_audit.message_zh)}</em>` : ""}
+        ${aiDigest.quality_audit?.top_card_coverage?.message_zh ? `<em>${C.escapeHtml(aiDigest.quality_audit.top_card_coverage.message_zh)}</em>` : ""}
+        ${!aiDigest.title && aiLayer.fallback_reason ? `<em>${C.escapeHtml(aiLayer.fallback_reason)}</em>` : ""}
+      </article>
+    </div>
+    <div class="oneLookFooter">
+      <b>可信度 ${C.escapeHtml(String(credibility))}/100</b>
+      <span>串联纪律：${C.escapeHtml(comboSummary)}</span>
+      <span>暂不组合：${C.escapeHtml(noComboReason)}</span>
+      <span>AI 状态：${C.escapeHtml(aiStateLine)}</span>
+      <span>赛后学习：${C.escapeHtml((learningReport.paragraphs_zh || [])[0] || learningSummary)}</span>
+      <span>学习结论：${C.escapeHtml(learningVerdict)}</span>
+      ${learningWindows[0] ? `<span>区间复盘：${C.escapeHtml(learningWindows[0])}</span>` : ""}
+      <span>主要待补：${C.escapeHtml(missingText || "伤停、首发、天气、新闻面")}</span>
+    </div>
+  `;
 }
 
 function renderToday(view) {
   state.todayView = view;
+  const workflow = view.prematch_workflow || {};
+  const aiStatus = todayAiStatus(view);
+  const aiStatusLabel = aiStatus.label_zh || view.ai_research_layer?.runtime_status_zh || view.ai_research_layer?.status_zh || "待检查";
+  const aiStatusSummary = todayAiStatusSummary(view);
+  renderLearningPanel(view.learning_panel || {});
+  renderSignalCategorySummary(view.top_singles || []);
+  const pendingConfirmations = workflow.pending_confirmations || [];
+  renderMatchdayChecklist(view.top_singles || [], pendingConfirmations);
+  const focusNote = qs(".todayFocusNote");
+  if (focusNote) {
+    focusNote.innerHTML = `
+      <strong>${C.escapeHtml(workflow.stage_label_zh || "T+1 明日预观察")}</strong>
+      ${C.escapeHtml(workflow.headline_zh || "先看 Top 单关，再看每日 2串1 / 3串1 纸面候选；总进球和比分只作节奏/倾向参考。")}
+      <br><span>${C.escapeHtml(workflow.combo_policy_zh || "T+1 阶段给候选榜，但不强行升级为最终串联。")}</span>
+    `;
+  }
+  renderTodayOneLook(view);
+  renderWorkflowScore(view, "ready");
+  renderScanCalendar(view);
+  renderExternalSignalsStrip(view);
+  renderTodayComboBoard(view.combo_user_board || {}, view.ai_research_layer || {});
   qs("#todayCards").classList.remove("skeletonBlock");
   qs("#todayCards").innerHTML = C.cards([
-    { label: "selected_date", value: view.selected_date || "N/A", help: "自动尝试 today 到 today+3 后选中的日期。" },
-    { label: "可售比赛数", value: view.matches_count ?? 0, help: "当前找到的可售竞彩足球比赛数量。" },
-    { label: "provider_used", value: view.provider_used || "unknown", help: "实际数据源，Sporttery 失败时会标记 fallback。" },
-    { label: "情报完整度", value: `${view.intelligence_completeness?.score ?? "N/A"}/100`, help: view.intelligence_completeness?.summary_zh || "按赔率、赛程、球队、伤停、首发、天气等评分。" },
-    { label: "可信度评分", value: `${view.credibility_audit?.credibility_score ?? "N/A"}/100`, help: view.credibility_audit?.reasons?.[0] || "综合数据源、缺失情报、模型一致性与风险质量。" },
-    { label: "可信度门控", value: view.credibility_gate?.label_zh || view.credibility_audit?.credibility_gate?.label_zh || "N/A", help: view.credibility_gate?.reason_zh || view.credibility_audit?.credibility_gate?.reason_zh || "门控决定是否允许串联。" },
-    { label: "完整度评级", value: view.intelligence_completeness?.label_zh || "N/A", help: "高/中/中低/低。缺失情报不会被编造。" },
-    { label: "Top 单关", value: (view.top_singles || []).length, help: "按 EV / 概率排序的单关观察。" },
-    { label: "Top 2串1", value: (view.top_2x1_display || view.top_2x1 || []).length, help: "通过组合纪律；若未入选，则展示最接近候选和被拒原因。" },
-    { label: "缺失情报", value: (view.missing_signals || []).length, help: "新闻、伤停、首发、天气未接入时不编造。" },
+    ...(view.workflow_cards || []),
+    { label: "可售比赛", value: `${view.matches_count ?? 0} 场`, help: `${view.selected_date || "自动日期"} · 数据源 ${view.provider_used || "unknown"}` },
+    { label: "预观察可信度", value: `${view.credibility_audit?.credibility_score ?? "N/A"}/100`, help: view.credibility_gate?.reason_zh || view.credibility_audit?.reasons?.[0] || "用于判断是否适合组合观察。" },
+    { label: "情报完整度", value: `${view.intelligence_completeness?.score ?? "N/A"}/100`, help: view.intelligence_completeness?.summary_zh || "伤停、首发、天气、新闻等只做覆盖审计，不编造。" },
+    { label: "串联纪律", value: view.credibility_gate?.label_zh || view.credibility_audit?.credibility_gate?.label_zh || "待评估", help: "没有强组合时会显示暂不组合，而不是强行给组合。" },
+    { label: "DS研究", value: aiStatusLabel, help: aiStatusSummary },
+    { label: "赛后学习", value: learningCardValue, help: learningCardHelp },
+    { label: "区间复盘", value: windowCardValue, help: windowCardHelp },
   ]);
-  qs("#todayReliabilityCards").innerHTML = C.cards((view.reliability_summary?.source_cards || view.source_coverage_cards || []).map((row) => ({
-    label: row.source || row.label_zh,
-    value: row.coverage || row.status || "N/A",
-    help: row.message_zh || row.role || "",
-  })));
-  qs("#todaySourceCoverage").innerHTML = C.table(view.match_coverage_table || [], [
-    { key: "match", label: "比赛" },
-    { key: "api_football", label: "API-Football" },
-    { key: "the_odds_api", label: "海外赔率" },
-    { key: "injuries", label: "伤停" },
-    { key: "lineup", label: "首发" },
-    { key: "weather", label: "天气" },
-    { key: "news", label: "新闻" },
-    { key: "match_confidence", label: "匹配置信度" },
-    { key: "message_zh", label: "说明" },
-  ]);
+  const homepageCoverageCards = (view.coverage_summary_cards || []).length
+    ? view.coverage_summary_cards
+    : (view.reliability_summary?.source_cards || view.source_coverage_cards || []).map((row) => ({
+      label: row.source || row.label_zh,
+      value: row.coverage || row.status || "N/A",
+      help: row.message_zh || row.role || "",
+    }));
+  qs("#todayReliabilityCards").innerHTML = C.cards(homepageCoverageCards.slice(0, 4));
+  const homepageCoverageBullets = [
+    view.today_focus_summary_zh || "",
+    ...((view.critical_gap_list_zh || []).slice(0, 4)),
+    ...((view.homepage_missing_actions || []).slice(0, 2)),
+  ].filter(Boolean);
+  qs("#todaySourceCoverage").innerHTML = homepageCoverageBullets.length
+    ? C.list(homepageCoverageBullets)
+    : `<div class="sectionHint">今天没有明显情报缺口；更细的逐场覆盖表放在“可信度 / 数据可靠性”页查看。</div>`;
   const status = view.data_source_status || {};
   const health = view.source_health || {};
   const externalSignals = view.external_signals_status || {};
@@ -230,28 +2905,25 @@ function renderToday(view) {
     `说明：${health.message_zh || status.message_zh || "暂无说明"}`,
     `判断建议：${health.decision_guide_zh || "请结合 provider_used、扫描窗口和缺失情报查看。"}`,
     `实际 provider：${health.provider_used || view.provider_used || "unknown"}`,
+    `预观察阶段：${workflow.stage_label_zh || "T+1 明日预观察"}`,
+    workflow.valid_use_zh || "当前适合做候选筛选和情报缺口整理。",
     `扫描日期：${(health.scanned_dates || []).join("、") || "N/A"}`,
     health.scan_summary_zh || "扫描窗口：N/A",
     `成功次数：${health.successful_attempts ?? 0}/${health.attempt_count ?? 0}`,
-    `提醒数量：${health.warning_count ?? 0}`,
+    `覆盖审计条目：${(view.coverage_audit_notes || []).length || health.warning_count || 0}`,
     ...(health.source_action_items || []),
     `外部情报：${externalSignals.source_type || "not_provided"}，覆盖 ${externalSignals.matched_count ?? 0}/${externalSignals.matches_count ?? 0} 场`,
     `情报读取状态：${externalSignals.load_status || "not_provided"}，无效条目：${externalSignals.invalid_items ?? 0}`,
     externalSignals.message_zh || "未提供外部情报 JSON。",
     health.recovery_hint_zh || "数据源状态会明确标记，不会把回退数据伪装成 Sporttery。",
+    ...((view.coverage_audit_notes || view.coverage_notes || []).slice(0, 4)),
   ]);
-  qs("#todaySingles").innerHTML = signalCards(view.top_singles || [], "single", "当前没有通过纪律筛选的单关观察。若无 Edge，显示无观察价值。");
-  const parlay2Selected = view.top_2x1 || [];
-  const parlay2Display = parlay2Selected.length ? parlay2Selected : (view.top_2x1_display || []);
-  const parlay2Intro = `<div class="note">${C.escapeHtml(view.top_2x1_empty_explanation || "2串1 需要多场同时命中，风险纪律会更严格。")}</div>`;
-  qs("#todayParlay2").innerHTML = parlay2Intro + signalCards(parlay2Display, "combo", "当前没有 2串1 入选，也没有可排序的候选。");
-  qs("#todayTotalGoals").innerHTML = signalCards(view.top_total_goals || [], "single", "当前没有总进球观察。 ");
-  qs("#todayScores").innerHTML = signalCards(view.top_scores || [], "single", "当前没有比分观察。 ");
-  qs("#todayRejectedParlay2").innerHTML = tableOrEmpty(view.top_rejected_2x1 || [], rejectedComboColumns, "当前没有 2串1 被拒候选。");
-  qs("#todayRejectedParlay3").innerHTML = tableOrEmpty(view.top_rejected_3x1 || [], rejectedComboColumns, "当前没有 3串1 被拒候选。");
+  renderTodayTopSections(view);
   const operationEntry = view.operation_entry || {};
   qs("#todayRiskTip").innerHTML = [
     C.list([
+      workflow.valid_use_zh || "当前适合做预观察，不适合把组合当作最终结论。",
+      workflow.missing_is_expected_zh || "T+1 阶段部分临场信息尚未完整属于正常。",
       view.max_risk_tip || "请先查看数据源状态和缺失情报。",
       operationEntry.summary || "查看模拟走盘可理解历史资金曲线、最大回撤、玩法贡献和为什么赚/亏。",
       operationEntry.disclaimer || "模拟经营不代表未来表现。",
@@ -259,31 +2931,31 @@ function renderToday(view) {
     operationEntry.metrics ? `<h4>${C.escapeHtml(operationEntry.title || "回测表现怎么看")}</h4>${C.list(operationEntry.metrics)}` : "",
   ].join("");
   qs("#todayTraderConclusion").innerHTML = C.list([
+    workflow.trader_instruction_zh || "先看单关，再看 2串1 是否通过纪律。",
     view.strict_trader_conclusion || view.trader_review?.final_call_zh || "请先刷新今日观察。",
     view.optimizer?.no_combo_reason || view.best_parlay_summary?.no_combo_reason || view.credibility_gate?.reason_zh || "",
     ...(view.trader_review?.conclusions_zh || []),
   ]);
-  const signalStatusHtml = (view.signal_status || []).length
-    ? C.table(view.signal_status, [
-      { key: "signal", label: "情报" },
-      { key: "status", label: "状态" },
-      { key: "confidence_zh", label: "可信度" },
-      { key: "coverage", label: "覆盖" },
-      { key: "source_zh", label: "来源" },
-      { key: "message_zh", label: "说明" },
+  const pendingHtml = pendingConfirmations.length
+    ? C.table(pendingConfirmations, [
+      { key: "item", label: "待确认项" },
+      { key: "status_zh", label: "状态" },
+      { key: "why_zh", label: "为什么重要" },
     ])
-    : C.list((view.missing_signals || []).length ? view.missing_signals : ["当前没有缺失情报记录。"]);
-  const gapActionsHtml = tableOrEmpty(view.intelligence_gap_actions || [], [
-    { key: "signal", label: "情报" },
-    { key: "status", label: "当前状态" },
-    { key: "confidence_impact", label: "对信心的影响" },
-    { key: "why_it_matters", label: "为什么重要" },
-    { key: "next_action_zh", label: "如何补齐" },
-    { key: "app_behavior", label: "App 处理方式" },
-  ], "暂无情报缺口行动清单。");
+    : "";
+  const signalStatusHtml = (view.critical_gap_list_zh || []).length
+    ? C.list(view.critical_gap_list_zh)
+    : C.list((view.missing_signals || []).length ? (view.missing_signals || []).map((item) => `${item}：当前按未知处理。`) : ["当前没有明显缺失情报。"]);
+  const gapActionsHtml = (view.homepage_missing_actions || []).length
+    ? C.list(view.homepage_missing_actions)
+    : `<div class="sectionHint">暂无额外补齐动作；更细的来源、状态和逐场覆盖表，放在“可信度 / 数据可靠性”页查看。</div>`;
   qs("#todayMissing").innerHTML = [
+    pendingHtml ? `<h4>T+1 待确认清单</h4>${pendingHtml}` : "",
+    `<h4>${C.escapeHtml(view.coverage_audit_title_zh || "情报覆盖审计")}</h4>`,
+    view.intelligence_coverage?.summary_zh ? `<div class="sectionHint">${C.escapeHtml(view.intelligence_coverage.summary_zh)}</div>` : "",
+    (view.coverage_audit_notes || []).length ? C.list((view.coverage_audit_notes || []).slice(0, 4)) : "",
     signalStatusHtml,
-    `<h4>情报覆盖怎么处理</h4>`,
+    `<h4>情报缺口怎么处理</h4><div class="sectionHint">已确认、已检查但未返回、兜底估算、未接入是四种不同状态。系统只会降权，不会编造。更细的逐场覆盖表、来源和状态分层，放在“可信度 / 数据可靠性”页查看。</div>`,
     gapActionsHtml,
   ].join("");
   renderSignalExplainFromToday(view);
@@ -291,6 +2963,880 @@ function renderToday(view) {
   renderCredibility(view.credibility_audit || {});
   renderBestParlay(view.best_parlay_summary || {});
   renderTraderReview(view.trader_review || {});
+}
+
+function renderMatchdayChecklist(rows, pendingConfirmations = []) {
+  const box = qs("#matchdayChecklist");
+  if (!box) return;
+  const targets = (rows || []).filter((row) => row.matchday_review_zh || row.matchday_keep_min_odds).slice(0, 3);
+  const confirmations = pendingConfirmations.length
+    ? pendingConfirmations.map((item) => item.item || item.signal || item)
+    : ["首发", "伤停", "天气", "终盘赔率", "新闻面"];
+  box.innerHTML = `
+    <div class="matchdayChecklistHead">
+      <span>MATCHDAY CHECK</span>
+      <strong>临场复核清单</strong>
+      <p>临近开赛前只做一件事：确认赔率还覆盖模型概率，且没有首发、伤停、天气或新闻面的反向变化。</p>
+    </div>
+    <div class="matchdayConfirmTags">
+      ${confirmations.slice(0, 6).map((item) => `<span>${C.escapeHtml(item)}</span>`).join("")}
+    </div>
+    ${targets.length ? `<div class="matchdayChecklistGrid">${targets.map((row) => `
+      <article>
+        <strong>${C.escapeHtml(row.match || "观察信号")}</strong>
+        <p>${C.escapeHtml(row.play_type || "玩法")} · ${C.escapeHtml(row.direction || "方向")} · 当前赔率 ${C.escapeHtml(row.official_odds || row.odds || "N/A")}</p>
+        <div class="checkOddsLine">
+          <span>保留观察 ≥ ${C.escapeHtml(row.matchday_keep_min_odds || "N/A")}</span>
+          <span>失去覆盖 &lt; ${C.escapeHtml(row.matchday_no_value_below_odds || "N/A")}</span>
+          <span>反向漂移 ≥ ${C.escapeHtml(row.matchday_reverse_drift_watch_odds || "N/A")}</span>
+        </div>
+        <em>${C.escapeHtml(row.next_review_zh || row.matchday_review_zh || "临场复核赔率和情报后再决定是否继续观察。")}</em>
+      </article>
+    `).join("")}</div>` : `<div class="emptyState">当前没有可生成临场复核阈值的 Top 单关。先看数据源和情报覆盖，再等待临场赔率。</div>`}
+  `;
+}
+
+function renderTodayComboBoard(board, aiLayer) {
+  const box = qs("#todayComboBoard");
+  if (!box) return;
+  const cards = [
+    board.best_single_card,
+    board.best_2x1_card,
+    board.best_3x1_card,
+    board.best_risk_adjusted_card,
+  ].filter(Boolean).map((card) => ({
+    label: card.title || "观察",
+    value: card.status_zh || "待评估",
+    help: `${card.main_zh || ""} · 赔率 ${card.odds_zh || "N/A"} · 概率 ${card.probability_zh || "N/A"} · 余量 ${card.margin_zh || "N/A"}`,
+  }));
+  const closing = board.closing_line_review || {};
+  const oneLookSingle = board.best_single_card || {};
+  const oneLookCombo = board.best_risk_adjusted_card || board.best_2x1_card || {};
+  const oneLookComboText = oneLookCombo.main_zh || board.nearest_rejected_reason_zh || "暂无合格组合，先不要强行串联。";
+  const oneLookComboStatus = oneLookCombo.status_zh || board.gate_label_zh || "待复核";
+  const oneLookClosing = closing.downgrade_zh || "临近开赛前复核赔率、伤停、首发和天气，再决定是否继续观察。";
+  box.innerHTML = `
+    <div class="oneLookSummary">
+      <span>只看这三句</span>
+      <strong>${C.escapeHtml(board.headline_zh || "今日组合结论")}</strong>
+      <p>1. 先看单关：${C.escapeHtml(oneLookSingle.main_zh || "暂无优先单关")}（${C.escapeHtml(oneLookSingle.status_zh || "待评估")}）</p>
+      <p>2. 再看组合：${C.escapeHtml(oneLookComboText)}（${C.escapeHtml(oneLookComboStatus)}）</p>
+      <p>3. 最后临场复核：${C.escapeHtml(oneLookClosing)}</p>
+    </div>
+    <div class="comboBoardHead">
+      <span>${C.escapeHtml(board.gate_label_zh || "组合纪律")}</span>
+      <strong>${C.escapeHtml(board.headline_zh || "今日组合结论")}</strong>
+      <p>${C.escapeHtml(board.user_verdict_zh || "先看单关，再判断是否有合格 2串1。")}</p>
+      <p class="coachActionLine">${C.escapeHtml(board.primary_action_zh || "查看观察信号")}</p>
+    </div>
+    ${C.cards(cards)}
+    <div class="note">${C.escapeHtml(board.nearest_rejected_reason_zh || "暂无被拒组合原因。")}</div>
+    ${closing.title_zh ? `<div class="closingReviewCard">
+      <strong>${C.escapeHtml(closing.title_zh)} · ${C.escapeHtml(closing.status_zh || "待复核")}</strong>
+      <p>${C.escapeHtml(closing.current_value_zh || "")}</p>
+      <p>${C.escapeHtml(closing.why_zh || "")}</p>
+      <p>${C.escapeHtml(closing.downgrade_zh || "")}</p>
+    </div>` : ""}
+    <div class="usagePlaybook">
+      <article>
+        <span>Step 1</span>
+        <strong>先看强观察</strong>
+        <p>只把通过可信度、赔率覆盖和风险纪律的项放在前面；没有通过时显示“今日不强行组合”。</p>
+      </article>
+      <article>
+        <span>Step 2</span>
+        <strong>再看临场复核</strong>
+        <p>临近开赛检查赔率是否反向漂移，伤停、首发、天气或新闻面是否出现反对因素。</p>
+      </article>
+      <article>
+        <span>Step 3</span>
+        <strong>最后看 AI 研究</strong>
+        <p>DeepSeek 只做研究解释：总结赔率价值、被拒原因和缺失情报，不替代本地概率纪律。</p>
+      </article>
+    </div>
+    <div class="methodGrid">
+      <div><b>赔率先转盈亏线</b><span>赔率越高，需要的命中率越低，但波动也越大。</span></div>
+      <div><b>模型要被校准约束</b><span>赛后反馈会轻微调整概率段，避免单日高 EV 诱导。</span></div>
+      <div><b>组合看同时命中</b><span>2串1/3串1 是概率相乘，不是优势相加。</span></div>
+      <div><b>临场赔率很重要</b><span>若终盘方向反向漂移，观察级别要下降。</span></div>
+    </div>
+    <div class="learningLoopStrip">
+      <strong>赛后学习闭环</strong>
+      <span>赛前生成观察</span>
+      <span>赛日复核赔率</span>
+      <span>赛后录入结果</span>
+      <span>下次自动校准</span>
+      <button type="button" class="secondary miniLearningBtn" onclick="switchView('learning')">去赛后学习</button>
+    </div>
+    <div class="note">${C.escapeHtml(aiLayer.message_zh || "AI 研究增强未开启，本地模型先给出组合纪律。")}</div>
+    <div class="note">${C.escapeHtml(aiLayer.research_prompt_zh || board.ai_research_prompt_zh || "开启后用于解释强观察组合和被拒原因。")}</div>
+    ${C.list(board.what_to_check_next || [])}
+  `;
+}
+
+function renderSignalCategorySummary(rows) {
+  const box = qs("#signalCategorySummary");
+  if (!box) return;
+  const groups = {
+    steady_watch: { title: "稳健观察", desc: "赔率不过高、校准概率更扎实，优先等待情报复核。", rows: [] },
+    value_watch: { title: "价值观察", desc: "赔率与模型有差异，但仍要看终盘赔率和情报。", rows: [] },
+    longshot_watch: { title: "冷门观察", desc: "赔率高、波动大，只作纸面跟踪，不进串联核心。", rows: [] },
+    weak_or_pass: { title: "弱观察/放弃", desc: "优势不足，先不作为核心。", rows: [] },
+  };
+  (rows || []).forEach((row) => {
+    const key = row.signal_category || "weak_or_pass";
+    (groups[key] || groups.weak_or_pass).rows.push(row);
+  });
+  box.innerHTML = `<div class="categoryGrid">${Object.values(groups).map((group) => {
+    const top = group.rows[0];
+    const sample = top ? `${top.match || ""} ${top.direction || ""}` : "暂无";
+    return `<article class="categoryCard">
+      <span>${C.escapeHtml(group.title)}</span>
+      <strong>${C.escapeHtml(group.rows.length)}</strong>
+      <p>${C.escapeHtml(group.desc)}</p>
+      <em>${C.escapeHtml(sample)}</em>
+    </article>`;
+  }).join("")}</div>`;
+}
+
+function renderLearningPanel(panel) {
+  const box = qs("#learningPanel");
+  if (!box) return;
+  const cards = C.cards(panel.summary_cards || []);
+  const healthCards = C.cards(panel.model_health_cards || []);
+  const historyCards = C.cards(panel.history_cards || []);
+  const dailyReport = panel.daily_report || {};
+  const windowReports = panel.window_reports || [];
+  const lessons = C.list(panel.lessons || []);
+  const brief = C.list(panel.learning_brief || ["赛后学习会把真实结果反馈到赔率段校准和冷门降权。"]);
+  const actions = C.list(panel.model_actions || ["继续累计样本，避免小样本过拟合。"]);
+  const oddsLearning = panel.odds_learning || {};
+  const learningTodo = panel.learning_todo || {};
+  const comboLearning = panel.combo_discipline_learning || {};
+  const comboLearningRows = comboLearning.status === "tracked" ? [
+    { label: "被拒复盘", value: comboLearning.review_count ?? 0, help: "进入赛后学习的被拒组合数量。" },
+    { label: "已完整复盘", value: comboLearning.settled_review_count ?? 0, help: "所有腿都匹配到赛果的被拒组合。" },
+    { label: "可能过严", value: comboLearning.over_strict_candidate_count ?? 0, help: "被拒但赛后全中的组合，需要复查规则。" },
+    { label: "纪律支持", value: comboLearning.discipline_supported_count ?? 0, help: "被拒且赛后未全中的组合。" },
+  ] : [];
+  const ruleAdjustmentRows = comboLearning.rule_adjustment_summary || [];
+  const todoRows = (learningTodo.items || []).map((item) => ({
+    label: item.label,
+    status: item.status === "done" ? "已完成" : "待补",
+    impact_zh: item.impact_zh,
+  }));
+  const todoHtml = learningTodo.title_zh ? `
+    <section class="learningTodoCard">
+      <div class="sectionHeading compact">
+        <p class="eyebrow">LONG-RUN FIX</p>
+        <h4>${C.escapeHtml(learningTodo.title_zh)}</h4>
+        <p>${C.escapeHtml(learningTodo.why_it_matters_zh || "赛后学习会让下一次排序更有证据。")}</p>
+      </div>
+      <div class="scoreMiniGrid">
+        <article><span>当前学习分</span><b>${C.escapeHtml(learningTodo.current_score ?? "N/A")}/100</b></article>
+        <article><span>下一轮目标</span><b>${C.escapeHtml(learningTodo.target_score_after_next_loop ?? "N/A")}/100</b></article>
+        <article><span>已结算样本</span><b>${C.escapeHtml(learningTodo.settled_count ?? 0)}</b></article>
+        <article><span>CLV 样本</span><b>${C.escapeHtml(learningTodo.clv_count ?? 0)}</b></article>
+      </div>
+      <div class="noteBox">${C.escapeHtml(learningTodo.next_action_zh || "先保存观察快照，赛后补比分和收盘赔率。")}</div>
+      ${learningTodo.score_persistence_zh ? `<div class="noteBox softNote">${C.escapeHtml(learningTodo.score_persistence_zh)}</div>` : ""}
+      ${comboLearning.message_zh ? `<div class="noteBox softNote">${C.escapeHtml(comboLearning.message_zh)}</div>` : ""}
+      ${comboLearningRows.length ? `<div class="contentBox">${C.cards(comboLearningRows)}</div>` : ""}
+      ${ruleAdjustmentRows.length ? `
+        <h4>可能过严的规则</h4>
+        ${tableOrEmpty(ruleAdjustmentRows, [
+          { key: "label_zh", label: "规则" },
+          { key: "count", label: "出现次数" },
+          { key: "suggestion_zh", label: "调整建议" },
+        ])}
+      ` : ""}
+      ${tableOrEmpty(todoRows, [
+        { key: "label", label: "要补什么" },
+        { key: "status", label: "状态" },
+        { key: "impact_zh", label: "为什么有用" },
+      ])}
+    </section>
+  ` : "";
+  const oddsRules = C.list(oddsLearning.plain_language_rules || []);
+  const parlayRows = (oddsLearning.parlay_examples || []).map((row) => ({
+    case_zh: row.case_zh,
+    raw_hit_prob: fmtPct(row.raw_hit_prob),
+    after_discount_prob: fmtPct(row.after_discount_prob),
+    message_zh: row.message_zh,
+  }));
+  const bucketRows = (oddsLearning.bucket_explanations || []).slice(0, 4).map((row) => ({
+    bucket_label_zh: row.bucket_label_zh,
+    attempts: row.attempts,
+    hits: row.hits,
+    bayesian_hit_rate: fmtPct(row.bayesian_hit_rate),
+    use_zh: row.use_zh,
+  }));
+  const rows = panel.rows || [];
+  const visibleRows = rows.slice(0, 3).map((row) => ({
+    match: row.match,
+    direction: row.direction,
+    odds: row.odds,
+    hit: row.hit === true ? "命中" : row.hit === false ? "未命中" : "未结算",
+    category: row.signal_category_zh,
+    calibrated_prob: fmtPct(row.calibrated_prob),
+    brier_score: fmtNum(row.brier_score),
+    log_loss: fmtNum(row.log_loss),
+    note: row.calibration?.message_zh || "",
+  }));
+  box.innerHTML = `
+    <details class="learningDrawer" open>
+      <summary>模型学习状态：先校准赔率段，再判断能不能串联</summary>
+      ${todoHtml}
+      ${dailyReport.headline_zh ? `
+        <section class="learningDailyReport">
+          <div class="sectionHeading compact">
+            <p class="eyebrow">DAILY REPORT</p>
+            <h4>${C.escapeHtml(dailyReport.headline_zh)}</h4>
+            <p>${C.escapeHtml(dailyReport.verdict_zh || "赛后固定复盘输出。")}</p>
+          </div>
+          <div class="noteBox">${C.list(dailyReport.paragraphs_zh || [])}</div>
+          <div class="noteBox softNote">${C.escapeHtml(dailyReport.metrics_line_zh || "命中率 N/A · ROI N/A · Brier N/A · Log Loss N/A · CLV N/A")}</div>
+        </section>
+      ` : ""}
+      ${windowReports.length ? `
+        <section class="learningWindowReports">
+          <div class="sectionHeading compact">
+            <p class="eyebrow">WINDOW REPORTS</p>
+            <h4>区间复盘</h4>
+            <p>除了单日结果，还要看近 7 天、近 30 天和累计区间。</p>
+          </div>
+          <div class="signalCardGrid">
+            ${windowReports.slice(0, 3).map((report) => `
+              <article class="signalCard">
+                <div class="signalCardTop">
+                  <span>${C.escapeHtml(report.headline_zh || "区间复盘")}</span>
+                  <strong>${C.escapeHtml(report.status_zh || "待观察")}</strong>
+                </div>
+                <p>${C.escapeHtml((report.paragraphs_zh || [])[0] || "")}</p>
+                <div class="metricStrip">
+                  <span>${C.escapeHtml(report.metrics_line_zh || "命中率 N/A · ROI N/A · Brier N/A · Log Loss N/A")}</span>
+                </div>
+                <em>${C.escapeHtml(report.next_step_zh || "继续累计样本。")}</em>
+              </article>
+            `).join("")}
+          </div>
+        </section>
+      ` : ""}
+      <h4>模型健康一眼看懂</h4>
+      ${healthCards}
+      <div class="noteBox">${C.escapeHtml(panel.model_health_zh || "模型仍按保守学习处理。")}</div>
+      <div class="learningSplit">
+        <div>
+          <h4>昨天学到了什么</h4>
+          ${cards}
+        </div>
+        <div>
+          <h4>累计学习状态</h4>
+          ${historyCards}
+        </div>
+      </div>
+      <h4>当前模型怎么理解这批样本</h4>
+      <div class="noteBox">${brief}</div>
+      <h4>下一次排序会怎么变</h4>
+      <div class="noteBox">${actions}</div>
+      <h4>赔率怎么读：给使用者看的版本</h4>
+      <div class="noteBox">${oddsRules}</div>
+      <div class="learningSplit">
+        <div>
+          <h4>串联为什么难</h4>
+          ${tableOrEmpty(parlayRows, [
+            { key: "case_zh", label: "场景" },
+            { key: "raw_hit_prob", label: "原始同时命中" },
+            { key: "after_discount_prob", label: "折扣后" },
+            { key: "message_zh", label: "说明" },
+          ], "暂无串联示例。")}
+        </div>
+        <div>
+          <h4>赔率段当前校准</h4>
+          ${tableOrEmpty(bucketRows, [
+            { key: "bucket_label_zh", label: "赔率段" },
+            { key: "attempts", label: "样本" },
+            { key: "hits", label: "命中" },
+            { key: "bayesian_hit_rate", label: "贝叶斯命中率" },
+            { key: "use_zh", label: "模型动作" },
+          ], "暂无赔率段样本。")}
+        </div>
+      </div>
+      <h4>昨日观察明细</h4>
+      <div class="noteBox">${lessons}</div>
+      ${tableOrEmpty(visibleRows, [
+        { key: "match", label: "比赛" },
+        { key: "direction", label: "方向" },
+        { key: "odds", label: "赔率" },
+        { key: "hit", label: "结果" },
+        { key: "category", label: "类型" },
+        { key: "calibrated_prob", label: "校准概率" },
+        { key: "brier_score", label: "Brier" },
+        { key: "log_loss", label: "Log Loss" },
+        { key: "note", label: "学习说明" },
+      ], "暂无昨日复盘样本。")}
+    </details>
+  `;
+}
+
+async function loadLearningFeedback() {
+  updateLearningFlowStatus();
+  const payload = await request("/api/view/learning-feedback", {}, "刷新赛后学习");
+  if (payload.ok) renderLearningFeedback(payload.data);
+  await loadLearningHistory(false);
+  switchView("learning");
+}
+
+async function buildLearningFeedbackPreview() {
+  updateLearningFlowStatus();
+  const payload = await request("/api/view/build-learning-feedback", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+    results_csv: value("#learningResultsPath", "data/fixtures/result_scores_20260611.csv"),
+  }, "构建赛后学习反馈");
+  if (payload.ok) renderBuiltLearningFeedback(payload.data);
+  switchView("learning");
+}
+
+async function saveLearningObservationSnapshot() {
+  const payload = await request("/api/learning/save-observation-snapshot", {
+    provider: providerParam(),
+    date: currentDateParam(),
+    bankroll: bankrollParam(),
+    risk_profile: riskProfileParam(),
+  }, "保存今日观察快照");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    const input = qs("#learningObservationsPath");
+    if (input && saved.path) input.value = saved.path;
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        saved.summary_zh || "已保存今日观察快照。",
+        `观察项：${saved.observations_count ?? 0} 条。`,
+        `保存路径：${saved.path || "data/learning_observations/"}`,
+        saved.next_step_zh || "赛后选择赛果 CSV 后保存学习样本。",
+      ]);
+    }
+    updateLearningFlowStatus();
+  }
+  switchView("learning");
+}
+
+async function prepareDailyLearningPack() {
+  const payload = await request("/api/learning/prepare-daily-pack", {
+    provider: providerParam(),
+    date: currentDateParam(),
+    bankroll: bankrollParam(),
+    risk_profile: riskProfileParam(),
+  }, "一键准备学习包");
+  if (payload.ok) {
+    const pack = payload.data || {};
+    state.lastLearningPack = pack;
+    const obsInput = qs("#learningObservationsPath");
+    const resultsInput = qs("#learningResultsPath");
+    const closingInput = qs("#learningClosingOddsPath");
+    if (obsInput && pack.observations_path) obsInput.value = pack.observations_path;
+    if (resultsInput && pack.results_path) resultsInput.value = pack.results_path;
+    if (closingInput && pack.closing_odds_path) closingInput.value = pack.closing_odds_path;
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        pack.summary_zh || "已准备学习包。",
+        `观察项：${pack.observations_count ?? 0} 条；被拒组合复盘：${pack.rejected_combo_count ?? 0} 条；比赛：${pack.matches_count ?? 0} 场；赔率复核项：${pack.closing_rows_count ?? 0} 条。`,
+        `观察快照：${pack.observations_path || "N/A"}`,
+        `比分模板：${pack.results_path || "N/A"}`,
+        `赔率模板：${pack.closing_odds_path || "N/A"}`,
+        pack.next_step_zh || "赛后填写模板并保存学习样本。",
+      ]);
+    }
+    updateLearningFlowStatus();
+  }
+  switchView("learning");
+}
+
+async function saveLearningResultTemplate() {
+  const payload = await request("/api/learning/save-result-template", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+  }, "生成赛果 CSV 模板");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    const input = qs("#learningResultsPath");
+    if (input && saved.path) input.value = saved.path;
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        saved.summary_zh || "已生成赛果 CSV 模板。",
+        `比赛：${saved.matches_count ?? 0} 场。`,
+        `保存路径：${saved.path || "data/learning_results/"}`,
+        saved.how_to_use_zh || "赛后填写比分后保存学习样本。",
+      ]);
+    }
+    updateLearningFlowStatus();
+  }
+  switchView("learning");
+}
+
+async function saveLearningClosingOddsTemplate() {
+  const payload = await request("/api/learning/save-closing-odds-template", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+  }, "生成收盘赔率模板");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    const input = qs("#learningClosingOddsPath");
+    if (input && saved.path) input.value = saved.path;
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        saved.summary_zh || "已生成收盘赔率模板。",
+        `观察项：${saved.rows_count ?? 0} 条。`,
+        `保存路径：${saved.path || "data/learning_closing_odds/"}`,
+        saved.how_to_use_zh || "填写 closing_odds 后复盘 CLV。",
+      ]);
+    }
+    updateLearningFlowStatus();
+  }
+  switchView("learning");
+}
+
+async function reviewLearningClv() {
+  updateLearningFlowStatus();
+  const payload = await request("/api/view/clv-review", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+    closing_odds: value("#learningClosingOddsPath", ""),
+  }, "复盘 CLV");
+  if (payload.ok) renderLearningClv(payload.data || {});
+  switchView("learning");
+}
+
+async function saveLearningClvReview() {
+  const payload = await request("/api/learning/save-clv-review", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+    closing_odds: value("#learningClosingOddsPath", ""),
+  }, "保存 CLV 复盘样本");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    if (qs("#learningClvSummary")) {
+      qs("#learningClvSummary").innerHTML = C.list([
+        saved.summary_zh || "已保存 CLV 复盘。",
+        `保存路径：${saved.path || "data/learning_clv/"}`,
+        saved.privacy_zh || "仅保存在本机。",
+      ]);
+    }
+    renderLearningClv(saved.review || {});
+    await loadLearningClvHistory();
+  }
+  switchView("learning");
+}
+
+async function saveDailyLearningResults() {
+  updateLearningFlowStatus();
+  const payload = await request("/api/learning/save-daily-results", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+    results_csv: value("#learningResultsPath", "data/fixtures/result_scores_20260611.csv"),
+    closing_odds: value("#learningClosingOddsPath", ""),
+  }, "一键保存赛后学习");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        saved.summary_zh || "已保存赛后学习。",
+        `赛果学习：${saved.feedback_path || "N/A"}`,
+        saved.clv_path ? `CLV 学习：${saved.clv_path}` : "CLV 学习：未提供收盘赔率 CSV，已跳过。",
+        saved.next_step_zh || "下次打开会自动读取本地样本。",
+      ]);
+    }
+    renderBuiltLearningFeedback((saved.feedback || {}).feedback || {});
+    if (saved.clv && saved.clv.review) renderLearningClv(saved.clv.review);
+    await loadLearningHistory(false);
+    await loadLearningClvHistory();
+  }
+  switchView("learning");
+}
+
+function renderLearningClv(view) {
+  if (qs("#learningClvSummary")) {
+    qs("#learningClvSummary").innerHTML = C.cards([
+      { label: "CLV 跟踪", value: view.tracked_count ?? 0, help: "从赛前观察快照读取的可跟踪项。" },
+      { label: "已复盘", value: view.settled_count ?? 0, help: "已填写收盘赔率的观察项。" },
+      { label: "跑赢收盘", value: view.positive_clv_count ?? 0, help: "赛前赔率高于收盘赔率的项。" },
+      { label: "平均 CLV", value: fmtPct(view.average_clv_pct), help: view.summary_zh || "CLV 用于判断是否比市场更早。" },
+    ]) + C.list([view.summary_zh || "暂无 CLV 复盘。", view.disclaimer || "CLV 仅用于纸面复盘。"]);
+  }
+  if (qs("#learningClvRows")) {
+    qs("#learningClvRows").innerHTML = tableOrEmpty(view.rows || [], [
+      { key: "match", label: "比赛" },
+      { key: "play", label: "玩法" },
+      { key: "direction", label: "方向" },
+      { key: "entry_odds", label: "赛前赔率" },
+      { key: "closing_odds", label: "收盘赔率" },
+      { key: "label_zh", label: "CLV 判断" },
+      { key: "clv_pct", label: "CLV" },
+      { key: "message_zh", label: "说明" },
+    ], "暂无 CLV 明细。");
+  }
+}
+
+async function loadLearningClvHistory() {
+  const payload = await request("/api/view/clv-history", {}, "刷新累计 CLV");
+  if (payload.ok) renderLearningClvHistory(payload.data || {});
+}
+
+function renderLearningClvHistory(view) {
+  if (qs("#learningClvHistoryCards")) {
+    qs("#learningClvHistoryCards").innerHTML = C.cards([
+      { label: "CLV 文件", value: view.files_loaded ?? 0, help: "本地保存的 CLV 复盘文件。" },
+      { label: "已复盘项", value: view.settled_count ?? 0, help: "已填写收盘赔率的观察项。" },
+      { label: "跑赢收盘", value: view.positive_clv_count ?? 0, help: "赛前赔率高于收盘赔率。" },
+      { label: "平均 CLV", value: fmtPct(view.average_clv_pct), help: "长期为正才说明价格判断可能有效。" },
+    ]);
+  }
+  if (qs("#learningClvHistoryNotes")) {
+    qs("#learningClvHistoryNotes").innerHTML = C.list([
+      view.summary_zh || "暂无累计 CLV。",
+      view.next_action_zh || "继续累计 CLV 样本。",
+      view.disclaimer || "CLV 仅用于纸面复盘。",
+    ]);
+  }
+}
+
+async function saveLearningFeedback() {
+  updateLearningFlowStatus();
+  const payload = await request("/api/learning/save-feedback", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+    results_csv: value("#learningResultsPath", "data/fixtures/result_scores_20260611.csv"),
+  }, "保存赛后学习样本");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        saved.summary_zh || "已保存学习样本。",
+        `保存路径：${saved.path || "data/learning_feedback/"}`,
+        saved.privacy_zh || "仅保存在本机。",
+      ]);
+    }
+    renderBuiltLearningFeedback(saved.feedback || {});
+    await loadLearningHistory(false);
+  }
+  switchView("learning");
+}
+
+function updateLearningFlowStatus() {
+  const box = qs("#learningFlowStatus");
+  if (!box) return;
+  const obs = value("#learningObservationsPath", "");
+  const results = value("#learningResultsPath", "");
+  const closing = value("#learningClosingOddsPath", "");
+  const hasSnapshot = Boolean(obs) && !obs.includes("fixtures/observations_");
+  const hasResultsTemplate = Boolean(results) && !results.includes("fixtures/result_scores_");
+  const hasClosingTemplate = Boolean(closing);
+  let next = "先点“保存今日观察”，把今天的 Top 观察固定下来。";
+  if (hasSnapshot && !hasResultsTemplate) next = "下一步点“生成比分模板”，赛后只填主客队进球。";
+  if (hasSnapshot && hasResultsTemplate && !hasClosingTemplate) next = "可选：点“生成赔率模板”，临场或赛后填写收盘赔率做 CLV 复盘。";
+  if (hasSnapshot && hasResultsTemplate && hasClosingTemplate) next = "赛后填好比分和收盘赔率后，先复盘 CLV，再保存学习样本。";
+  const pack = state.lastLearningPack || {};
+  const packSummary = pack.observations_path ? `
+    <div class="flowPackSummary">
+      <span>刚刚准备完成</span>
+      <strong>${C.escapeHtml(pack.summary_zh || "学习包已生成")}</strong>
+      <p>${C.escapeHtml(`观察项 ${pack.observations_count ?? 0} 条，被拒组合复盘 ${pack.rejected_combo_count ?? 0} 条，比赛 ${pack.matches_count ?? 0} 场，赔率复核 ${pack.closing_rows_count ?? 0} 条。`)}</p>
+      <small>${C.escapeHtml(`比分模板：${pack.results_path || "N/A"} · 赔率模板：${pack.closing_odds_path || "N/A"}`)}</small>
+    </div>
+  ` : "";
+  box.innerHTML = `
+    ${packSummary}
+    <div class="flowNext"><span>下一步</span><strong>${C.escapeHtml(next)}</strong></div>
+    <div class="flowSteps">
+      <span class="${hasSnapshot ? "done" : "todo"}">观察快照</span>
+      <span class="${hasResultsTemplate ? "done" : "todo"}">比分模板</span>
+      <span class="${hasClosingTemplate ? "done" : "todo"}">赔率模板</span>
+      <span class="todo">赛后保存学习</span>
+    </div>
+  `;
+}
+
+function renderLearningQuickForm() {
+  const box = qs("#learningQuickRows");
+  if (!box) return;
+  const sourceRows = learningQuickSourceRows();
+  box.innerHTML = `
+    <div class="learningQuickGrid">
+      ${sourceRows.map((row, index) => `
+        <article class="learningQuickRow"
+          data-date="${C.escapeHtml(row.date || "")}"
+          data-match-id="${C.escapeHtml(row.match_id || "")}"
+          data-match-no="${C.escapeHtml(row.match_no || row.match_num || "")}"
+          data-match="${C.escapeHtml(row.match || "")}"
+          data-home-team="${C.escapeHtml(row.home_team || "")}"
+          data-away-team="${C.escapeHtml(row.away_team || "")}"
+          data-key="${C.escapeHtml(row.key || "")}"
+          data-play-type="${C.escapeHtml(row.play_type || "")}"
+          data-direction="${C.escapeHtml(row.direction || "")}"
+          data-entry-odds="${C.escapeHtml(row.entry_odds || "")}">
+          <div>
+            <span>${C.escapeHtml(row.match_num || `观察 ${index + 1}`)}</span>
+            <strong>${C.escapeHtml(row.match || "待填写比赛")}</strong>
+            <p>${C.escapeHtml(row.note || "赛后填比分；如果有收盘赔率，也一起填，长期用来判断价格是否买早了。")}</p>
+          </div>
+          <label>主队进球<input data-field="home_goals" inputmode="numeric" placeholder="如 2" aria-label="主队进球"></label>
+          <label>客队进球<input data-field="away_goals" inputmode="numeric" placeholder="如 1" aria-label="客队进球"></label>
+          <label>收盘赔率<input data-field="closing_odds" inputmode="decimal" placeholder="可选，如 2.12" aria-label="收盘赔率"></label>
+        </article>
+      `).join("")}
+    </div>
+    <div class="learningQuickAdvice">
+      <strong>下一步怎么用</strong>
+      ${C.list([
+        "先点“赛前一键准备”生成观察快照、比分模板和赔率模板。",
+        "赛后把这里填写的比分同步到比分模板；有收盘赔率时同步到赔率模板。",
+        "再点“一键保存赛后学习”，模型会累计命中率、赔率段、CLV 和被拒组合复盘。",
+      ])}
+    </div>
+  `;
+  if (qs("#learningBuildSummary")) {
+    qs("#learningBuildSummary").innerHTML = C.list([
+      "已生成普通模式填写表。",
+      "这一步先帮你明确要填哪些信息；保存学习仍会使用本地模板文件，避免误写和数据丢失。",
+      "长期目标：把比分、收盘赔率和被拒组合复盘都纳入学习闭环。",
+    ]);
+  }
+  switchView("learning");
+}
+
+function learningQuickSourceRows() {
+  const today = state.todayView || {};
+  const rows = [];
+  const pushRow = (row, note) => {
+    if (!row || rows.length >= 6) return;
+    const match = row.match || row.legs || ((row.home_team || row.away_team) ? `${row.home_team || ""} vs ${row.away_team || ""}` : "");
+    const playType = row.play_type || row.type || "";
+    const direction = row.direction || row.outcome_label || "";
+    rows.push({
+      date: row.date || today.selected_date || today.date || "",
+      match_id: row.match_id || "",
+      match_no: row.match_no || row.match_num || row.number || "",
+      match_num: row.match_num || row.match_no || row.match_id || row.number || "",
+      match: match || "待填写比赛",
+      home_team: row.home_team || "",
+      away_team: row.away_team || "",
+      key: row.key || [row.match_id || row.match_no || row.match || match, playType, row.outcome_key || direction].map((item) => String(item || "").trim()).join("|"),
+      play_type: playType,
+      direction,
+      entry_odds: row.official_odds || row.odds || row.combo_odds || "",
+      note,
+    });
+  };
+  (today.top_singles || []).slice(0, 3).forEach((row) => pushRow(row, "Top 单关观察：赛后重点记录比分和收盘赔率。"));
+  (today.top_rejected_2x1 || []).slice(0, 2).forEach((row) => pushRow(row, "被拒 2串1：赛后也要复盘，验证拒绝是否正确。"));
+  if (!rows.length) {
+    rows.push({
+      match_num: "示例",
+      match: "主队 vs 客队",
+      note: "先刷新今日观察或准备赛后学习包，再按真实比赛填写。",
+    });
+  }
+  return rows;
+}
+
+async function saveLearningQuickResults() {
+  const rows = Array.from(document.querySelectorAll(".learningQuickRow")).map((el) => {
+    const input = (field) => {
+      const node = el.querySelector(`[data-field="${field}"]`);
+      return node && node.value !== undefined ? String(node.value).trim() : "";
+    };
+    return {
+      date: el.dataset.date || "",
+      match_id: el.dataset.matchId || "",
+      match_no: el.dataset.matchNo || "",
+      match: el.dataset.match || "",
+      home_team: el.dataset.homeTeam || "",
+      away_team: el.dataset.awayTeam || "",
+      key: el.dataset.key || "",
+      play_type: el.dataset.playType || "",
+      direction: el.dataset.direction || "",
+      entry_odds: el.dataset.entryOdds || "",
+      home_goals: input("home_goals"),
+      away_goals: input("away_goals"),
+      closing_odds: input("closing_odds"),
+    };
+  }).filter((row) => row.home_goals !== "" && row.away_goals !== "");
+  if (!rows.length) {
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        "还没有可保存的比分。",
+        "请至少填写一场比赛的主队进球和客队进球；收盘赔率可以先留空。",
+      ]);
+    }
+    switchView("learning");
+    return;
+  }
+  const payload = await postRequest("/api/learning/save-quick-results", {
+    observations_json: value("#learningObservationsPath", "data/fixtures/observations_20260611_example.json"),
+    rows,
+  }, "保存快速赛后学习");
+  if (payload.ok) {
+    const saved = payload.data || {};
+    const resultsSaved = Number(saved.quick_results_saved || 0);
+    const closingSaved = Number(saved.quick_closing_saved || 0);
+    state.lastLearningImpact = {
+      saved: true,
+      score_after: closingSaved > 0 ? 78 : 72,
+      detail: `刚保存比分 ${resultsSaved} 场，收盘赔率 ${closingSaved} 项`,
+      summary: `比分 ${resultsSaved} 场，收盘赔率 ${closingSaved} 项`,
+      next: closingSaved > 0 ? "继续累计 CLV，观察长期是否跑赢收盘赔率。" : "下一次补收盘赔率，才能判断 CLV 价格质量。",
+    };
+    if (qs("#learningBuildSummary")) {
+      qs("#learningBuildSummary").innerHTML = C.list([
+        saved.summary_zh || "已保存快速赛后学习。",
+        `比分文件：${saved.quick_results_path || "N/A"}`,
+        saved.quick_closing_odds_path ? `收盘赔率文件：${saved.quick_closing_odds_path}` : "收盘赔率：未填写，已跳过 CLV。",
+        saved.next_step_zh || "下次刷新累计学习时会读取这些样本。",
+      ]);
+    }
+    loadLearningHistory(false);
+    loadClvHistory(false);
+    if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  }
+  switchView("learning");
+}
+
+function renderBuiltLearningFeedback(payload) {
+  const report = payload.report || {};
+  const summary = payload.builder_summary || {};
+  const view = {
+    status: "built",
+    report,
+    summary_cards: [
+      { label: "观察加载", value: summary.observations_loaded ?? 0, help: "赛前观察 JSON 中读取到的观察项。" },
+      { label: "已匹配", value: summary.matched_observations ?? 0, help: "成功匹配到赛果的观察项。" },
+      { label: "未匹配", value: summary.unmatched_observations ?? 0, help: "不会强行归因到错误比赛。" },
+      { label: "命中率", value: fmtPct(report.hit_rate), help: "只统计已匹配且可结算的观察。" },
+    ],
+    rows: report.rows || [],
+    lessons: [summary.message_zh || "已构建赛后学习反馈。", report.main_lesson_zh || "", report.next_model_action_zh || ""].filter(Boolean),
+  };
+  if (qs("#learningBuildSummary")) {
+    qs("#learningBuildSummary").innerHTML = C.list([
+      summary.message_zh || "已构建赛后学习反馈。",
+      `赛果 ${summary.results_loaded ?? 0} 场，观察 ${summary.observations_loaded ?? 0} 条，匹配 ${summary.matched_observations ?? 0} 条。`,
+      payload.unmatched_observations?.length ? `未匹配观察：${payload.unmatched_observations.length} 条。` : "全部可匹配观察已进入复盘。",
+    ]);
+  }
+  renderLearningFeedback(view);
+  loadLearningHistory(false);
+}
+
+function renderLearningFeedback(view) {
+  state.learningView = view;
+  const report = view.report || {};
+  qs("#learningCards").innerHTML = C.cards(view.summary_cards || []);
+  qs("#learningLessons").innerHTML = C.list(view.lessons || [report.main_lesson_zh || "继续累计赛果样本。"]);
+  qs("#learningBuckets").innerHTML = tableOrEmpty(report.bucket_rows || [], [
+    { key: "bucket", label: "赔率段" },
+    { key: "bucket_label_zh", label: "类型" },
+    { key: "attempts", label: "观察数" },
+    { key: "hits", label: "命中" },
+    { key: "raw_hit_rate", label: "原始命中率" },
+    { key: "bayesian_hit_rate", label: "贝叶斯命中率" },
+    { key: "message_zh", label: "说明" },
+  ], "暂无赔率段样本。");
+  if (qs("#learningCalibrationBins")) {
+    qs("#learningCalibrationBins").innerHTML = tableOrEmpty((report.calibration_bins || []).map(calibrationBinRow), calibrationBinColumns(), "暂无概率校准分桶。");
+  }
+  const rows = (report.rows || []).map((row) => ({
+    match: row.match,
+    play_type: row.play_type,
+    direction: row.direction,
+    odds: row.odds,
+    model_prob: fmtPct(row.model_prob),
+    calibrated_prob: fmtPct(row.calibrated_prob),
+    brier_score: fmtNum(row.brier_score),
+    log_loss: fmtNum(row.log_loss),
+    hit: row.hit === true ? "命中" : row.hit === false ? "未命中" : "未结算",
+    category: row.signal_category_zh,
+    action: row.recommended_use_zh,
+  }));
+  qs("#learningRows").innerHTML = tableOrEmpty(rows, [
+    { key: "match", label: "比赛" },
+    { key: "play_type", label: "玩法" },
+    { key: "direction", label: "方向" },
+    { key: "odds", label: "赔率" },
+    { key: "model_prob", label: "原模型概率" },
+    { key: "calibrated_prob", label: "校准概率" },
+    { key: "brier_score", label: "Brier" },
+    { key: "log_loss", label: "Log Loss" },
+    { key: "hit", label: "赛果" },
+    { key: "category", label: "分类" },
+    { key: "action", label: "模型动作" },
+  ], "暂无观察项复盘。");
+}
+
+async function loadLearningHistory(shouldSwitch = true) {
+  const payload = await request("/api/view/learning-history", {}, "刷新累计学习");
+  if (payload.ok) renderLearningHistory(payload.data);
+  await loadLearningClvHistory();
+  if (shouldSwitch) switchView("learning");
+}
+
+function renderLearningHistory(view) {
+  state.learningHistoryView = view;
+  if (!qs("#learningHistoryCards")) return;
+  const latestDaily = (view.daily_metrics || [])[0] || {};
+  const allTime = (view.window_metrics || []).find((row) => row.window === "all_time") || {};
+  qs("#learningHistoryCards").innerHTML = C.cards([
+    { label: "学习文件", value: view.files_loaded ?? 0, help: "包含 fixture 和 data/learning_feedback 下的 JSON。" },
+    { label: "已结算观察", value: view.settled_count ?? 0, help: "可用于累计命中率的观察项。" },
+    { label: "累计命中率", value: fmtPct(view.hit_rate), help: "样本少时只做保守校准。" },
+    { label: "累计 Brier", value: fmtNum(view.brier_score), help: view.probability_quality?.message_zh || "越低越好，评估概率校准。" },
+    { label: "累计 Log Loss", value: fmtNum(view.log_loss), help: "越低越好，对过度自信惩罚更重。" },
+    { label: "最新单日 ROI", value: fmtPct(latestDaily.paper_roi), help: latestDaily.message_zh || "按最近一个赛后学习日聚合。" },
+    { label: "累计 CLV", value: fmtSignedPct(allTime.average_clv_pct), help: view.clv_history_summary?.summary_zh || "收盘赔率样本越多越可靠。" },
+    { label: "错误文件", value: (view.errors || []).length, help: "读取失败的反馈文件数量。" },
+  ]);
+  qs("#learningHistoryLessons").innerHTML = C.list([
+    ...(view.lessons || []),
+    latestDaily.date ? `最新赛后日 ${latestDaily.date}：ROI ${fmtPct(latestDaily.paper_roi)}，Brier ${fmtNum(latestDaily.brier_score)}，Log Loss ${fmtNum(latestDaily.log_loss)}。` : "",
+    allTime.window ? `累计窗口：ROI ${fmtPct(allTime.paper_roi)}，CLV ${fmtSignedPct(allTime.average_clv_pct)}。` : "",
+    ...(view.next_actions_zh || []),
+  ].filter(Boolean));
+  if (qs("#learningCalibrationBins")) {
+    qs("#learningCalibrationBins").innerHTML = tableOrEmpty((view.calibration_bins || []).map(calibrationBinRow), calibrationBinColumns(), "暂无累计概率校准分桶。");
+  }
+  qs("#learningBuckets").innerHTML = tableOrEmpty(view.bucket_rows || [], [
+    { key: "bucket", label: "赔率段" },
+    { key: "bucket_label_zh", label: "类型" },
+    { key: "attempts", label: "观察数" },
+    { key: "hits", label: "命中" },
+    { key: "raw_hit_rate", label: "原始命中率" },
+    { key: "bayesian_hit_rate", label: "贝叶斯命中率" },
+    { key: "message_zh", label: "说明" },
+  ], "暂无累计赔率段样本。");
+  qs("#learningCategories").innerHTML = tableOrEmpty(view.category_rows || [], [
+    { key: "label_zh", label: "信号类型" },
+    { key: "attempts", label: "观察数" },
+    { key: "hits", label: "命中" },
+    { key: "hit_rate", label: "命中率" },
+    { key: "message_zh", label: "说明" },
+  ], "暂无信号类型样本。");
+}
+
+function calibrationBinRow(row) {
+  return {
+    probability_bin: row.probability_bin,
+    attempts: row.attempts,
+    hits: row.hits,
+    avg_predicted_prob: fmtPct(row.avg_predicted_prob),
+    observed_hit_rate: fmtPct(row.observed_hit_rate),
+    calibration_gap: fmtSignedPct(row.calibration_gap),
+    message_zh: row.message_zh,
+  };
+}
+
+function calibrationBinColumns() {
+  return [
+    { key: "probability_bin", label: "预测概率段" },
+    { key: "attempts", label: "样本" },
+    { key: "hits", label: "命中" },
+    { key: "avg_predicted_prob", label: "平均预测" },
+    { key: "observed_hit_rate", label: "实际命中" },
+    { key: "calibration_gap", label: "校准差" },
+    { key: "message_zh", label: "说明" },
+  ];
 }
 
 async function loadCredibility() {
@@ -382,7 +3928,40 @@ function renderBestParlay(view) {
   ];
   qs("#bestParlayTable").innerHTML = C.table(rows, bestParlayColumns());
   qs("#bestParlayRejected").innerHTML = tableOrEmpty((view.rejected_combos || []).slice(0, 10).map((item) => rowCandidate(item.label_zh || item.type || "被拒", item)), bestParlayColumns(), "暂无被拒组合。");
-  qs("#bestParlayConclusion").innerHTML = C.list([view.conclusion_zh || "暂无结论。", view.risk_note_zh || "串关会放大风险。"]);
+  qs("#bestParlayConclusion").innerHTML = `
+    ${comboDisciplineCoach(view)}
+    ${C.list([view.conclusion_zh || "暂无结论。", view.risk_note_zh || "串关会放大风险。"])}
+  `;
+}
+
+function comboDisciplineCoach(view) {
+  const rejected = view.rejected_combos || [];
+  const rejectedReasons = rejected.map((item) => `${item.reject_reason || ""} ${item.discipline_summary_zh || ""}`).join(" ");
+  const hasConfidenceIssue = /可信度|情报|首发|伤停|天气|新闻/.test(rejectedReasons);
+  const hasCorrelationIssue = /相关性|折扣/.test(rejectedReasons);
+  const hasLongshotIssue = /冷门|高赔率|very_high|风险/.test(rejectedReasons);
+  const actions = [
+    hasConfidenceIssue
+      ? "补齐首发、伤停、天气、新闻和战意后再评估；可信度不足时不把候选升级成组合。"
+      : "继续保持情报覆盖，重点复核临场首发和终盘赔率。",
+    hasCorrelationIssue
+      ? "优先选择不同比赛、不同风险来源的腿，避免把相似不确定性叠在一起。"
+      : "若组合腿相关性较低，再看组合概率是否覆盖组合赔率。",
+    hasLongshotIssue
+      ? "高赔率冷门只能做单独观察，默认不作为串联核心腿。"
+      : "赔率不高不低的中风险腿，更适合进入风险调整比较。",
+    "赛后把被拒组合也纳入学习包，观察长期是否真的被纪律过滤掉了亏损来源。",
+  ];
+  return `
+    <section class="comboDisciplineCoach">
+      <div>
+        <span>COMBO DISCIPLINE</span>
+        <strong>组合纪律怎么提分</strong>
+        <p>目标不是每天硬凑串联，而是让每一腿先过可信度、赔率覆盖、相关性和回撤纪律。</p>
+      </div>
+      ${C.list(actions)}
+    </section>
+  `;
 }
 
 async function loadTraderReview() {
@@ -487,17 +4066,15 @@ function renderReliabilityFromToday(view) {
   ]);
   qs("#reliabilityMatchCoverage").innerHTML = C.table(view.match_coverage_table || [], [
     { key: "match", label: "比赛" },
-    { key: "api_football", label: "API-Football" },
-    { key: "the_odds_api", label: "海外赔率" },
     { key: "injuries", label: "伤停" },
     { key: "lineup", label: "首发" },
     { key: "weather", label: "天气" },
     { key: "news", label: "新闻" },
-    { key: "match_confidence", label: "匹配置信度" },
     { key: "message_zh", label: "说明" },
   ]);
   qs("#reliabilityGuide").innerHTML = C.list([
     view.reliability_summary?.decision_guide_zh || "先看 Sporttery 主数据，再看第三方匹配和缺失情报。",
+    "已检查但未返回，不等于确认没有该信息；兜底估算也不等于现场真值。",
     "The Odds API 是海外赔率参考，不替代中国竞彩官方赔率。",
     "天气需要球场/城市坐标，未接入时保持未知。",
   ]);
@@ -533,6 +4110,7 @@ function renderDataSources(view) {
       <div class="secretConfigGrid">
         <label>API-Football key<input id="apiFootballKeyInput" type="password" autocomplete="off" placeholder="粘贴后保存到本机 .env.local"></label>
         <label>The Odds API key<input id="theOddsKeyInput" type="password" autocomplete="off" placeholder="粘贴后保存到本机 .env.local"></label>
+        <label>DeepSeek Pro key<input id="deepSeekKeyInput" type="password" autocomplete="off" placeholder="粘贴后 auto 模式会自动调用 DS Pro 研究层"></label>
       </div>
       <div class="inlineActions">
         <button id="saveLocalSecretsBtn" class="secondary">保存到本机配置</button>
@@ -583,15 +4161,35 @@ function bindSecretConfigButtons() {
 }
 
 async function saveLocalSecrets() {
+  const deepSeekKey = value("#deepSeekKeyInput") || value("#deepSeekKeyInputTop");
   const body = {
     JC_EDGE_API_FOOTBALL_KEY: value("#apiFootballKeyInput"),
     JC_EDGE_THE_ODDS_API_KEY: value("#theOddsKeyInput"),
+    JC_EDGE_DEEPSEEK_API_KEY: deepSeekKey,
+    JC_EDGE_DEEPSEEK_ENABLED: deepSeekKey ? "true" : "",
+    JC_EDGE_LLM_PROVIDER: deepSeekKey ? "deepseek" : "",
+    JC_EDGE_DEEPSEEK_MODEL: deepSeekKey ? "deepseek-v4-pro" : "",
+    JC_EDGE_DEEPSEEK_MAX_INPUT_TOKENS: deepSeekKey ? "24000" : "",
+    JC_EDGE_DEEPSEEK_MAX_OUTPUT_TOKENS: deepSeekKey ? "4000" : "",
   };
   const payload = await postJson("/api/config/local-env", body, "保存本地 key");
   if (payload.ok) {
+    if (deepSeekKey) {
+      setStatus("OK", "DeepSeek Pro 已保存，auto DS 研究已启用");
+      setAiAutoStatus("running", "DeepSeek Pro 已保存，正在自动接管", "系统会自动刷新 T+1 可售比赛、重跑本地组合纪律，并在 DS Pro ready 时生成研究摘要。");
+    }
     if (qs("#apiFootballKeyInput")) qs("#apiFootballKeyInput").value = "";
     if (qs("#theOddsKeyInput")) qs("#theOddsKeyInput").value = "";
+    if (qs("#deepSeekKeyInput")) qs("#deepSeekKeyInput").value = "";
+    if (qs("#deepSeekKeyInputTop")) qs("#deepSeekKeyInputTop").value = "";
+    if (qs("#explainMode") && deepSeekKey) qs("#explainMode").value = "auto";
+    state.autoAiResearchKey = "";
     await refreshDataSourcesOnly();
+    await loadLlmStatus();
+    if (deepSeekKey) {
+      if (state.todayView) maybeAutoRunAiResearch(state.todayView);
+      else window.setTimeout(() => loadToday(), 250);
+    }
   }
 }
 
@@ -643,7 +4241,13 @@ async function runOptimizer(compareProfiles = true) {
 function renderOptimizer(view) {
   state.optimizerView = view;
   qs("#optimizerCards").innerHTML = C.cards(view.summary_cards || []);
-  qs("#optimizerNo2Reason").innerHTML = C.list([view.no_2x1_reason || "当前没有 2串1 入选，请查看被拒原因。"]);
+  qs("#optimizerNo2Reason").innerHTML = C.list([
+    view.combo_gate_summary_zh || view.no_combo_state?.reason_zh || view.no_2x1_reason || "当前没有 2串1 入选，请查看被拒原因。",
+    `AI 研究：${view.ai_status_summary_zh || view.ai_combo_research?.display_status_zh || view.ai_combo_research?.ds_status_zh || "待检查"}`,
+    view.trader_review?.final_call_zh || "先看单关，再决定是否保留组合观察。",
+    view.no_2x1_reason || "当前没有 2串1 入选，请查看被拒原因。",
+  ]);
+  renderClvTracking(view.clv_tracking || {});
   qs("#optimizerProfileComparison").innerHTML = C.table(view.profile_comparison || [], [
     { key: "profile", label: "方案" }, { key: "daily_exposure_cap", label: "每日上限" }, { key: "recommended_paper_exposure", label: "纸面投入" },
     { key: "singles_count", label: "单关" }, { key: "parlay_2x1_count", label: "2串1" }, { key: "parlay_3x1_count", label: "3串1" }, { key: "note", label: "说明" },
@@ -685,9 +4289,20 @@ async function loadScoreGoals() {
 function renderScoreGoals(view) {
   state.scoreGoalsView = view;
   qs("#scoreGoalsCards").innerHTML = C.cards(view.summary_cards || []);
-  qs("#scoreGoalsHandicap").innerHTML = tableOrEmpty(view.handicap_table || [], obsColumns, "当前没有让球胜平负观察。 ");
-  qs("#scoreGoalsTotals").innerHTML = C.table(view.total_goals_table || [], obsColumns);
-  qs("#scoreGoalsScores").innerHTML = C.table(view.score_table || [], obsColumns);
+  qs("#scoreGoalsHandicap").innerHTML = [
+    scoreGoalCards(view.handicap_table || [], "handicap", "当前没有让球胜平负观察。"),
+    detailsTable("查看让球详细字段", view.handicap_table || [], compactObsColumns()),
+  ].join("");
+  qs("#scoreGoalsTotals").innerHTML = [
+    `<div class="sectionHint">优先看“模型概率、赔率/EV 状态、可信度和动作”。完整技术字段放在下方折叠详情里。</div>`,
+    scoreGoalCards(view.total_goals_table || [], "total", "当前没有总进球观察。"),
+    detailsTable("查看总进球详细字段", view.total_goals_table || [], compactObsColumns()),
+  ].join("");
+  qs("#scoreGoalsScores").innerHTML = [
+    `<div class="sectionHint">比分是高波动精确事件，只适合作为倾向参考，不适合作为强信号。</div>`,
+    scoreGoalCards(view.score_table || [], "score", "当前没有比分观察。"),
+    detailsTable("查看比分详细字段", view.score_table || [], compactObsColumns()),
+  ].join("");
   qs("#scoreGoalsIntegrity").innerHTML = tableOrEmpty(view.probability_integrity || [], [
     { key: "match", label: "比赛" },
     { key: "total_goals_sum", label: "总进球合计" },
@@ -709,6 +4324,24 @@ function renderScoreGoals(view) {
   ].join("");
 }
 
+function compactObsColumns() {
+  return [
+    { key: "match", label: "比赛" },
+    { key: "play_type", label: "玩法" },
+    { key: "direction", label: "方向" },
+    { key: "model_prob", label: "模型概率" },
+    { key: "official_odds", label: "赔率" },
+    { key: "ev_status_zh", label: "EV 状态" },
+    { key: "confidence_label_zh", label: "可信度" },
+    { key: "recommended_action_zh", label: "动作" },
+  ];
+}
+
+function detailsTable(title, rows, columns) {
+  if (!rows || !rows.length) return "";
+  return `<details class="detailDrawer"><summary>${C.escapeHtml(title)}</summary>${C.table(rows, columns)}</details>`;
+}
+
 async function runOperation() {
   const payload = await request("/api/view/operation", { historical_data: value("#operationData"), initial_bankroll: bankrollParam() }, "运行模拟走盘");
   if (payload.ok) renderOperation(payload.data);
@@ -728,6 +4361,8 @@ async function previewImport() {
   const params = { input: value("#importInput"), adapter: value("#adapter"), mapping: value("#mappingPath") };
   const payload = await request("/api/view/import/preview", params, "预检字段");
   if (payload.ok) renderImport(payload.data);
+  const credibility = await request("/api/view/backtest-credibility", { input: params.input, source_type: "user_csv" }, "评估 CSV 回测可信度");
+  if (credibility.ok) renderBacktestCredibility(credibility.data);
   const workflow = await request("/api/view/user-workflow", { input: params.input, mapping: params.mapping }, "生成用户 CSV 复盘路径");
   if (workflow.ok) renderUserWorkflow(workflow.data);
   switchView("import");
@@ -738,6 +4373,32 @@ function renderImport(view) {
   qs("#fieldReportTable").innerHTML = C.table(view.field_report?.recognized_fields || [], [{ key: "canonical", label: "系统字段" }, { key: "label_zh", label: "中文含义" }, { key: "source", label: "CSV 列名" }, { key: "status", label: "状态" }]);
   qs("#repairSuggestionTable").innerHTML = C.table(view.repair_suggestions || [], [{ key: "severity", label: "级别" }, { key: "field", label: "字段" }, { key: "message_zh", label: "问题" }, { key: "suggestion_zh", label: "怎么修" }, { key: "mapping_example", label: "mapping 示例" }]);
   qs("#importQuality").innerHTML = `<pre>${C.escapeHtml(JSON.stringify(view.quality || {}, null, 2))}</pre>`;
+}
+function renderClvTracking(view) {
+  qs("#optimizerClvCards").innerHTML = C.cards(view.summary_cards || []);
+  qs("#optimizerClvTable").innerHTML = tableOrEmpty(view.rows || [], [
+    { key: "match", label: "比赛" },
+    { key: "direction", label: "方向" },
+    { key: "entry_odds", label: "赛前赔率" },
+    { key: "closing_odds", label: "收盘赔率" },
+    { key: "status", label: "状态" },
+    { key: "clv", label: "CLV" },
+    { key: "message", label: "解释" },
+  ], "当前没有可跟踪的 CLV 观察项。");
+  qs("#optimizerClvNotes").innerHTML = C.list([view.summary_zh || "CLV 等待收盘赔率后用于复盘。", view.disclaimer || "CLV 不构成投注建议。"]);
+}
+function renderBacktestCredibility(report) {
+  qs("#backtestCredibilityCards").innerHTML = C.cards([
+    { label: "可信度", value: `${report.score ?? 0}/100`, help: `评级 ${report.grade || "D"}，等级 ${report.confidence_level_zh || "低"}` },
+    { label: "样本量", value: report.row_count ?? 0, help: "历史比赛越多，回测越不容易被短期波动误导。" },
+    { label: "赔率覆盖", value: fmtPct(report.odds_coverage), help: "胜/平/负赔率覆盖越完整，EV 和 CLV 复盘越可靠。" },
+    { label: "赛果覆盖", value: fmtPct(report.result_coverage), help: "主客队进球/比分字段决定回测能否结算。" },
+  ]);
+  qs("#backtestCredibilityNotes").innerHTML = C.list([
+    ...(report.reasons || []),
+    ...(report.next_steps || []),
+    report.disclaimer || "回测可信度不保证未来表现。",
+  ]);
 }
 function renderUserWorkflow(view) {
   const replayReadiness = view.replay_readiness_summary || {};
@@ -803,10 +4464,162 @@ function renderQa(view) {
 
 async function checkHealth() { await request("/api/health", {}, "检查本地服务"); }
 function clearOutput() { state.lastRaw = {}; renderRaw({}); renderWarnings([]); setStatus("Idle", "已清空"); }
+async function loadLlmStatus() {
+  const payload = await request("/api/llm/status", {}, "读取解释层状态");
+  if (!payload.ok || !qs("#llmStatusPanel")) return;
+  const data = payload.data || {};
+  const displayInputTokens = data.max_input_tokens || (data.api_key_present ? "24000" : "N/A");
+  const displayOutputTokens = data.max_output_tokens || (data.api_key_present ? "4000" : "N/A");
+  const runtimeLine = data.last_attempt_at
+    ? `最近一次：${data.runtime_status_zh || data.runtime_status || "未知"}；目标 ${data.last_provider_target || "N/A"} / 实际 ${data.last_provider_resolved || "N/A"}`
+    : "最近一次：还没有触发本轮 DS 研究。";
+  const detailLine = data.status_detail_zh || data.fallback_reason || "自动 DS：等待 key 或启用状态；不可用时会改用本地研究摘要。";
+  const configLine = data.config_status_zh || "配置状态：待检查。";
+  const runtimeNotice = data.runtime_notice_zh || "本轮状态：待检查。";
+  const nextStep = data.next_step_zh || "刷新今日观察后，系统会自动判断是否触发 DS 研究。";
+  qs("#llmStatusPanel").innerHTML = C.list([
+    `状态：${data.status_zh || data.status || "unknown"}；模型：${data.model || "未配置"}`,
+    `配置：${configLine}`,
+    `API key：${data.api_key_present ? "已配置" : "未配置"}；默认外部调用：${data.external_calls_default ? "是" : "否"}`,
+    `Token 上限：输入 ${displayInputTokens} / 输出 ${displayOutputTokens}`,
+    data.ready_for_auto ? "自动 DS：已就绪；刷新 T+1 后会自动运行研究层。" : (data.fallback_reason || "自动 DS：等待 key 或启用状态；不可用时会改用本地研究摘要。"),
+    `本轮触发：${data.ds_attempted ? "已尝试" : "未尝试"}；结果：${data.ds_completed ? "已成功返回" : "未成功返回"}`,
+    data.last_token_total ? `最近一次消耗：输入 ${data.last_token_in ?? "N/A"} / 输出 ${data.last_token_out ?? "N/A"} / 合计 ${data.last_token_total}` : "最近一次消耗：暂无",
+    runtimeLine,
+    runtimeNotice,
+    detailLine,
+    `下一步：${nextStep}`,
+    data.last_error_label_zh ? `最近一次异常：${data.last_error_label_zh}${data.last_error_message_zh ? `；${data.last_error_message_zh}` : ""}` : "最近一次异常：暂无",
+    ...(Array.isArray(data.decision_chain) ? data.decision_chain.map((step) => `${step.label_zh || step.step}：${step.detail_zh || (step.passed ? "已通过" : "未通过")}`) : []),
+    "长线策略：便宜 token 优先用于解释被拒组合、缺失情报、赛后复盘和下一轮改进，不直接改概率引擎。",
+    "用途：只做解释层，不参与概率、EV、候选筛选或组合决策。",
+  ]);
+}
 
 function bind(selector, event, handler) { const el = qs(selector); if (el) el.addEventListener(event, handler); }
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".matchdayReviewBtn") : null;
+  if (button) evaluateMatchdayOdds(button);
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest("#quickLearningPackBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  prepareDailyLearningPack();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest("#quickComboDisciplineBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  loadBestParlay();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowExperimentRecordBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  recordTodayExperimentStart();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowExperimentReviewBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  reviewTodayExperiment();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowNextExperimentPlanBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  recordNextExperimentPlan();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowStartPlannedExperimentBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  startPlannedExperiment();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowQuickActionBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  const action = button.dataset.workflowAction || "";
+  const scoreBefore = state.currentWorkflowScore;
+  button.classList.add("isWorking");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  recordWorkflowAction(action, workflowActionStatusText(action), "running", { score_before: scoreBefore });
+  if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+  setStatus("Working", workflowActionStatusText(action));
+  workflowRunQuickAction(action)
+    .then(() => {
+      recordWorkflowAction(action, workflowActionDoneText(action), "done", { score_before: scoreBefore, score_after: state.currentWorkflowScore });
+      if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+    })
+    .catch((error) => {
+      recordWorkflowAction(action, workflowActionErrorText(action, error), "error", { score_before: scoreBefore, score_after: state.currentWorkflowScore });
+      if (state.todayView) renderWorkflowScore(state.todayView, "ready");
+      setStatus("Check", workflowActionErrorText(action, error));
+    })
+    .finally(() => {
+      button.classList.remove("isWorking");
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    });
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowClearHistoryBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  const defaultText = button.dataset.defaultText || button.textContent || "清空";
+  button.dataset.defaultText = defaultText;
+  if (button.dataset.confirming !== "1") {
+    button.dataset.confirming = "1";
+    const confirmVerb = defaultText.includes("重置") ? "重置" : "清空";
+    button.textContent = `再点确认${confirmVerb}`;
+    setStatus("Check", `再次点击${defaultText}会删除最近处理历史。`);
+    window.setTimeout(() => {
+      if (button.dataset.confirming === "1") {
+        button.dataset.confirming = "0";
+        button.textContent = button.dataset.defaultText || "清空";
+      }
+    }, 5000);
+    return;
+  }
+  button.dataset.confirming = "0";
+  button.textContent = button.dataset.defaultText || "清空";
+  clearWorkflowActionHistory();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest(".workflowCopyBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  const defaultText = button.dataset.defaultText || button.textContent || "复制摘要";
+  button.dataset.defaultText = defaultText;
+  button.dataset.copyState = "working";
+  button.textContent = "复制中";
+  button.disabled = true;
+  copyTextToClipboard(button.dataset.copyText || "")
+    .then((ok) => {
+      button.dataset.copyState = ok ? "done" : "error";
+      button.textContent = ok ? "已复制" : "复制失败";
+      setStatus(ok ? "Ready" : "Check", ok ? (button.dataset.copyOk || "摘要已复制。") : (button.dataset.copyFail || "复制失败，请手动选中文本。"));
+    })
+    .catch((error) => {
+      button.dataset.copyState = "error";
+      button.textContent = "复制失败";
+      setStatus("Check", `复制失败：${error?.message || "浏览器未允许剪贴板访问"}`);
+    })
+    .finally(() => {
+      window.setTimeout(() => {
+        button.dataset.copyState = "idle";
+        button.textContent = button.dataset.defaultText || "复制摘要";
+        button.disabled = false;
+      }, 1800);
+    });
+});
 bind("#todayRefreshBtn", "click", loadToday);
+bind("#aiComboResearchBtn", "click", loadAiComboResearch);
+bind("#saveDeepSeekTopBtn", "click", saveLocalSecrets);
 bind("#todayOptimizerBtn", "click", () => runOptimizer(true));
 bind("#todayOperationBtn", "click", runOperation);
 bind("#todayImportBtn", "click", previewImport);
@@ -819,6 +4632,20 @@ bind("#missingInfoBtn", "click", loadMissingInfo);
 bind("#signalsPreviewBtn", "click", previewSignals);
 bind("#bestParlayBtn", "click", loadBestParlay);
 bind("#traderReviewBtn", "click", loadTraderReview);
+bind("#learningFeedbackBtn", "click", loadLearningFeedback);
+bind("#learningBuildBtn", "click", buildLearningFeedbackPreview);
+bind("#learningSaveBtn", "click", saveLearningFeedback);
+bind("#learningDailyPackBtn", "click", prepareDailyLearningPack);
+bind("#learningQuickFormBtn", "click", renderLearningQuickForm);
+bind("#learningQuickSaveBtn", "click", saveLearningQuickResults);
+bind("#learningDailySaveBtn", "click", saveDailyLearningResults);
+bind("#learningSnapshotBtn", "click", saveLearningObservationSnapshot);
+bind("#learningResultTemplateBtn", "click", saveLearningResultTemplate);
+bind("#learningClosingTemplateBtn", "click", saveLearningClosingOddsTemplate);
+bind("#learningClvReviewBtn", "click", reviewLearningClv);
+bind("#learningClvSaveBtn", "click", saveLearningClvReview);
+bind("#dailyPackTodayBtn", "click", prepareDailyLearningPack);
+bind("#dailyReviewTodayBtn", "click", renderLearningQuickForm);
 bind("#optimizerBtn", "click", () => runOptimizer(false));
 bind("#optimizerCompareBtn", "click", () => runOptimizer(true));
 bind("#scoreGoalsBtn", "click", loadScoreGoals);
@@ -827,4 +4654,9 @@ bind("#importBtn", "click", previewImport);
 bind("#qaBtn", "click", runQa);
 
 renderRaw({});
+state.workflowActionHistory = readWorkflowActionHistory().slice(0, 6);
+state.lastWorkflowAction = state.workflowActionHistory[0] || null;
+updateLearningFlowStatus();
+loadLlmStatus();
+renderAiResearchMemory();
 loadToday();

@@ -6,6 +6,7 @@ from src.optimizer.candidate_pool import build_parlay_candidates
 from src.optimizer.best_parlay import build_best_parlay_summary
 from src.optimizer.constraints import RISK_PROFILES, merge_config, risk_allowed
 from src.optimizer.scoring import score_candidate
+from src.market.clv import build_clv_tracking
 
 RANKING_LIMIT = 30
 
@@ -58,6 +59,7 @@ def _optimize_single_profile(candidates: list[dict], bankroll: float, cfg: dict)
         "disclaimer": "仅供纸面模拟和概率研究，不构成投注建议。本工具不提供投注、下单、支付、代购或自动化购彩能力。",
     }
     result["best_parlay_summary"] = build_best_parlay_summary(result)
+    result["clv_tracking"] = build_clv_tracking(_selected_observations_for_clv(selected))
     return result
 
 
@@ -115,21 +117,38 @@ def _base_reject_reason(candidate: dict, cfg: dict) -> str:
 
 def _parlay_reject_reason(candidate: dict, cfg: dict) -> str:
     reasons = []
+    kind = candidate.get("candidate_type", "parlay_2x1")
     base = _base_reject_reason(candidate, cfg)
     if base:
         reasons.append(base)
+    combo_prob = float(candidate.get("combo_prob") or candidate.get("model_prob") or 0.0)
+    if kind == "parlay_3x1":
+        min_combo_prob = float(cfg.get("min_parlay_3x1_prob", 0.12))
+        combo_label = "3串1"
+    else:
+        min_combo_prob = float(cfg.get("min_parlay_2x1_prob", 0.20))
+        combo_label = "2串1"
+    if combo_prob < min_combo_prob:
+        reasons.append(f"{combo_label} 组合命中概率低于纪律门槛 {min_combo_prob:.0%}")
     weak_legs = []
+    min_leg_confidence = float(cfg.get("min_leg_confidence", 0.50))
     for leg in candidate.get("legs", []) or []:
         if leg.get("parlay_eligible") is False:
             weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：高赔率冷门腿不适合作为串联核心".strip())
+            continue
+        leg_confidence = float(leg.get("observation_confidence") or leg.get("confidence_score") or 0.0)
+        if leg_confidence and leg_confidence < min_leg_confidence:
+            weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：单腿可信度低于 {min_leg_confidence:.0%}".strip())
+            continue
+        leg_quality = float(leg.get("leg_quality_score") or 0.0)
+        if leg_quality and leg_quality < 0.45:
+            weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：单腿质量分偏低".strip())
             continue
         leg_reason = leg.get("reject_reason") or _base_reject_reason(leg, cfg)
         if leg_reason:
             weak_legs.append(f"{leg.get('home_team','')} vs {leg.get('away_team','')} {leg.get('outcome_label','')}：{leg_reason}".strip())
     if weak_legs:
         reasons.append("组合腿未全部通过单关纪律（" + "；".join(weak_legs[:3]) + "）")
-    if float(candidate.get("combo_prob") or 0.0) < 0.12:
-        reasons.append("组合命中概率偏低")
     if float(candidate.get("correlation_discount") or 1.0) < 0.98:
         reasons.append("相关性折扣后吸引力下降")
     return "；".join(dict.fromkeys(reasons))
@@ -174,9 +193,31 @@ def _ranking_row(item: dict) -> dict:
         "confidence_score": item.get("observation_confidence") or item.get("confidence_score"),
         "combo_score": item.get("combo_score"),
         "risk_adjusted_score": item.get("risk_adjusted_score"),
+        "leg_quality_score": item.get("leg_quality_score"),
+        "information_score": item.get("information_score"),
+        "risk_penalty": item.get("risk_penalty"),
         "market_model_agreement": item.get("market_model_agreement"),
         "odds_quality": item.get("odds_quality"),
         "drawdown_safety": item.get("drawdown_safety"),
+        "calibrated_prob": item.get("calibrated_prob"),
+        "calibrated_ev": item.get("calibrated_ev"),
+        "signal_category": item.get("signal_category"),
+        "signal_category_zh": item.get("signal_category_zh"),
+        "recommended_use_zh": item.get("recommended_use_zh"),
+        "odds_bucket_zh": item.get("odds_bucket_zh"),
+        "probability_bin": item.get("probability_bin"),
+        "probability_bin_weight": item.get("probability_bin_weight"),
+        "probability_bin_message_zh": item.get("probability_bin_message_zh", ""),
+        "break_even_prob": item.get("break_even_prob"),
+        "safety_margin": item.get("safety_margin"),
+        "safety_margin_label_zh": item.get("safety_margin_label_zh"),
+        "odds_reading_zh": item.get("odds_reading_zh"),
+        "decision_level": item.get("decision_level"),
+        "decision_label_zh": item.get("decision_label_zh"),
+        "decision_action_zh": item.get("decision_action_zh"),
+        "decision_reason_zh": item.get("decision_reason_zh"),
+        "parlay_policy_zh": item.get("parlay_policy_zh"),
+        "hit_rate_discipline_zh": item.get("hit_rate_discipline_zh", ""),
         "risk_level": item.get("risk_level"),
         "paper_stake": item.get("suggested_paper_stake", 0.0),
         "longshot_warning": item.get("longshot_warning", ""),
@@ -219,6 +260,9 @@ def _risk_summary(portfolio: dict, exposure: float, cap: float, cfg: dict) -> di
             "max_parlay_3x1": cfg.get("max_parlay_3x1"),
             "min_ev": cfg.get("min_ev"),
             "min_edge": cfg.get("min_edge"),
+            "min_parlay_2x1_prob": cfg.get("min_parlay_2x1_prob"),
+            "min_parlay_3x1_prob": cfg.get("min_parlay_3x1_prob"),
+            "min_leg_confidence": cfg.get("min_leg_confidence"),
         },
         "portfolio_counts": {key: len(value) for key, value in portfolio.items()},
     }
@@ -228,6 +272,7 @@ def _explanations(portfolio: dict, exposure: float, cap: float, cfg: dict, no_2x
     return [
         f"当前风险档位：{cfg.get('risk_profile_label')}。每日纸面暴露上限为本金 {float(cfg.get('max_daily_exposure_pct', 0)):.1%}。",
         no_2x1_reason,
+        f"串联命中率纪律：2串1 最低组合命中概率 {float(cfg.get('min_parlay_2x1_prob', 0)):.0%}，3串1 最低组合命中概率 {float(cfg.get('min_parlay_3x1_prob', 0)):.0%}，单腿可信度门槛 {float(cfg.get('min_leg_confidence', 0)):.0%}。",
         "为什么没有更激进：优化器会先限制每日纸面暴露，再限制单关、2串1、3串1 的单项纸面投入，并用 EV、Edge、风险等级和相关性折扣过滤组合。",
         "如果切换到均衡或进取档，可能出现更多 2串1 或 3串1 观察项，但回撤和连续亏损概率也会升高。",
         "10000 元模拟只赚约 180 元，主要因为投入比例保守、候选数量有限、组合数量少，且 fixture 不是真实生产数据。",
@@ -257,6 +302,14 @@ def _comparison_summary(result: dict) -> dict:
         "parlay_3x1_count": len(portfolio.get("parlay_3x1", []) or []),
         "no_2x1_reason": result.get("no_2x1_reason"),
     }
+
+
+def _selected_observations_for_clv(portfolio: dict) -> list[dict]:
+    rows = []
+    for key in ("singles", "parlay_2x1", "parlay_3x1"):
+        for item in portfolio.get(key, []) or []:
+            rows.append(item)
+    return rows
 
 
 def _label(item: dict) -> str:

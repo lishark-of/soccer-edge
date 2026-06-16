@@ -32,6 +32,7 @@ def build_source_coverage(matches: list, target_date: str | None) -> dict:
             if row.get("match_id"):
                 by_match_id[str(row["match_id"])] = row
     cards = _source_cards(match_rows, api_status, odds_status)
+    audit_notes = _warnings(api_status, odds_status, match_rows)
     return {
         "coverage_version": "phase2q_enrichment_coverage_v0",
         "date": target_date,
@@ -41,7 +42,9 @@ def build_source_coverage(matches: list, target_date: str | None) -> dict:
         "api_football_status": _public_api_status(api_status),
         "the_odds_api_status": _public_odds_status(odds_status),
         "summary_zh": _summary(cards),
-        "warnings": _warnings(api_status, odds_status, match_rows),
+        "audit_title_zh": "情报覆盖审计",
+        "audit_notes_zh": audit_notes,
+        "warnings": audit_notes,
     }
 
 
@@ -235,20 +238,53 @@ def _ratio_score(count: int, total: int) -> int:
 
 def _summary(cards: list[dict]) -> str:
     parts = [f"{card['source']}：{card.get('label_zh')}，覆盖 {card.get('coverage')}" for card in cards]
-    return "；".join(parts)
+    return "情报覆盖审计：" + "；".join(parts)
 
 
 def _warnings(api_status: dict, odds_status: dict, match_rows: list[dict]) -> list[str]:
-    warnings = []
-    for status in (api_status, odds_status):
-        if status.get("status") not in {"ok", "not_configured"}:
-            warnings.append(status.get("message_zh", "第三方数据源暂不可用。"))
+    notes: list[str] = []
+    if api_status.get("status") not in {"ok", "not_configured"}:
+        notes.append("覆盖审计：API-Football 当前未稳定返回，赛程/伤停/首发相关信号会自动降权，不会被当作已确认情报。")
+    if odds_status.get("status") not in {"ok", "not_configured"}:
+        notes.append("覆盖审计：海外赔率参考当前未稳定返回，系统仍以竞彩主赔率为主，不会把缺失参考伪装成已覆盖。")
+    counts = {
+        "injuries_error": 0,
+        "lineup_error": 0,
+        "weather_fallback": 0,
+        "weather_error": 0,
+        "news_checked_empty": 0,
+        "news_error": 0,
+    }
     for row in match_rows:
-        for key in ("injuries", "lineup", "weather", "news"):
-            status = (row.get(key) or {}).get("status")
-            if status == "error":
-                warnings.append(f"{row.get('match')} {key} 读取异常。")
-    return warnings
+        injuries_status = normalize_coverage_status((row.get("injuries") or {}).get("status"))
+        lineup_status = normalize_coverage_status((row.get("lineup") or {}).get("status"))
+        weather_status = normalize_coverage_status((row.get("weather") or {}).get("status"))
+        news_status = normalize_coverage_status((row.get("news") or {}).get("status"))
+        if injuries_status == "error":
+            counts["injuries_error"] += 1
+        if lineup_status == "error":
+            counts["lineup_error"] += 1
+        if weather_status == "fallback_estimated":
+            counts["weather_fallback"] += 1
+        if weather_status == "error":
+            counts["weather_error"] += 1
+        if news_status == "checked_empty":
+            counts["news_checked_empty"] += 1
+        if news_status == "error":
+            counts["news_error"] += 1
+    if counts["injuries_error"]:
+        notes.append(f"覆盖审计：{counts['injuries_error']} 场伤停查询失败，当前按“未确认”处理。")
+    if counts["lineup_error"]:
+        notes.append(f"覆盖审计：{counts['lineup_error']} 场首发查询失败，当前按“未确认”处理；首发通常临近开赛才更完整。")
+    if counts["weather_fallback"]:
+        notes.append(f"覆盖审计：{counts['weather_fallback']} 场天气使用城市兜底估算，可信度已下调。")
+    if counts["weather_error"]:
+        notes.append(f"覆盖审计：{counts['weather_error']} 场天气查询失败，当前保持未知，不会编造。")
+    if counts["news_checked_empty"]:
+        notes.append(f"覆盖审计：{counts['news_checked_empty']} 场新闻已检索但未返回公开报道，这不等于确认没有场外因素。")
+    if counts["news_error"]:
+        notes.append(f"覆盖审计：{counts['news_error']} 场新闻检索失败，当前按未知处理。")
+    return notes[:6]
 
 
 def _public_api_status(status: dict) -> dict:
