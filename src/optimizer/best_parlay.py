@@ -15,13 +15,14 @@ def build_best_parlay_summary(optimizer_result: dict) -> dict:
     gate_closed = gate.get("combo_gate") == "closed"
     gate_empty = _gate_empty(gate)
     best_single = _best(singles, key="risk_adjusted_score")
+    daily_single = _daily_candidate(best_single, gate, kind="single")
     daily_2x1 = _daily_candidate(_best(parlay2, key="risk_adjusted_score"), gate)
     daily_3x1 = _daily_candidate(_best(parlay3, key="risk_adjusted_score"), gate)
-    best_2x1 = gate_empty if gate_closed else _best(parlay2, key="risk_adjusted_score")
-    best_3x1 = gate_empty if gate_closed else _best(parlay3, key="risk_adjusted_score")
-    safest_combo = gate_empty if gate_closed else _best(combos, key="safety_score")
-    highest_ev_combo = gate_empty if gate_closed else _best(combos, key="ev")
-    best_risk_adjusted = gate_empty if gate_closed else _best(combos, key="risk_adjusted_score")
+    best_2x1 = daily_2x1 if _has_candidate_identity(daily_2x1) else gate_empty
+    best_3x1 = daily_3x1 if _has_candidate_identity(daily_3x1) else gate_empty
+    safest_combo = _daily_candidate(_best(combos, key="safety_score"), gate, kind="combo") if combos else gate_empty
+    highest_ev_combo = _daily_candidate(_best(combos, key="ev"), gate, kind="combo") if combos else gate_empty
+    best_risk_adjusted = _daily_candidate(_best(combos, key="risk_adjusted_score"), gate, kind="combo") if combos else gate_empty
     user_board = _user_combo_board(
         gate=gate,
         best_single=best_single,
@@ -39,12 +40,13 @@ def build_best_parlay_summary(optimizer_result: dict) -> dict:
         "risk_profile": optimizer_result.get("risk_profile"),
         "risk_profile_label": optimizer_result.get("risk_profile_label"),
         "credibility_gate": gate,
-        "status": "no_combo" if no_combo else "has_combo",
-        "label_zh": "暂无优秀串联观察" if no_combo else "存在优秀串联观察",
+        "status": "paper_candidates" if no_combo and (_has_candidate_identity(daily_2x1) or _has_candidate_identity(daily_3x1)) else ("no_combo" if no_combo else "has_combo"),
+        "label_zh": "已输出每日纸面候选" if no_combo and (_has_candidate_identity(daily_2x1) or _has_candidate_identity(daily_3x1)) else ("暂无优秀串联观察" if no_combo else "存在优秀串联观察"),
         "no_combo_reason": optimizer_result.get("no_combo_reason") or gate.get("reason_zh") or "可信度不足、情报缺失较多、组合风险高于模型优势。",
         "best_single": best_single,
         "best_2x1": best_2x1,
         "best_3x1_if_allowed": best_3x1,
+        "daily_single_candidate": daily_single,
         "daily_2x1_candidate": daily_2x1,
         "daily_3x1_candidate": daily_3x1,
         "safest_combo": safest_combo,
@@ -53,7 +55,7 @@ def build_best_parlay_summary(optimizer_result: dict) -> dict:
         "user_combo_board": user_board,
         "selected_combos": selected_combos[:10],
         "rejected_combos": rejected[:20],
-        "conclusion_zh": optimizer_result.get("no_combo_reason") or _conclusion(singles, parlay2, parlay3),
+        "conclusion_zh": _daily_output_conclusion(daily_single, daily_2x1, daily_3x1, gate, optimizer_result.get("no_combo_reason")) or _conclusion(singles, parlay2, parlay3),
         "risk_note_zh": "优秀串联只代表纸面观察排序。串关需要多场同时命中，会显著放大波动；不要因为组合赔率高就提高信心。",
         "disclaimer": "仅用于观察信号、纸面模拟和风险诊断，不构成投注建议。",
     }
@@ -226,24 +228,50 @@ def _is_real_candidate(item: dict) -> bool:
     return bool(item) and item.get("status") != "empty" and _float(item.get("odds")) > 1.01
 
 
-def _daily_candidate(item: dict, gate: dict) -> dict:
+def _has_candidate_identity(item: dict) -> bool:
+    return bool(item) and item.get("status") != "empty" and bool(item.get("legs") or item.get("match") or item.get("message_zh"))
+
+
+def _daily_candidate(item: dict, gate: dict, kind: str = "combo") -> dict:
     if not _is_real_candidate(item):
         return item
     candidate = dict(item)
     combo_gate = gate.get("combo_gate")
-    if combo_gate in {"closed", "restricted"} and candidate.get("status") != "入选":
+    if candidate.get("status") != "入选":
         candidate["daily_candidate"] = True
-        candidate["status"] = candidate.get("status") or "未入选"
-        candidate["label_zh"] = candidate.get("label_zh") or "每日纸面候选"
+        candidate["status"] = "纸面候选" if kind != "single" else candidate.get("status", "纸面候选")
+        candidate["label_zh"] = candidate.get("label_zh") or ("每日单关候选" if kind == "single" else "每日纸面候选")
         candidate["selected_reason_zh"] = (
             "每日必须输出的纸面候选：用于复盘赔率、联合概率、相关性和缺失情报，不代表通过纪律门控。"
+            if kind != "single"
+            else "每日必须输出的单关候选：先看赔率价值、模型概率和情报缺口，再决定是否进入后续观察。"
         )
         candidate["reject_reason"] = candidate.get("reject_reason") or gate.get("reason_zh") or "未通过可信度门控。"
         quality = dict(candidate.get("best_parlay_quality") or {})
-        quality["final_status"] = "daily_candidate"
+        quality["final_status"] = "daily_candidate" if kind != "single" else "single_candidate"
         quality["reason_zh"] = candidate["reject_reason"]
         candidate["best_parlay_quality"] = quality
+        candidate["paper_candidate_warning_zh"] = (
+            "这是每日强制输出的纸面组合候选，不等于已通过纪律门控。"
+            if kind != "single"
+            else "这是每日强制输出的单关候选，仍需看情报完整度与临场赔率。"
+        )
     return candidate
+
+
+def _daily_output_conclusion(daily_single: dict, daily_2x1: dict, daily_3x1: dict, gate: dict, no_combo_reason: str | None) -> str:
+    bits = []
+    if _is_real_candidate(daily_single):
+        bits.append("已输出最推荐单关")
+    if _is_real_candidate(daily_2x1):
+        bits.append("已输出最推荐2串1纸面候选")
+    if _is_real_candidate(daily_3x1):
+        bits.append("已输出最推荐3串1纸面候选")
+    if not bits:
+        return ""
+    gate_label = gate.get("label_zh") or "纪律门控"
+    reason = no_combo_reason or gate.get("reason_zh") or "仍需复核可信度、情报和组合风险。"
+    return "；".join(bits) + f"。当前{gate_label}，这些候选用于 T+1 分析和赛后学习；{reason}"
 
 
 def _nearest_rejected_reason(rejected: list[dict]) -> str:

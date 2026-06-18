@@ -30,7 +30,7 @@ from src.exports.report_exporter import summarize_report
 from src.ingestion.field_report import build_field_recognition_report
 from src.ingestion.importer import import_historical_file
 from src.ingestion.repair_suggestions import build_repair_suggestions
-from src.intelligence.fusion import build_intelligence_preview, build_next_available_preview
+from src.intelligence.fusion import build_intelligence_preview, build_next_available_preview, build_next_available_light_preview
 from src.intelligence.external_signals_loader import preview_external_signals
 from src.intelligence.missing_info import build_missing_info_from_preview
 from src.market.clv import build_clv_tracking, build_clv_history, load_closing_odds_csv, load_observations_json, save_clv_review
@@ -40,6 +40,7 @@ from src.learning.feedback_builder import build_feedback_from_files, save_feedba
 from src.learning.daily_learning_pack import prepare_daily_learning_pack, save_daily_learning_results, save_quick_learning_results
 from src.learning.history import build_learning_history
 from src.learning.observation_snapshot import save_observation_snapshot
+from src.learning.research_archive import load_latest_research_archive, save_research_archive
 from src.learning.result_template import save_result_template_from_observations
 from src.learning.closing_odds_template import save_closing_odds_template_from_observations
 from src.release.metadata import build_release_metadata
@@ -281,6 +282,7 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         return success_response(view, view.get("warnings", []))
     if path == "/api/view/next-available":
         view = _cached_next_available_view(query)
+        _attach_research_archive_status(view)
         return success_response(view, view.get("warnings", []))
     if path == "/api/view/data-sources":
         payload = build_free_data_source_status()
@@ -366,10 +368,11 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         if run_ai:
             result["ai_combo_research"] = _cached_ai_combo_research(result, query, True)
         view = build_optimizer_view(result)
+        _attach_research_archive_status(view)
         return success_response(view, view.get("warnings", []))
     if path == "/api/view/best-parlay":
         result = _run_optimizer_from_query(query)
-        payload = result.get("best_parlay_summary") or build_best_parlay_summary(result)
+        payload = build_best_parlay_summary(result)
         return success_response(payload, payload.get("warnings", []))
     if path == "/api/view/ai-combo-research":
         result = _run_ai_combo_optimizer_from_query(query)
@@ -389,6 +392,12 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         )
         warnings = list(payload.get("ai_summary", {}).get("warnings", []) or [])
         return success_response(payload, warnings)
+    if path == "/api/learning/auto-archive-research":
+        payload = _auto_archive_research_from_query(query)
+        return success_response(payload, payload.get("warnings", []))
+    if path == "/api/view/research-archive":
+        payload = load_latest_research_archive(query.get("date"), limit=_int_param(query, "limit", 12))
+        return success_response(payload, [])
     if path == "/api/view/clv":
         result = _run_optimizer_from_query(query)
         payload = result.get("clv_tracking", {})
@@ -548,7 +557,60 @@ def _run_next_available_from_query(query: dict[str, str]) -> dict:
     )
 
 
+def _auto_archive_research_from_query(query: dict[str, str]) -> dict:
+    preview = _run_intelligence_from_query(query) if query.get("date") else _run_next_available_from_query(query)
+    result = _optimizer_result_from_preview(preview, query)
+    result["best_parlay_summary"] = result.get("best_parlay_summary") or build_best_parlay_summary(result)
+    run_ai = _truthy(query.get("run_ai")) if "run_ai" in query else True
+    ai_research = _cached_ai_combo_research(result, query, run_ai)
+    result["ai_combo_research"] = ai_research
+    preview = dict(preview)
+    preview["optimizer"] = result
+    preview["ai_combo_research"] = ai_research
+    preview["best_parlay_summary"] = result.get("best_parlay_summary", {})
+    saved = save_research_archive(preview, result, ai_research)
+    saved["selected_date"] = preview.get("selected_date") or result.get("selected_date") or preview.get("date")
+    saved["provider_used"] = preview.get("provider_used") or result.get("provider_used")
+    saved["matches_count"] = preview.get("matches_count") or result.get("matches_analyzed")
+    saved["warnings"] = list(dict.fromkeys(list(preview.get("warnings", []) or []) + list(result.get("warnings", []) or []) + list(ai_research.get("warnings", []) or [])))
+    return saved
+
+
+def _attach_research_archive_status(payload: dict) -> None:
+    if not isinstance(payload, dict):
+        return
+    selected_date = payload.get("selected_date") or payload.get("date")
+    archive = load_latest_research_archive(selected_date)
+    latest = archive.get("latest", {}) or {}
+    payload["research_archive_status"] = {
+        "status": archive.get("status", "empty"),
+        "archive_count": archive.get("archive_count", 0),
+        "latest_path": latest.get("path", ""),
+        "created_at": latest.get("created_at", ""),
+        "ds_status": latest.get("ds_status", ""),
+        "ds_completed": latest.get("ds_completed", False),
+        "token_total": latest.get("token_total"),
+        "observations_path": latest.get("observations_path", ""),
+        "results_path": latest.get("results_path", ""),
+        "closing_odds_path": latest.get("closing_odds_path", ""),
+        "summary_zh": archive.get("summary_zh", ""),
+    }
+
+
 def _cached_next_available_view(query: dict[str, str]) -> dict:
+    if _truthy(query.get("fast")) or _truthy(query.get("lightweight")):
+        result = build_next_available_light_preview(
+            query.get("provider", "auto"),
+            query.get("date"),
+            bankroll=_float_param(query, "bankroll", 10000.0),
+            risk_profile=query.get("risk_profile", "aggressive"),
+            external_signals_path=query.get("external_signals") or query.get("signals_path") or query.get("signals"),
+        )
+        view = build_next_available_view(result)
+        view["cache_status"] = "lightweight"
+        view["cache_status_zh"] = "首页轻量扫描，完整模型请进入赛前优化。"
+        view["cache_age_seconds"] = 0
+        return view
     key = (
         query.get("provider", "auto"),
         query.get("date", ""),

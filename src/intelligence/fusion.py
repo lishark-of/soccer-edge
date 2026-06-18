@@ -134,6 +134,84 @@ def build_intelligence_preview(provider_name: str = "auto", target_date: str | N
     }
 
 
+
+def build_next_available_light_preview(
+    provider_name: str = "auto",
+    start_date: str | None = None,
+    bankroll: float = 10000.0,
+    risk_profile: str = "aggressive",
+    days_ahead: int = 3,
+    external_signals_path: str | None = None,
+) -> dict:
+    """Return a fast homepage-safe next-available shell without full fusion."""
+    start = _parse_date(start_date)
+    if not start_date:
+        start = start + timedelta(days=1)
+    max_offset = max(0, days_ahead)
+    attempts = []
+    first_available_date: str | None = None
+    for offset in range(max_offset + 1):
+        current = (start + timedelta(days=offset)).isoformat()
+        attempt = _scan_next_available_attempt(provider_name, current)
+        attempts.append(attempt)
+        if first_available_date is None and int(attempt.get("matches_count", 0) or 0) > 0:
+            first_available_date = current
+    selected_date = first_available_date or start.isoformat()
+    selected_attempt = next((item for item in attempts if item.get("date") == selected_date), attempts[0] if attempts else {})
+    matches_count = int(selected_attempt.get("matches_count", 0) or 0)
+    provider_used = selected_attempt.get("provider_used") or provider_name
+    fallback_used = bool(selected_attempt.get("fallback_used")) or provider_used == "mock"
+    scan_window = {
+        "start_date": start.isoformat(),
+        "end_date": (start + timedelta(days=max_offset)).isoformat(),
+        "days_checked": len(attempts),
+        "complete": len(attempts) == max_offset + 1,
+        "stopped_after_first_available": False,
+        "scan_mode": "lightweight_homepage_scan",
+    }
+    message = "已完成轻量扫描；完整概率、组合和情报融合请进入赛前优化或组合审核。" if matches_count else "轻量扫描暂未读取到可售比赛；可稍后刷新或检查数据源。"
+    return {
+        "date": selected_date,
+        "selected_date": selected_date,
+        "provider": provider_name,
+        "provider_used": provider_used,
+        "matches_count": matches_count,
+        "attempts": attempts,
+        "scan_window": scan_window,
+        "lightweight_homepage": True,
+        "bankroll": bankroll,
+        "risk_profile": risk_profile,
+        "top_single_observations": [],
+        "top_total_goals_observations": [],
+        "top_score_observations": [],
+        "optimizer_candidates": [],
+        "optimizer": {"selected_portfolio": {"singles": [], "parlay_2x1": [], "parlay_3x1": []}, "candidate_rankings": {"singles": [], "parlay_2x1": [], "parlay_3x1": []}},
+        "credibility_audit": {"credibility_score": 0, "grade": "D", "confidence_level": "low", "reasons": ["首页轻量扫描尚未运行完整可信度审计。"]},
+        "credibility_gate": {"score": 0, "grade": "D", "combo_gate": "closed", "allow_parlay": False, "label_zh": "暂不组合", "reason_zh": "首页轻量模式只确认比赛和数据源，未完成完整模型与情报审计前不生成组合。"},
+        "intelligence_completeness": {"score": 0, "summary_zh": "首页轻量模式尚未计算情报完整度。"},
+        "missing_signals": ["伤停", "首发", "天气", "新闻面"],
+        "prematch_workflow": {
+            **_prematch_workflow(selected_date, matches_count, provider_used, {}),
+            "scan_window": scan_window,
+            "attempts": attempts,
+            "stage_label_zh": "下一可售日轻量扫描",
+            "headline_zh": message,
+            "combo_policy_zh": "轻量模式不生成 2串1/3串1；进入组合审核后再跑完整纪律。",
+        },
+        "data_source_status": {
+            "selected_date": selected_date,
+            "provider_used": provider_used,
+            "status": selected_attempt.get("status", "unknown"),
+            "fallback_used": fallback_used,
+            "attempts": attempts,
+            "scan_window": scan_window,
+            "message_zh": message,
+        },
+        "warnings": list(selected_attempt.get("warnings", []) or []),
+        "disclaimer": "首页轻量扫描仅用于快速确认比赛和数据源，不构成任何建议。",
+    }
+
+
 def build_next_available_preview(
     provider_name: str = "auto",
     start_date: str | None = None,

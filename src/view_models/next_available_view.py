@@ -17,8 +17,8 @@ def build_next_available_view(preview: dict) -> dict:
     top_2x1 = view.get("top_2x1", []) or []
     top_2x1_display = top_2x1 if top_2x1 else top_rejected_2x1[:3]
     optimizer = preview.get("optimizer", {}) or {}
-    credibility = audit_credibility(preview, optimizer)
-    best_parlay = optimizer.get("best_parlay_summary") or build_best_parlay_summary(optimizer)
+    credibility = preview.get("credibility_audit", {}) if preview.get("lightweight_homepage") else audit_credibility(preview, optimizer)
+    best_parlay = build_best_parlay_summary(optimizer)
     llm_status = llm_status_payload()
     ai_layer = _ai_research_layer(best_parlay, llm_status)
     daily_2x1 = best_parlay.get("daily_2x1_candidate") or {}
@@ -38,6 +38,7 @@ def build_next_available_view(preview: dict) -> dict:
     view.update(
         {
             "title": "明日预观察",
+            "lightweight_homepage": bool(preview.get("lightweight_homepage")),
             "selected_date": preview.get("selected_date") or preview.get("date"),
             "provider_used": preview.get("provider_used", "unknown"),
             "matches_count": preview.get("matches_count", 0),
@@ -70,6 +71,7 @@ def build_next_available_view(preview: dict) -> dict:
             "top_rejected_2x1": top_rejected_2x1,
             "top_rejected_3x1": top_rejected_3x1,
             "credibility_audit": credibility,
+            "credibility_gate": credibility.get("credibility_gate") or preview.get("credibility_gate", {}),
             "best_parlay_summary": best_parlay,
             "combo_user_board": best_parlay.get("user_combo_board", {}),
             "llm_status": llm_status,
@@ -83,7 +85,23 @@ def build_next_available_view(preview: dict) -> dict:
             "warnings": _filtered_next_available_warnings(preview, view),
         }
     )
+    best_for_display = view.get("best_parlay_summary") if isinstance(view.get("best_parlay_summary"), dict) else {}
+    if _has_daily_combo_candidate(best_for_display):
+        best_for_display["status"] = "paper_candidates"
+        best_for_display["label_zh"] = "已输出每日纸面候选"
+        view["best_parlay_summary"] = best_for_display
+        view["combo_gate_summary_zh"] = (
+            "已输出 T+1 最推荐单关、2串1、3串1纸面候选；若未通过门控，会保留原因用于赛后学习。"
+        )
     return view
+
+
+def _has_daily_combo_candidate(best: dict) -> bool:
+    for key in ("daily_2x1_candidate", "daily_3x1_candidate", "best_2x1", "best_3x1_if_allowed"):
+        item = best.get(key) if isinstance(best, dict) else {}
+        if isinstance(item, dict) and item.get("status") != "empty" and (item.get("legs") or item.get("match") or item.get("message_zh")):
+            return True
+    return False
 
 
 def _long_run_score(

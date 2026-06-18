@@ -39,6 +39,7 @@ data/learning_observations/
 data/learning_results/
 data/learning_closing_odds/
 data/learning_clv/
+data/research_archive/
 
 # Generated artifacts and reports
 artifacts/

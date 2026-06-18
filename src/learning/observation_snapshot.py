@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.optimizer.best_parlay import build_best_parlay_summary
+
 
 def build_observation_snapshot(preview: dict) -> dict:
     optimizer = preview.get("optimizer", {}) or {}
@@ -19,6 +21,9 @@ def build_observation_snapshot(preview: dict) -> dict:
     for combo_type in ("parlay_2x1", "parlay_3x1"):
         for row in portfolio.get(combo_type, []) or []:
             rows.append(_compact_combo(row, combo_type, selected_date))
+    best_parlay = optimizer.get("best_parlay_summary") or preview.get("best_parlay_summary") or build_best_parlay_summary(optimizer)
+    daily_candidate_rows = _daily_candidate_rows(best_parlay, selected_date)
+    rows.extend(daily_candidate_rows)
     rejected_combo_rows = _rejected_combo_rows(optimizer)
     rows.extend(rejected_combo_rows)
     return {
@@ -52,7 +57,9 @@ def build_observation_snapshot(preview: dict) -> dict:
             "summary_text": ai_summary.get("text") or ai_research.get("local_summary_zh") or "",
         },
         "observations": rows,
+        "daily_candidate_observations": daily_candidate_rows,
         "rejected_combo_observations": rejected_combo_rows,
+        "daily_candidate_count": len(daily_candidate_rows),
         "rejected_combo_count": len(rejected_combo_rows),
         "selected_portfolio": portfolio,
         "disclaimer": "赛前观察快照只用于赛后学习和纸面复盘，不构成任何真实投注建议。",
@@ -149,6 +156,38 @@ def _rejected_combo_rows(optimizer: dict, limit_per_type: int = 5) -> list[dict]
             if picked >= limit_per_type:
                 break
     return rows
+
+
+def _daily_candidate_rows(best_parlay: dict, selected_date: str | None) -> list[dict]:
+    rows: list[dict] = []
+    specs = [
+        ("daily_single_candidate", "single", "daily_single_candidate", "每日单关纸面候选"),
+        ("daily_2x1_candidate", "parlay_2x1", "daily_2x1_candidate", "每日2串1纸面候选"),
+        ("daily_3x1_candidate", "parlay_3x1", "daily_3x1_candidate", "每日3串1纸面候选"),
+    ]
+    seen: set[str] = set()
+    for key, candidate_type, track, label in specs:
+        item = best_parlay.get(key) or {}
+        if not _candidate_has_identity(item):
+            continue
+        compact = (
+            _compact(item, "single", selected_date)
+            if candidate_type == "single"
+            else _compact_combo(item, candidate_type, selected_date)
+        )
+        compact["learning_track"] = track
+        compact["decision_label_zh"] = label
+        compact["learning_score_summary_zh"] = item.get("selected_reason_zh") or item.get("reject_reason") or "每日纸面候选，用于赛后验证。"
+        dedupe_key = f"{track}|{compact.get('match')}|{compact.get('direction')}|{compact.get('odds')}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        rows.append(compact)
+    return rows
+
+
+def _candidate_has_identity(item: dict) -> bool:
+    return isinstance(item, dict) and item.get("status") != "empty" and bool(item.get("match") or item.get("legs") or item.get("message_zh"))
 
 
 def _leg_label(leg: dict) -> str:
