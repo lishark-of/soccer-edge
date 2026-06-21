@@ -7627,3 +7627,151 @@ th, td {
     transition: none !important;
   }
 }
+
+/* Phase 2-S UX hotfix v2: fixed combo audit progress overlay */
+.comboAuditFetchOverlay {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 9999;
+  width: min(620px, calc(100vw - 32px));
+  pointer-events: none;
+  transform: translateX(-50%) translateY(24px) scale(.98);
+  opacity: 0;
+  transition: opacity 220ms ease, transform 220ms cubic-bezier(.2,.8,.2,1);
+}
+
+.comboAuditFetchOverlay.isVisible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+.comboAuditFetchCard {
+  border: 1px solid rgba(255,255,255,.42);
+  border-radius: 26px;
+  padding: 18px 20px 16px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(77, 163, 255, .55), transparent 34%),
+    radial-gradient(circle at 84% 14%, rgba(52, 199, 89, .38), transparent 32%),
+    linear-gradient(135deg, rgba(9, 22, 58, .94), rgba(0, 75, 190, .88));
+  box-shadow: 0 24px 80px rgba(0, 34, 92, .38), inset 0 1px 0 rgba(255,255,255,.22);
+  backdrop-filter: blur(24px);
+}
+
+.comboAuditFetchCard.isDone {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(52, 199, 89, .48), transparent 34%),
+    linear-gradient(135deg, rgba(8, 48, 42, .94), rgba(0, 121, 95, .88));
+}
+
+.comboAuditFetchCard.isFailed {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255, 149, 0, .45), transparent 34%),
+    linear-gradient(135deg, rgba(70, 36, 0, .94), rgba(151, 78, 0, .88));
+}
+
+.comboAuditFetchHeader {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.comboAuditFetchHeader span {
+  color: rgba(255,255,255,.7);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .18em;
+}
+
+.comboAuditFetchHeader strong {
+  font-size: 20px;
+  letter-spacing: -.03em;
+}
+
+.comboAuditFetchHeader em {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.14);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.comboAuditFetchRail {
+  position: relative;
+  height: 16px;
+  margin: 16px 0 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,.14);
+}
+
+.comboAuditFetchRail i,
+.comboAuditFetchRail b,
+.comboAuditFetchRail u {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  border-radius: inherit;
+}
+
+.comboAuditFetchRail i {
+  width: var(--audit-progress, 0%);
+  background: linear-gradient(90deg, #54a3ff, #34c759, #ffd60a);
+  transition: width 260ms cubic-bezier(.2,.8,.2,1);
+}
+
+.comboAuditFetchRail b {
+  width: 36%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.62), transparent);
+  animation: comboAuditFetchSweep 1.05s linear infinite;
+}
+
+.comboAuditFetchRail u {
+  left: calc(var(--audit-progress, 0%) - 8px);
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  box-shadow: 0 0 0 6px rgba(255,255,255,.18), 0 0 28px rgba(84,163,255,.85);
+  transition: left 260ms cubic-bezier(.2,.8,.2,1);
+}
+
+.comboAuditFetchCard p {
+  margin: 0;
+  color: rgba(255,255,255,.74);
+  font-weight: 700;
+}
+
+.comboAuditFetchDots {
+  display: flex;
+  gap: 7px;
+  margin-top: 13px;
+}
+
+.comboAuditFetchDots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.2);
+}
+
+.comboAuditFetchDots i.isOn {
+  background: #fff;
+  box-shadow: 0 0 18px rgba(255,255,255,.65);
+}
+
+@keyframes comboAuditFetchSweep {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(320%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comboAuditFetchOverlay,
+  .comboAuditFetchRail i,
+  .comboAuditFetchRail u,
+  .comboAuditFetchRail b {
+    animation: none !important;
+    transition: none !important;
+  }
+}

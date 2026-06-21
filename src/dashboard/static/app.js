@@ -7148,3 +7148,124 @@ if (document.readyState === "loading") {
     }
   }, true);
 })();
+
+// Phase 2-S UX hotfix v2: fetch-driven combo/optimizer progress overlay.
+(function comboAuditFetchProgressOverlay() {
+  if (window.__jcEdgeComboAuditFetchProgressInstalled) return;
+  window.__jcEdgeComboAuditFetchProgressInstalled = true;
+  const WATCHED = [
+    "/api/view/optimizer",
+    "/api/view/best-parlay",
+    "/api/view/trader-review",
+    "/api/audit/credibility",
+    "/api/audit/professional-model-score",
+    "/api/view/daily-decision-board",
+  ];
+  const STEPS = [
+    [8, "启动组合审核", "读取本地快照和候选池"],
+    [26, "核对玩法分布", "检查胜平负、让球、比分和总进球是否过度集中"],
+    [44, "计算组合质量", "评估赔率、模型概率、EV、Edge 和相关性"],
+    [63, "执行纪律门控", "判断是否只保留纸面候选或允许进入组合观察"],
+    [82, "生成解释", "整理入选原因、拒绝原因和下一步复核点"],
+    [96, "等待页面更新", "接口已返回，正在渲染结果"],
+  ];
+  let activeCount = 0;
+  let timer = null;
+  let startedAt = 0;
+
+  function shouldWatch(input) {
+    const url = typeof input === "string" ? input : (input && input.url ? input.url : "");
+    return WATCHED.some((item) => String(url).includes(item));
+  }
+
+  function ensureOverlay() {
+    let overlay = document.querySelector("#comboAuditFetchOverlay");
+    if (overlay) return overlay;
+    overlay = document.createElement("aside");
+    overlay.id = "comboAuditFetchOverlay";
+    overlay.className = "comboAuditFetchOverlay";
+    overlay.setAttribute("aria-live", "polite");
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function stepFor(percent) {
+    let current = STEPS[0];
+    for (const step of STEPS) {
+      if (percent >= step[0]) current = step;
+    }
+    return current;
+  }
+
+  function render(percent, done = false, failed = false) {
+    const overlay = ensureOverlay();
+    const safe = Math.max(0, Math.min(100, Math.round(percent)));
+    const current = failed ? [safe, "本次未完成", "接口返回较慢或页面未拿到完整结果"] : done ? [100, "组合审核完成", "结果已写入页面，可以继续看候选与拒绝原因"] : stepFor(safe);
+    overlay.classList.add("isVisible");
+    overlay.innerHTML = `
+      <div class="comboAuditFetchCard ${done ? "isDone" : ""} ${failed ? "isFailed" : ""}" style="--audit-progress:${safe}%">
+        <div class="comboAuditFetchHeader">
+          <span>COMBO AUDIT</span>
+          <strong>${current[1]}</strong>
+          <em>${safe}%</em>
+        </div>
+        <div class="comboAuditFetchRail" aria-hidden="true"><i></i><b></b><u></u></div>
+        <p>${current[2]}</p>
+        <div class="comboAuditFetchDots" aria-hidden="true">
+          ${STEPS.slice(0, 5).map((step) => `<i class="${safe >= step[0] ? "isOn" : ""}"></i>`).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function start() {
+    activeCount += 1;
+    startedAt = Date.now();
+    if (timer) window.clearInterval(timer);
+    render(8);
+    timer = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const percent = Math.min(94, 8 + Math.floor(elapsed / 180));
+      render(percent);
+    }, 220);
+  }
+
+  function finish(ok = true) {
+    activeCount = Math.max(0, activeCount - 1);
+    if (activeCount > 0) return;
+    if (timer) {
+      window.clearInterval(timer);
+      timer = null;
+    }
+    render(ok ? 100 : 88, ok, !ok);
+    window.setTimeout(() => {
+      const overlay = document.querySelector("#comboAuditFetchOverlay");
+      if (overlay) overlay.classList.remove("isVisible");
+    }, ok ? 1800 : 2600);
+  }
+
+  const originalFetch = window.fetch;
+  if (typeof originalFetch === "function") {
+    window.fetch = function patchedComboAuditFetch(input, init) {
+      if (!shouldWatch(input)) return originalFetch.apply(this, arguments);
+      start();
+      return originalFetch.apply(this, arguments).then((response) => {
+        finish(response && response.ok !== false);
+        return response;
+      }).catch((error) => {
+        finish(false);
+        throw error;
+      });
+    };
+  }
+
+  document.addEventListener("click", (event) => {
+    const target = event.target && event.target.closest ? event.target.closest("button, a, [role='button'], .pill, .nav-pill") : null;
+    if (!target) return;
+    const text = (target.textContent || "").replace(/\s+/g, "");
+    if (/组合审核|赛前优化|生成观察组合|刷新观察|模型体检|被拒/.test(text)) {
+      start();
+      window.setTimeout(() => finish(true), 2400);
+    }
+  }, true);
+})();
