@@ -705,6 +705,7 @@ function renderWarnings(warnings = []) {
   if (qs("#warningsList")) qs("#warningsList").innerHTML = C.warnings(warnings);
 }
 function switchView(name) {
+  state.currentView = name;
   document.querySelectorAll(".tab").forEach((tab) => {
     const isActive = tab.dataset.view === name;
     tab.classList.toggle("isActive", isActive);
@@ -3223,22 +3224,24 @@ async function runOneClickObservation() {
     setTodayQuickActionStatus("当前：已经在生成今日观察，请稍等。");
     return;
   }
+  const originView = state.currentView || "today";
   state.oneClickObservationRunning = true;
   setStatus("Run", "正在生成今日观察：比赛、优化、组合、比分会一起刷新。");
   setTodayQuickActionStatus("当前：一键生成中，正在读取比赛与候选。");
   startTodayProgressTicker();
   try {
     await loadToday({ forceRefresh: true, useFastPreview: false });
-    await runOptimizerWithProgress(false);
-    await loadBestParlay();
-    await loadScoreGoals();
+    await runOptimizerWithProgress(false, { stayOnCurrentView: true });
+    await loadBestParlay({ stayOnCurrentView: true });
+    await loadScoreGoals({ stayOnCurrentView: true });
     if (state.todayView) renderToday(state.todayView);
-    switchView("today");
+    switchView(originView);
     setStatus("Ready", "今日观察已生成：单关、2串1、3串1、比分/进球数已同步。");
     setTodayQuickActionStatus("当前：今日观察已生成，候选已同步到各板块。");
   } catch (error) {
     setStatus("Check", `一键生成未完整完成：${error && error.message ? error.message : "未知错误"}`);
     if (state.todayView) renderToday(state.todayView);
+    switchView(originView);
   } finally {
     state.oneClickObservationRunning = false;
     stopTodayProgressTicker();
@@ -5241,10 +5244,10 @@ function renderSignalsPreview(view) {
   ].join("");
 }
 
-async function loadBestParlay() {
+async function loadBestParlay(options = {}) {
   const payload = await request("/api/view/best-parlay", { provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam() }, "刷新优秀串联");
   if (payload.ok) renderBestParlay(payload.data);
-  switchView("bestparlay");
+  if (!options.stayOnCurrentView) switchView("bestparlay");
 }
 function renderBestParlay(view) {
   state.bestParlayView = view;
@@ -5735,11 +5738,11 @@ function renderMatches(view) {
   ]);
 }
 
-async function runOptimizerWithProgress(compareProfiles = true) {
+async function runOptimizerWithProgress(compareProfiles = true, options = {}) {
   startTodayOptimizerInlineProgress();
   let failed = false;
   try {
-    return await runOptimizer(compareProfiles);
+    return await runOptimizer(compareProfiles, options);
   } catch (error) {
     failed = true;
     abortTodayOptimizerInlineProgress("运行异常，已回退当前页可读状态");
@@ -5750,9 +5753,10 @@ async function runOptimizerWithProgress(compareProfiles = true) {
   }
 }
 
-async function runOptimizer(compareProfiles = true) {
+async function runOptimizer(compareProfiles = true, options = {}) {
+  const stayOnCurrentView = Boolean(options.stayOnCurrentView);
   renderOptimizerLoadingState(compareProfiles);
-  switchView("optimizer");
+  if (!stayOnCurrentView) switchView("optimizer");
   let settled = false;
   const watchdog = window.setTimeout(() => {
     if (settled) return;
@@ -5774,7 +5778,7 @@ async function runOptimizer(compareProfiles = true) {
   } else {
     renderOptimizerSlowState(payload.error?.message || "赛前优化暂未返回结果。");
   }
-  switchView("optimizer");
+  if (!stayOnCurrentView) switchView("optimizer");
 }
 
 function renderOptimizerLoadingState(compareProfiles = true) {
@@ -6316,10 +6320,10 @@ function professionalBenchmarkSummary(benchmarks = []) {
   return { label, detail: partial ? `${detail} 其中 ${partial} 项仍需观察。` : detail };
 }
 
-async function loadScoreGoals() {
+async function loadScoreGoals(options = {}) {
   const payload = await request("/api/view/score-goals", { provider: providerParam(), date: state.todayView?.selected_date || currentDateParam() }, "刷新比分/进球数", 60000);
   if (payload.ok) renderScoreGoals(payload.data);
-  switchView("scoregoals");
+  if (!options.stayOnCurrentView) switchView("scoregoals");
 }
 function renderScoreGoals(view) {
   state.scoreGoalsView = view;
