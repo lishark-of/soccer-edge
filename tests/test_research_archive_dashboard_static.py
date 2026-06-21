@@ -11,6 +11,8 @@ def test_dashboard_has_research_archive_status_panel():
     assert "autoArchiveResearch" in app
     assert "/api/learning/auto-archive-research" in app
     assert "Brier、Log Loss、ROI 和 CLV" in app
+    assert "CLV待填" in app
+    assert "查看优先回填收盘赔率" in app
 
 
 def test_dashboard_research_archive_has_no_positive_order_controls():

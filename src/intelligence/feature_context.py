@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from src.intelligence.confidence import confidence_score
 from src.intelligence.lineup_signals import injury_signal, lineup_signal
-from src.intelligence.market_signals import no_vig_probs
+from src.intelligence.market_signals import market_probability_report, no_vig_probs
 from src.intelligence.motivation_signals import motivation_signal
 from src.intelligence.news_signals import signal_or_unknown
 from src.intelligence.schedule_signals import schedule_signal, travel_signal
@@ -18,6 +18,8 @@ def build_match_context(match, historical_data=None, external_signals: dict | No
     match_id = str(_value(match, "match_id", ""))
     market_had = no_vig_probs(had_odds)
     market_hhad = no_vig_probs(hhad_odds)
+    market_had_report = market_probability_report(had_odds)
+    market_hhad_report = market_probability_report(hhad_odds)
     home_xg, away_xg = _xg_baseline(match, market_had)
     poisson_matrix = build_score_matrix(home_xg, away_xg)
     dc_matrix = apply_dixon_coles_adjustment(poisson_matrix)
@@ -38,6 +40,7 @@ def build_match_context(match, historical_data=None, external_signals: dict | No
         "match": _match_info(match),
         "sporttery_odds": {"had": had_odds or {}, "hhad": hhad_odds or {}},
         "market_no_vig": {"had": market_had, "hhad": market_hhad},
+        "market_probability_report": {"had": market_had_report, "hhad": market_hhad_report},
         "elo_strength": _elo_strength(match),
         "poisson_xg": {"home_xg": round(home_xg, 4), "away_xg": round(away_xg, 4), "outcome_probs": poisson_probs},
         "dixon_coles": {"outcome_probs": dc_probs, "rho": 0.08},

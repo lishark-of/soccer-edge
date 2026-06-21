@@ -6,6 +6,7 @@ const state = {
   signalExplainView: null,
   reliabilityView: null,
   credibilityView: null,
+  proScoreView: null,
   missingInfoView: null,
   signalsPreviewView: null,
   bestParlayView: null,
@@ -31,9 +32,566 @@ const state = {
   currentWorkflowTarget: null,
   todayProgressTimer: null,
   todayProgressStartedAt: 0,
+  optimizerInlineProgressTimer: null,
+  optimizerInlineProgressStartedAt: 0,
+  optimizerProgressTimer: null,
+  optimizerProgressStartedAt: 0,
 };
 
-function qs(selector) { return document.querySelector(selector); }
+const __virtualNodeCache = Object.create(null);
+
+function createVirtualNode(nodeId = "") {
+  const style = {};
+  return {
+    innerHTML: "",
+    textContent: "",
+    hidden: false,
+    id: nodeId || "",
+    className: "",
+    value: "",
+    style,
+    dataset: {},
+    classList: {
+      add() {},
+      remove() {},
+      toggle() { return false; },
+      contains() { return false; },
+    },
+    setAttribute() {},
+    removeAttribute() {},
+    getAttribute() { return null; },
+    hasAttribute() { return false; },
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    append() {},
+    appendChild() {},
+    insertAdjacentHTML() {},
+    focus() {},
+    scrollIntoView() {},
+    cloneNode() { return createVirtualNode(nodeId); },
+  };
+}
+
+function normalizeSelector(selector) {
+  return String(selector || "").trim();
+}
+
+function qs(selector) {
+  const target = normalizeSelector(selector);
+  if (!target) return null;
+  const found = document.querySelector(target);
+  if (found) return found;
+  if (!__virtualNodeCache[target]) {
+    const node = createVirtualNode(target.replace(/^#/, ""));
+    __virtualNodeCache[target] = node;
+  }
+  return __virtualNodeCache[target];
+}
+
+function setNodeHtml(selector, html) {
+  const node = qs(selector);
+  if (node) node.innerHTML = html || "";
+}
+
+function setNodeText(selector, text) {
+  const node = qs(selector);
+  if (node) node.textContent = text === undefined ? "" : String(text);
+}
+
+function setTodayQuickActionStatus(text) {
+  const target = qs("#quickActionStatus");
+  if (target) target.textContent = text || "当前：等待下一可售比赛扫描结果";
+}
+
+function safeClearNode(selector) {
+  const node = qs(selector);
+  if (node) node.innerHTML = "";
+}
+
+function startTodayOptimizerInlineProgress() {
+  const host = qs("#todayOptimizerProgressHost");
+  if (!host) return;
+  state.optimizerInlineProgressStartedAt = Date.now();
+  if (state.optimizerInlineProgressTimer) window.clearInterval(state.optimizerInlineProgressTimer);
+  host.innerHTML = optimizerFlowProgressMarkup(0);
+  state.optimizerInlineProgressTimer = window.setInterval(() => {
+    const elapsed = Date.now() - state.optimizerInlineProgressStartedAt;
+    const percent = Math.min(98, 6 + Math.floor(elapsed / 900));
+    updateOptimizerInlineProgress(percent);
+  }, 500);
+}
+
+function stopTodayOptimizerInlineProgress(successLabel = "完成") {
+  if (state.optimizerInlineProgressTimer) {
+    window.clearInterval(state.optimizerInlineProgressTimer);
+    state.optimizerInlineProgressTimer = null;
+  }
+  const host = qs("#todayOptimizerProgressHost");
+  if (!host) return;
+  host.innerHTML = `
+    <div id="todayOptimizerInlineProgress" class="todayLoadingProgress isNova isDoneState">
+      <div class="todayProgressHeader">
+        <span>OPTIMIZER</span>
+        <strong>${C.escapeHtml(successLabel)}</strong>
+        <em>100%</em>
+      </div>
+      <div class="todayProgressNovaWrap" aria-hidden="true">
+        <div class="todayProgressNovaRail">
+          <span class="todayProgressNovaGlow"></span>
+          <span class="todayProgressNovaFill" style="--progress:100%"></span>
+          <span class="todayProgressNovaShimmer"></span>
+          <i class="todayProgressNovaDot" style="--dot-angle:0deg"></i>
+          <i class="todayProgressNovaDot" style="--dot-angle:90deg"></i>
+          <i class="todayProgressNovaDot" style="--dot-angle:180deg"></i>
+          <i class="todayProgressNovaDot" style="--dot-angle:270deg"></i>
+        </div>
+      </div>
+      <div class="todayProgressSteps todayProgressStepsNova" aria-label="赛前优化进度">
+        ${OPTIMIZER_LOADING_STEPS.map((_, index) => `<b class="isDone" data-step="${index}">${index + 1}</b>`).join("")}
+      </div>
+      <p class="todayProgressDetail">已生成赛前观察摘要，可继续查看候选和拒绝原因。</p>
+    </div>
+  `;
+  setTimeout(() => {
+    safeClearNode("#todayOptimizerProgressHost");
+  }, 900);
+}
+
+function abortTodayOptimizerInlineProgress(message = "未完成") {
+  if (state.optimizerInlineProgressTimer) {
+    window.clearInterval(state.optimizerInlineProgressTimer);
+    state.optimizerInlineProgressTimer = null;
+  }
+  setNodeHtml("#todayOptimizerProgressHost", `
+    <div id="todayOptimizerInlineProgress" class="todayLoadingProgress isNova">
+      <div class="todayProgressHeader">
+        <span>OPTIMIZER</span>
+        <strong>${C.escapeHtml(message)}</strong>
+        <em>--</em>
+      </div>
+      <p class="todayProgressDetail">本次未完整产出，可先查看赛前观察和情报覆盖，稍后再试。</p>
+    </div>
+  `);
+  setTimeout(() => {
+    safeClearNode("#todayOptimizerProgressHost");
+  }, 1400);
+}
+
+function optimizerFlowProgressMarkup(stepIndex = 0) {
+  const safeIndex = Math.max(0, Math.min(stepIndex, OPTIMIZER_LOADING_STEPS.length - 1));
+  const current = OPTIMIZER_LOADING_STEPS[safeIndex];
+  const visibleSteps = OPTIMIZER_LOADING_STEPS.slice(0, 7);
+  return `
+    <div id="todayOptimizerInlineProgress" class="todayLoadingProgress isNova" style="--progress:${current.percent}%">
+      <div class="todayProgressHeader">
+        <span>OPTIMIZER</span>
+        <strong>${C.escapeHtml(current.label)}</strong>
+        <em>${C.escapeHtml(String(current.percent))}%</em>
+      </div>
+      <div class="todayProgressNovaWrap" aria-hidden="true">
+        <div class="todayProgressNovaRail">
+          <span class="todayProgressNovaGlow"></span>
+          <span class="todayProgressNovaFill" style="--progress:${current.percent}%"></span>
+          <span class="todayProgressNovaShimmer"></span>
+          ${[0, 90, 180, 270].map((angle) => `<i class="todayProgressNovaDot" style="--dot-angle:${angle}deg"></i>`).join("")}
+        </div>
+      </div>
+      <div class="todayProgressSteps todayProgressStepsNova" aria-label="赛前优化进度">
+        ${visibleSteps.map((step, index) => `
+          <b class="${index < safeIndex ? "isDone" : index === safeIndex ? "isActive" : ""}" data-index="${index}">
+            <em>${index + 1}</em>
+            ${C.escapeHtml(step.label)}
+          </b>
+        `).join("")}
+      </div>
+      <p class="todayProgressDetail">${C.escapeHtml(current.detail)}</p>
+    </div>
+  `;
+}
+
+function updateOptimizerInlineProgress(percent) {
+  const host = qs("#todayOptimizerInlineProgress");
+  if (!host) return;
+  const targetPercent = Math.min(98, Math.max(0, Number(percent) || 0));
+  let stepIndex = 0;
+  for (let i = 0; i < OPTIMIZER_LOADING_STEPS.length; i += 1) {
+    if (targetPercent >= OPTIMIZER_LOADING_STEPS[i].percent) stepIndex = i;
+  }
+  const step = OPTIMIZER_LOADING_STEPS[stepIndex] || OPTIMIZER_LOADING_STEPS[0];
+  host.style.setProperty("--progress", `${targetPercent}%`);
+  const fill = host.querySelector(".todayProgressNovaFill");
+  if (fill) fill.style.setProperty("--progress", `${targetPercent}%`);
+  const strong = host.querySelector(".todayProgressHeader strong");
+  const em = host.querySelector(".todayProgressHeader em");
+  const detail = host.querySelector(".todayProgressDetail");
+  if (strong) strong.textContent = step.label || "运行中";
+  if (em) em.textContent = `${Math.round(targetPercent)}%`;
+  if (detail) detail.textContent = step.detail || "正在生成候选池。";
+  const stepNodes = host.querySelectorAll(".todayProgressSteps b");
+  stepNodes.forEach((node, index) => {
+    node.classList.toggle("isDone", index < stepIndex);
+    node.classList.toggle("isActive", index === stepIndex);
+  });
+}
+
+async function loadProfessionalModelScore() {
+  const payload = await request("/api/audit/professional-model-score", {
+    provider: providerParam(),
+    date: currentDateParam(),
+    bankroll: bankrollParam(),
+    risk_profile: riskProfileParam(),
+    external_signals: externalSignalsParam(),
+  }, "模型体检", 24000);
+  if (payload.ok) {
+    state.proScoreView = payload.data;
+    renderProfessionalModelScoreAudit(payload.data);
+  } else {
+    renderProfessionalModelScoreAudit({
+      professional_model_score: {},
+      warnings: payload.warnings || ["模型体检暂未返回。"],
+      error_zh: payload.error?.message || "模型体检暂未返回。",
+    });
+  }
+}
+
+function renderProfessionalModelScoreAudit(view = {}) {
+  const score = view.professional_model_score || {};
+  const roadmap = score.roadmap_to_95 || {};
+  const evidence = score.learning_evidence || {};
+  const cards = [
+    { label: "职业模型分", value: score.score == null ? "N/A" : `${score.score}/${score.ceiling_score || 95}`, help: score.summary_zh || "分数越高，说明数据、校准、CLV 和纪律越接近职业模型标准。" },
+    { label: "理论上限", value: score.ceiling_score == null ? "N/A" : `${score.ceiling_score}`, help: "如果真实数据、赛后样本或收盘赔率不足，上限会被主动压低。" },
+    { label: "评级", value: score.grade || "N/A", help: score.label_zh || "评级反映当前模型可信层级，不是赛果承诺。" },
+    { label: "已结算样本", value: evidence.settled_count ?? "0", help: "长期样本越多，Brier / Log Loss 才越有判断力。" },
+    { label: "CLV 样本", value: evidence.clv_settled_count ?? "0", help: "CLV 用来检查赛前价格是否跑赢市场终盘。" },
+    { label: "AI假设复盘", value: evidence.ai_hypothesis_reviewed_count ?? "0", help: evidence.ai_hypothesis_summary_zh || "AI/DS 赛前摘要必须被赛后结果审计，不能只看 token。" },
+    { label: "下一步增益", value: `${roadmap.estimated_score_gain || 0}`, help: roadmap.priority_zh || "优先补最能拉升模型上限的短板。" },
+  ];
+  setNodeHtml("#proScoreCards", C.cards(cards));
+  setNodeHtml("#proScorePanelHost", professionalModelScorePanel(score));
+  setNodeHtml("#proScoreGapRadar", professionalScoreGapRadar(score.score_gap_radar || []));
+  setNodeHtml("#proScoreLearningBridge", professionalScoreLearningBridge(score, view));
+  setNodeHtml("#proScoreAiQuality", professionalScoreAiQualityPanel(score.ai_research_quality || {}));
+  setNodeHtml("#proScoreTrend", professionalScoreTrendPanel(score.score_trend || {}));
+  setNodeHtml("#proScoreEvidenceGates", professionalScoreEvidenceGates(score.evidence_requirements || {}));
+  const actions = roadmap.next_best_actions || [];
+  const items = roadmap.items || score.missing_to_95 || [];
+  const roadmapHtml = `
+    <div class="proScoreActionGrid">
+      ${actions.slice(0, 5).map((item, index) => `
+        <article>
+          <span>${index + 1}</span>
+          <strong>${C.escapeHtml(item.title_zh || item.key || "改进项")}</strong>
+          <p>${C.escapeHtml(item.action_zh || item.detail_zh || item.reason_zh || "继续补齐证据。")}</p>
+          <em>${C.escapeHtml(item.estimated_score_gain == null ? "增益待估" : `预计 +${item.estimated_score_gain} 分`)}</em>
+        </article>
+      `).join("") || `<p>暂无路线图。先积累赛后样本和收盘赔率。</p>`}
+    </div>
+    ${items.length ? `<details class="detailDrawer"><summary>查看所有缺口</summary>${C.list(items.map((item) => item.message_zh || item.detail_zh || item.title_zh || String(item)))}</details>` : ""}
+  `;
+  setNodeHtml("#proScoreRoadmap", roadmapHtml);
+  const benchmark = score.industry_benchmark_zh || view.industry_benchmark_zh || [];
+  setNodeHtml("#proScoreBenchmark", benchmark.length ? C.table(benchmark, [
+    { key: "label_zh", label: "基准项" },
+    { key: "status_zh", label: "状态" },
+    { key: "message_zh", label: "说明" },
+  ]) : `<div class="emptyState">暂无行业基准明细。</div>`);
+}
+
+function professionalScoreGapRadar(rows = []) {
+  if (!rows.length) return `<div class="emptyState">暂无 95 分缺口雷达。先生成模型体检。</div>`;
+  const topRows = rows.slice(0, 9);
+  return `
+    <section class="proScoreGapRadar">
+      <div class="proScoreGapRadarHead">
+        <span>95 GAP RADAR</span>
+        <strong>离高分还差什么</strong>
+        <p>不是盲目加模型，而是看哪一块最拖分：数据源、赔率转换、校准、CLV、玩法复盘、冷门偏差、情报覆盖、组合纪律和赛后学习。</p>
+      </div>
+      <div class="proScoreGapRadarGrid">
+        ${topRows.map((row) => {
+          const score = Math.max(0, Math.min(100, Number(row.score || 0)));
+          const target = Math.max(score, Math.min(100, Number(row.target_score || 82)));
+          const gap = Math.max(0, Number(row.gap_to_target || 0));
+          return `
+            <article data-impact="${C.escapeHtml(row.impact_level || "low")}" style="--score:${score}%;--target:${target}%">
+              <header>
+                <span>${C.escapeHtml(row.label_zh || row.key || "缺口")}</span>
+                <strong>${C.escapeHtml(String(score))}</strong>
+              </header>
+              <div class="gapRadarTrack">
+                <i></i>
+                <b></b>
+              </div>
+              <p>${C.escapeHtml(row.impact_zh || "继续观察。")}</p>
+              <em>目标 ${C.escapeHtml(String(row.target_score ?? "N/A"))} · 缺口 ${C.escapeHtml(String(gap))} · 加权缺口 ${C.escapeHtml(String(row.weighted_gap ?? "N/A"))}</em>
+              <small>${C.escapeHtml(row.next_step_zh || row.detail_zh || "继续补证据。")}</small>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function professionalScoreLearningBridge(score = {}, view = {}) {
+  const evidence = score.learning_evidence || {};
+  const roadmap = score.roadmap_to_95 || {};
+  const requirements = score.evidence_requirements || {};
+  const progress = requirements.sample_progress || {};
+  const recentImpact = state.lastLearningImpact || {};
+  const actions = roadmap.next_best_actions || [];
+  const scoreValue = score.score == null ? "N/A" : `${score.score}/${score.ceiling_score || 95}`;
+  const settled = Number(evidence.settled_count || 0);
+  const clvSettled = Number(evidence.clv_settled_count || 0);
+  const aiReviewed = Number(evidence.ai_hypothesis_reviewed_count || 0);
+  const aiSupported = Number(evidence.ai_hypothesis_supported_count || 0);
+  const aiFailed = Number(evidence.ai_hypothesis_failed_count || 0);
+  const aiSupportRate = evidence.ai_hypothesis_supported_rate == null ? "暂无" : fmtPct(evidence.ai_hypothesis_supported_rate);
+  const playBest = evidence.play_type_best || {};
+  const playWeakest = evidence.play_type_weakest || {};
+  const playSummary = evidence.play_type_summary_zh || "玩法复盘样本不足，暂不能证明哪类玩法长期更可靠。";
+  const playBiasRadar = (score.score_gap_radar || []).find((row) => row.key === "play_bias_control") || {};
+  const primaryGap = actions[0]?.title_zh || (clvSettled < 20 ? "补收盘赔率 CLV" : settled < 30 ? "补赛后结果样本" : "补真实情报覆盖");
+  const primaryAction = actions[0]?.action_zh || "保存赛前观察，赛后回填比分和收盘赔率，让模型用真实样本证明自己。";
+  return `
+    <div class="proScoreLearningHero">
+      <div>
+        <span>当前模型体检</span>
+        <strong>${C.escapeHtml(scoreValue)}</strong>
+        <p>${C.escapeHtml(score.summary_zh || "职业模型分会被真实数据、赛后样本、CLV 和情报覆盖共同限制。")}</p>
+      </div>
+      <div>
+        <span>第一优先级</span>
+        <strong>${C.escapeHtml(primaryGap)}</strong>
+        <p>${C.escapeHtml(primaryAction)}</p>
+      </div>
+    </div>
+    <div class="proScoreLearningSteps">
+      <article>
+        <b>1</b>
+        <strong>固定赛前观察</strong>
+        <p>把今天的单关、2串1、3串1纸面候选和拒绝原因保存下来，避免赛后回忆偏差。</p>
+        <button type="button" class="secondary" data-proscore-action="snapshot">保存今日观察</button>
+      </article>
+      <article>
+        <b>2</b>
+        <strong>准备赛后复盘</strong>
+        <p>自动生成比分模板和收盘赔率模板。长期靠 Brier、Log Loss、ROI、CLV 判断模型有没有进步。</p>
+        <button type="button" class="secondary" data-proscore-action="pack">准备复盘材料</button>
+      </article>
+      <article>
+        <b>3</b>
+        <strong>填写赛果与收盘赔率</strong>
+        <p>赛后补比分；如果能补收盘赔率，就能检查是否跑赢市场终盘，这是接近职业模型的硬指标。</p>
+        <button type="button" class="primary" data-proscore-action="results">去填写赛果</button>
+      </article>
+    </div>
+    <div class="proScoreLearningEvidence">
+      <span>已结算样本：${C.escapeHtml(String(settled))}</span>
+      <span>CLV 样本：${C.escapeHtml(String(clvSettled))}</span>
+      <span>AI 假设复盘：${C.escapeHtml(String(aiReviewed))}</span>
+      <span>AI 支持率：${C.escapeHtml(aiSupportRate)}</span>
+      <span>玩法复盘：${C.escapeHtml(String(evidence.play_type_reliable_count || 0))} 类可参考</span>
+      <span>数据源：${C.escapeHtml(view.provider_used || "auto")}</span>
+      <span>目标：先让样本闭环稳定，再调模型权重</span>
+    </div>
+    <div class="proScorePlayTypeBridge">
+      <strong>玩法是否真的有效？</strong>
+      <p>${C.escapeHtml(playSummary)}</p>
+      <div>
+        <span>最佳：${C.escapeHtml(playBest.label_zh || "待累计")} · ROI ${C.escapeHtml(fmtSignedPct(playBest.paper_roi))}</span>
+        <span>最弱：${C.escapeHtml(playWeakest.label_zh || "待累计")} · ROI ${C.escapeHtml(fmtSignedPct(playWeakest.paper_roi))}</span>
+        <span>弱玩法：${C.escapeHtml(String(evidence.play_type_weak_count || 0))}</span>
+        <span>偏置纠偏：${C.escapeHtml(playBiasRadar.score == null ? "待检查" : `${playBiasRadar.score}/${playBiasRadar.target_score || 84}`)}</span>
+      </div>
+      <em>${C.escapeHtml(playBiasRadar.next_step_zh || "如果某玩法长期 ROI、Brier 或命中率偏弱，优化器会自动降权，不再机械重复同一玩法。")}</em>
+    </div>
+    <div class="proScoreAiReviewBridge">
+      <strong>AI/DS 研究怎么证明有用？</strong>
+      <p>${C.escapeHtml(evidence.ai_hypothesis_summary_zh || "赛后保存学习后，系统会把 AI 当时的单关、2串1、3串1、被拒组合解释逐条复盘。")}</p>
+      <div>
+        <span>支持 ${C.escapeHtml(String(aiSupported))}</span>
+        <span>失败 ${C.escapeHtml(String(aiFailed))}</span>
+        <span>待累计 ${C.escapeHtml(String(Math.max(0, aiReviewed ? aiReviewed - aiSupported - aiFailed : 0)))}</span>
+      </div>
+      <em>只有长期“假设被支持 + CLV 不拖后腿”，AI 摘要才会真正提高职业模型证据分。</em>
+    </div>
+    <div class="proScoreSampleImpact">
+      <div>
+        <span>下一档：${C.escapeHtml(progress.gate_level ? `${progress.gate_level} · ${progress.gate_label_zh || ""}` : "待计算")}</span>
+        <strong>${C.escapeHtml(progress.next_action_zh || "继续补赛后结果和收盘赔率。")}</strong>
+      </div>
+      <div class="proScoreSampleMeters">
+        <label>
+          <b>赛后结果</b>
+          <i style="--score:${Number(progress.settled_progress_pct || 0)}%"></i>
+          <em>${C.escapeHtml(String(progress.settled_current ?? settled))}/${C.escapeHtml(String(progress.settled_target || "N/A"))}</em>
+        </label>
+        <label>
+          <b>CLV</b>
+          <i style="--score:${Number(progress.clv_progress_pct || 0)}%"></i>
+          <em>${C.escapeHtml(String(progress.clv_current ?? clvSettled))}/${C.escapeHtml(String(progress.clv_target || "N/A"))}</em>
+        </label>
+      </div>
+      ${recentImpact.saved ? `
+        <p class="proScoreRecentImpact">
+          ${C.escapeHtml(`刚刚新增：${recentImpact.summary || recentImpact.detail || "赛后学习样本"}。${recentImpact.next || "刷新模型体检后会重新计算门槛进度。"}`)}
+        </p>
+      ` : ""}
+    </div>
+  `;
+}
+
+function professionalScoreEvidenceGates(requirements = {}) {
+  const rows = requirements.rows || [];
+  if (!rows.length) return `<div class="emptyState">暂无证据门槛。先生成模型体检。</div>`;
+  return `
+    <div class="proScoreGateSummary">
+      <strong>${C.escapeHtml(requirements.summary_zh || "下一道证据门槛待计算。")}</strong>
+      <p>${C.escapeHtml(requirements.note_zh || "职业级模型需要长期赛后样本、CLV 和情报覆盖。")}</p>
+    </div>
+    <div class="proScoreGateGrid">
+      ${rows.map((row) => `
+        <article class="${row.passed ? "isPassed" : "isBlocked"}">
+          <header>
+            <span>${C.escapeHtml(String(row.level))}</span>
+            <div>
+              <strong>${C.escapeHtml(row.label_zh || "证据门槛")}</strong>
+              <em>${C.escapeHtml(row.status_zh || "未达标")}</em>
+            </div>
+          </header>
+          <p>${C.escapeHtml(row.message_zh || "")}</p>
+          <div class="proScoreGateChecks">
+            ${(row.checks || []).slice(0, 5).map((check) => `
+              <i class="${check.passed ? "pass" : "fail"}">
+                <b>${C.escapeHtml(check.label_zh || check.key || "检查项")}</b>
+                <span>${C.escapeHtml(String(check.current ?? "N/A"))} / ${C.escapeHtml(String(check.target ?? "N/A"))}</span>
+              </i>
+            `).join("")}
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function professionalScoreTrendPanel(trend = {}) {
+  const rows = trend.rows || [];
+  if (!rows.length) {
+    return `<div class="emptyState">暂无 7 天 / 30 天模型分趋势。先保存赛后学习样本。</div>`;
+  }
+  const directionLabel = trend.direction === "up" ? "近期改善" : trend.direction === "down" ? "近期走弱" : "稳定累计";
+  return `
+    <div class="proScoreTrendHero" data-direction="${C.escapeHtml(trend.direction || "flat")}">
+      <span>${C.escapeHtml(directionLabel)}</span>
+      <strong>${C.escapeHtml(trend.summary_zh || "继续累计样本。")}</strong>
+      <p>趋势分只用于判断模型学习质量，不代表任何单场结果。</p>
+    </div>
+    <div class="proScoreTrendGrid">
+      ${rows.map((row) => `
+        <article>
+          <header>
+            <span>${C.escapeHtml(row.label_zh || row.window || "窗口")}</span>
+            <strong>${C.escapeHtml(String(row.estimated_score ?? "N/A"))}</strong>
+          </header>
+          <div class="miniMeter"><i style="--score:${Math.max(0, Math.min(100, Number(row.estimated_score || 0)))}%"></i></div>
+          <div class="trendMetrics">
+            <b>样本 ${C.escapeHtml(String(row.settled_count ?? 0))}</b>
+            <b>CLV ${C.escapeHtml(String(row.clv_settled_count ?? 0))}</b>
+            <b>Brier ${C.escapeHtml(row.brier_score == null ? "N/A" : String(row.brier_score))}</b>
+            <b>ROI ${C.escapeHtml(fmtSignedPct(row.paper_roi))}</b>
+          </div>
+          <p>${C.escapeHtml(row.message_zh || "")}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function professionalScoreAiQualityPanel(ai = {}) {
+  if (!Object.keys(ai).length) return `<div class="emptyState">暂无 AI 研究质量记录。先运行赛前优化或自动研究。</div>`;
+  const cards = [
+    { label: "AI研究分", value: ai.score == null ? "N/A" : `${ai.score}/100`, help: ai.summary_zh || "AI 只做解释、质检和复盘，不直接改概率。" },
+    { label: "DS状态", value: ai.ds_completed ? "已完成" : "未完成", help: "DS 未完成时自动回退本地摘要。" },
+    { label: "Token", value: ai.token_total || "N/A", help: "用于对账 AI 研究是否真实参与。" },
+    { label: "结构化笔记", value: ai.structured_note_count ?? 0, help: "结构化笔记越完整，赛后越能验证 AI 判断质量。" },
+    { label: "可验证假设", value: ai.verifiable_hypothesis_count ?? 0, help: "每条假设都应该能用赛果、CLV 或被拒组合复盘验证。" },
+    { label: "赛后已复盘", value: ai.reviewed_hypothesis_count ?? 0, help: "不是 AI 写了就算，必须回填赛果后检验。" },
+    { label: "假设支持率", value: ai.supported_hypothesis_rate == null ? "暂无" : fmtPct(ai.supported_hypothesis_rate), help: "支持率低时，AI 摘要只作解释，不提高模型自信。" },
+    { label: "研究档案", value: ai.archive_saved ? "已保存" : "未确认", help: "未归档的 AI 摘要无法稳定进入学习闭环。" },
+  ];
+  const reviewed = Number(ai.reviewed_hypothesis_count || 0);
+  const supported = Number(ai.supported_hypothesis_count || 0);
+  const failed = Number(ai.failed_hypothesis_count || 0);
+  const pending = Math.max(0, Number(ai.verifiable_hypothesis_count || 0) - reviewed);
+  const hypotheses = ai.verifiable_hypotheses || [];
+  return `
+    <div class="proScoreAiQuality">
+      ${C.cards(cards)}
+      <div class="proScoreAiReviewPanel">
+        <div>
+          <span>POSTMATCH AI AUDIT</span>
+          <strong>${reviewed ? `已复盘 ${C.escapeHtml(String(reviewed))} 条 AI 假设` : "等待赛后验证"}</strong>
+          <p>${C.escapeHtml(reviewed ? "AI 研究质量现在会读取赛后支持/失败记录，而不是只看 token 消耗。" : "保存赛后学习后，这里会显示 DS/本地 AI 当时判断是否被赛果和 CLV 支持。")}</p>
+        </div>
+        <div class="aiReviewPills">
+          <b>支持 ${C.escapeHtml(String(supported))}</b>
+          <b>失败 ${C.escapeHtml(String(failed))}</b>
+          <b>待验证 ${C.escapeHtml(String(pending))}</b>
+        </div>
+      </div>
+      ${hypotheses.length ? `
+        <details class="detailDrawer" open>
+          <summary>查看可验证假设</summary>
+          ${C.table(hypotheses, [
+            { key: "label_zh", label: "类型" },
+            { key: "target", label: "目标" },
+            { key: "hypothesis_zh", label: "AI假设" },
+            { key: "validation_rule_zh", label: "赛后验证" },
+          ])}
+        </details>
+      ` : ""}
+      <div class="noteBox">
+        ${C.list([
+          ai.summary_zh || "AI 研究质量待评估。",
+          ...(ai.evidence_zh || []),
+          ...(ai.issues_zh || []),
+          ai.next_step_zh || "让 AI 输出可复盘假设，而不是泛泛解释。",
+          ai.disclaimer || "AI 研究不改写概率、不绕过门控。",
+        ])}
+      </div>
+    </div>
+  `;
+}
+
+document.addEventListener("click", (event) => {
+  const target = event.target && event.target.closest ? event.target.closest("#proScoreBtn, #tab-proscore") : null;
+  if (!target) return;
+  window.setTimeout(() => loadProfessionalModelScore(), 0);
+});
+
+document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest("[data-proscore-action]") : null;
+  if (!button) return;
+  event.preventDefault();
+  const action = button.dataset.proscoreAction;
+  if (action === "snapshot") {
+    saveLearningObservationSnapshot();
+    return;
+  }
+  if (action === "pack") {
+    prepareDailyLearningPack();
+    return;
+  }
+  if (action === "results") {
+    jumpToView("learning");
+    renderLearningQuickForm();
+  }
+});
+
 function value(selector, fallback = "") {
   const el = qs(selector);
   return el && el.value !== undefined ? el.value : fallback;
@@ -76,12 +634,12 @@ async function request(path, params = {}, label = "请求", timeoutMs = 20000) {
   } catch (error) {
     const timedOut = error && (error.name === "AbortError" || String(error.message || "").includes("aborted"));
     const payload = timedOut
-      ? { ok: false, error: { code: "request_timeout", message: "完整模型读取较慢，本次先停在安全等待状态。" }, warnings: ["完整模型超过等待时间。可以稍后重试，或先查看情报覆盖和组合审核。"] }
+      ? { ok: false, error: { code: "request_timeout", message: "完整模型读取较慢，已保留当前可用结果。" }, warnings: ["完整模型超过等待时间。页面会保留最近一次结果；可以稍后重试，或直接运行赛前优化。"] }
       : { ok: false, error: { code: "connection_error", message: "本地 API 连接失败，请确认服务已启动。" }, warnings: ["本地 API 可能尚未启动，或端口被占用。"] };
     state.lastRaw = payload;
     renderRaw(payload);
     renderWarnings(payload.warnings);
-    setStatus(timedOut ? "Slow" : "Offline", timedOut ? "数据源较慢" : "连接失败");
+    setStatus(timedOut ? "Ready" : "Offline", timedOut ? "保留当前结果" : "连接失败");
     return payload;
   } finally {
     if (timer) window.clearTimeout(timer);
@@ -176,6 +734,9 @@ function maybeAutoLoadView(name) {
   if (name === "scoregoals" && !state.scoreGoalsView) {
     window.setTimeout(() => loadScoreGoals(), 0);
   }
+  if (name === "proscore" && !state.proScoreView) {
+    window.setTimeout(() => loadProfessionalModelScore(), 0);
+  }
 }
 
 function syncNavigationState(name) {
@@ -223,7 +784,7 @@ function quickActionLabel(name) {
 
 function refreshTodayFromRail() {
   jumpToView("today");
-  return loadToday();
+  return loadToday({ forceRefresh: true, useFastPreview: true });
 }
 
 function tableOrEmpty(rows, columns, message = "暂无数据") {
@@ -255,27 +816,50 @@ const TODAY_LOADING_STEPS = [
   { percent: 42, label: "读取赔率和数据源", detail: "确认比赛、赔率和数据源状态。" },
   { percent: 60, label: "计算可信度", detail: "检查情报缺口和纪律门控。" },
   { percent: 76, label: "审核单关和组合", detail: "先看单关，再判断 2串1 / 3串1 是否过门控。" },
-      { percent: 90, label: "生成 Top 卡片", detail: "整理单关、组合、总进球和比分倾向。" },
-  { percent: 96, label: "仍在等待后端", detail: "完整 T+1 候选正在生成；必须输出单关、2串1、3串1纸面候选，完成后会自动替换结果。" },
+  { percent: 90, label: "生成 Top 卡片", detail: "整理单关、组合、总进球和比分倾向。" },
+  { percent: 100, label: "流程完成", detail: "候选与纪律结论已拿到，准备展示首页。 " },
+];
+
+const OPTIMIZER_LOADING_STEPS = [
+  { percent: 8, label: "启动赛前优化", detail: "读取筛选条件、风险档位和目标日期。" },
+  { percent: 22, label: "请求赛事与赔率", detail: "确认下一可售场次、官方赔率和数据源状态。" },
+  { percent: 38, label: "加载模型与校准", detail: "融合市场概率、模型概率、去水与可信度信息。" },
+  { percent: 58, label: "执行纪律门控", detail: "按相关性、风险等级与情报完整度过滤组合资格。" },
+  { percent: 75, label: "构建观察池", detail: "生成单关、2串1、3串1 及拒绝列表。" },
+  { percent: 92, label: "生成顶部摘要", detail: "整理 Top 信号、候选风险和拒绝原因。" },
+  { percent: 100, label: "完成", detail: "赛前优化结果已就绪，即将展示。"},
 ];
 
 function todayProgressMarkup(stepIndex = 0) {
   const safeIndex = Math.max(0, Math.min(stepIndex, TODAY_LOADING_STEPS.length - 1));
   const current = TODAY_LOADING_STEPS[safeIndex];
+  const visibleSteps = TODAY_LOADING_STEPS.slice(0, 7);
   return `
-    <div id="todayLoadingProgress" class="todayLoadingProgress" style="--progress:${current.percent}%">
+    <div id="todayLoadingProgress" class="todayLoadingProgress isNova" style="--progress:${current.percent}%">
       <div class="todayProgressHeader">
         <span>生成进度</span>
         <strong>${C.escapeHtml(current.label)}</strong>
         <em>${C.escapeHtml(String(current.percent))}%</em>
       </div>
-      <div class="todayProgressTrack" aria-hidden="true"><i></i></div>
-      <div class="todayProgressSteps" aria-label="今日观察生成阶段">
-        ${TODAY_LOADING_STEPS.slice(0, 6).map((step, index) => `
-          <b class="${index < safeIndex ? "isDone" : index === safeIndex ? "isActive" : ""}">${C.escapeHtml(step.label)}</b>
+      <div class="todayProgressNovaWrap" aria-hidden="true">
+        <div class="todayProgressNovaRail">
+          <span class="todayProgressNovaGlow"></span>
+          <span class="todayProgressNovaFill" style="--progress:${current.percent}%"></span>
+          <span class="todayProgressNovaShimmer"></span>
+          ${[0, 1, 2, 3].map((_, index) => `
+            <i class="todayProgressNovaDot" style="--dot-angle:${index * 90}deg"></i>
+          `).join("")}
+        </div>
+      </div>
+      <div class="todayProgressSteps todayProgressStepsNova" aria-label="今日观察生成阶段">
+        ${visibleSteps.map((step, index) => `
+          <b class="${index < safeIndex ? "isDone" : index === safeIndex ? "isActive" : ""}" data-index="${index}">
+            <em>${index + 1}</em>
+            ${C.escapeHtml(step.label)}
+          </b>
         `).join("")}
       </div>
-      <p>${C.escapeHtml(current.detail)}</p>
+      <p class="todayProgressDetail">${C.escapeHtml(current.detail)}</p>
     </div>
   `;
 }
@@ -293,6 +877,8 @@ function updateTodayProgress(stepIndex) {
   const safeIndex = Math.max(0, Math.min(stepIndex, TODAY_LOADING_STEPS.length - 1));
   const current = TODAY_LOADING_STEPS[safeIndex];
   target.style.setProperty("--progress", `${current.percent}%`);
+  const fill = target.querySelector(".todayProgressNovaFill");
+  if (fill) fill.style.setProperty("--progress", `${current.percent}%`);
   const title = target.querySelector(".todayProgressHeader strong");
   const percent = target.querySelector(".todayProgressHeader em");
   const body = target.querySelector("p");
@@ -303,6 +889,8 @@ function updateTodayProgress(stepIndex) {
     node.classList.toggle("isDone", index < safeIndex);
     node.classList.toggle("isActive", index === safeIndex);
   });
+  target.classList.toggle("isAlmost", current.percent >= 80 && current.percent < 100);
+  target.classList.toggle("isDoneState", current.percent >= 100);
 }
 
 function startTodayProgressTicker() {
@@ -327,6 +915,91 @@ function startTodayProgressTicker() {
       updateTodayProgress(next.step);
     }
   }, 650);
+}
+
+function optimizerProgressMarkup(stepIndex = 0) {
+  const safeIndex = Math.max(0, Math.min(stepIndex, OPTIMIZER_LOADING_STEPS.length - 1));
+  const current = OPTIMIZER_LOADING_STEPS[safeIndex];
+  const visibleSteps = OPTIMIZER_LOADING_STEPS.slice(0, 7);
+  return `
+    <div id="optimizerLoadingProgress" class="todayLoadingProgress isNova" style="--progress:${current.percent}%">
+      <div class="todayProgressHeader">
+        <span>OPTIMIZER</span>
+        <strong>${C.escapeHtml(current.label)}</strong>
+        <em>${C.escapeHtml(String(current.percent))}%</em>
+      </div>
+      <div class="todayProgressNovaWrap" aria-hidden="true">
+        <div class="todayProgressNovaRail">
+          <span class="todayProgressNovaGlow"></span>
+          <span class="todayProgressNovaFill" style="--progress:${current.percent}%"></span>
+          <span class="todayProgressNovaShimmer"></span>
+          ${[0, 90, 180, 270].map((angle) => `<i class="todayProgressNovaDot" style="--dot-angle:${angle}deg"></i>`).join("")}
+        </div>
+      </div>
+      <div class="todayProgressSteps todayProgressStepsNova" aria-label="赛前优化进度">
+        ${visibleSteps.map((step, index) => `
+          <b class="${index < safeIndex ? "isDone" : index === safeIndex ? "isActive" : ""}" data-index="${index}">
+            <em>${index + 1}</em>
+            ${C.escapeHtml(step.label)}
+          </b>
+        `).join("")}
+      </div>
+      <p class="todayProgressDetail">${C.escapeHtml(current.detail)}</p>
+    </div>
+  `;
+}
+
+function updateOptimizerProgress(stepIndex) {
+  const target = qs("#optimizerLoadingProgress");
+  if (!target) return;
+  const safeIndex = Math.max(0, Math.min(stepIndex, OPTIMIZER_LOADING_STEPS.length - 1));
+  const current = OPTIMIZER_LOADING_STEPS[safeIndex];
+  target.style.setProperty("--progress", `${current.percent}%`);
+  const fill = target.querySelector(".todayProgressNovaFill");
+  if (fill) fill.style.setProperty("--progress", `${current.percent}%`);
+  const title = target.querySelector(".todayProgressHeader strong");
+  const percent = target.querySelector(".todayProgressHeader em");
+  const body = target.querySelector(".todayProgressDetail");
+  if (title) title.textContent = current.label;
+  if (percent) percent.textContent = `${current.percent}%`;
+  if (body) body.textContent = current.detail;
+  target.querySelectorAll(".todayProgressSteps b").forEach((node, index) => {
+    node.classList.toggle("isDone", index < safeIndex);
+    node.classList.toggle("isActive", index === safeIndex);
+  });
+  target.classList.toggle("isAlmost", current.percent >= 85 && current.percent < 100);
+  target.classList.toggle("isDoneState", current.percent >= 100);
+}
+
+function startOptimizerProgressTicker() {
+  stopOptimizerProgressTicker();
+  state.optimizerProgressStartedAt = Date.now();
+  const schedule = [
+    { ms: 0, step: 0 },
+    { ms: 1200, step: 1 },
+    { ms: 2600, step: 2 },
+    { ms: 4700, step: 3 },
+    { ms: 7600, step: 4 },
+    { ms: 11500, step: 5 },
+    { ms: 18800, step: 6 },
+  ];
+  let lastStep = 0;
+  updateOptimizerProgress(0);
+  state.optimizerProgressTimer = window.setInterval(() => {
+    const elapsed = Date.now() - state.optimizerProgressStartedAt;
+    const next = schedule.slice().reverse().find((item) => elapsed >= item.ms) || schedule[0];
+    if (next.step !== lastStep) {
+      lastStep = next.step;
+      updateOptimizerProgress(next.step);
+    }
+  }, 450);
+}
+
+function stopOptimizerProgressTicker() {
+  if (state.optimizerProgressTimer) {
+    window.clearInterval(state.optimizerProgressTimer);
+    state.optimizerProgressTimer = null;
+  }
 }
 
 
@@ -1104,8 +1777,8 @@ function workflowAcceptanceSignal(label = "") {
   const map = {
     "数据源": "provider_used 清晰、可售比赛数稳定、无异常 fallback。",
     "Top信号": "Top 单关/进球/比分卡片有可读结论，弱信号不被误当强信号。",
-    "组合纪律": "2串1/3串1 有入选或拒绝原因，未通过时显示暂不组合。",
-    "AI研究": "DS Pro 或本地研究摘要完成，并写入每日 AI 研究记录。",
+    "组合纪律": "2串1/3串1 有通过门控或被拒原因，未通过时显示暂不组合。",
+    "AI研究": "DS Pro 或本地研究摘要已归档，包含可验证假设，并能赛后复盘支持/失败。",
     "赛后学习": "赛果、收盘赔率或 CLV 样本被保存，学习页能看到新复盘。",
   };
   return map[label] || "对应分项分数上升，且用户下一步更清楚。";
@@ -1118,7 +1791,7 @@ function workflowExpectedLift(label = "", itemScore = 0, totalScore = 0, status 
     "数据源": "预期：让赔率/赛程基础更稳",
     "Top信号": "预期：减少弱信号进入组合",
     "组合纪律": "预期：减少高赔率假机会",
-    "AI研究": "预期：补齐解释、被拒原因和复盘摘要",
+    "AI研究": "预期：把解释变成可赛后验证的研究假设",
     "赛后学习": "预期：用赛果和收盘赔率提升长期校准",
   };
   return map[label] || "预期：提高长期工作流分数";
@@ -1357,7 +2030,7 @@ function workflowActionStatusText(action = "") {
   const messages = {
     refresh_today: "正在重新读取 T+1 可售比赛、赔率和情报覆盖。",
     run_optimizer: "正在重新生成 Top 单关、进球/比分和组合观察。",
-    best_parlay: "正在打开组合纪律，查看为什么入选或被拒。",
+    best_parlay: "正在打开组合纪律，查看通过门控/未过门控原因。",
     ai_research: "正在启动 DS Pro 自动研究；完成后会写入今日 AI 研究记录。",
     learning_pack: "正在准备赛后学习包，用比分和收盘赔率校准长期分数。",
   };
@@ -1382,7 +2055,7 @@ function workflowActionDoneText(action = "") {
   const messages = {
     refresh_today: "已完成 T+1 比赛和数据源刷新，请查看分数是否改善。",
     run_optimizer: "已完成 Top 信号生成，请查看单关、进球/比分和组合候选。",
-    best_parlay: "已打开组合纪律，请重点看入选/被拒原因。",
+    best_parlay: "已打开组合纪律，请重点看通过/未过门控原因。",
     ai_research: "AI 研究动作已完成，请查看今日 DS/本地研究摘要和 Top 覆盖。",
     learning_pack: "赛后学习包已准备，请继续补比分、收盘赔率和复盘样本。",
   };
@@ -1668,7 +2341,7 @@ function workflowActionErrorText(action = "", error = null) {
 }
 
 async function workflowRunQuickAction(action = "") {
-  if (action === "refresh_today") return loadToday();
+  if (action === "refresh_today") return loadToday({ forceRefresh: true, useFastPreview: true });
   if (action === "run_optimizer") return runOptimizer(true);
   if (action === "best_parlay") return loadBestParlay();
   if (action === "ai_research") return loadAiComboResearch();
@@ -1792,51 +2465,48 @@ function renderTodayTimeoutState(payload = {}) {
   renderWorkflowScore(null, "slow");
   renderScanCalendar(null);
   renderExternalSignalsStrip(null);
-  setAiAutoStatus("fallback", "数据源读取较慢", "本地服务可用，但下一可售日接口本次等待过久。先保留页面可用，再稍后刷新。 ");
-  const message = payload.error?.message || "完整模型读取较慢，本次先停在安全等待状态。";
-  if (qs("#todayOneLook")) {
-    qs("#todayOneLook").innerHTML = `
-      <article class="oneLookHero signalLight signalLight-wait dataSlowHero">
-        <span>赛前总览</span>
-        <div class="signalLightRow"><b>较慢</b><strong>暂未拿到下一可售日观察</strong></div>
-        <p>${C.escapeHtml(message)} 这通常来自 Sporttery/API 数据源慢、外部接口回退或自动研究等待过久；页面不会再无限卡住。</p>
-      </article>
-    `;
-  }
+  const message = payload.error?.message || "首页预读没有在等待时间内完成。";
+  setAiAutoStatus("fallback", "先进入赛前优化", "首页不再卡死等待数据源；点击“运行赛前优化”会直接生成单关、2串1、3串1纸面候选。");
+  setTodayQuickActionStatus("当前：首页预读未完成，建议直接运行赛前优化");
+  setNodeHtml("#todayOneLook", actionableTodayFallback(message));
   const fallbackMap = {
-    "#todaySingles": ["单关暂未生成", "数据还没回来，不能把空结果包装成信号。稍后刷新，或先看情报覆盖。"],
-    "#todayParlay2": ["暂不组合", "没有单腿和可信度门控结果前，不生成 2串1。"],
-    "#todayParlay3": ["不启用高风险组合", "数据源较慢时，3串1 默认不展示为候选。"],
-    "#todayTotalGoals": ["进球倾向待生成", "总进球需要比分矩阵和赔率/模型输入。"],
-    "#todayScores": ["比分参考待生成", "比分属于高波动参考，数据未完整时不展示。"],
+    "#todaySingles": ["先运行赛前优化", "下一步直接生成每日单关、2串1、3串1纸面候选，不等待首页完整扫描。"],
+    "#todayParlay2": ["2串1候选待生成", "赛前优化会给候选榜和拒绝原因，未过门控也会留下赛后复盘样本。"],
+    "#todayParlay3": ["3串1候选待生成", "只作为高风险纸面候选，不包装成强观察。"],
+    "#todayTotalGoals": ["进球倾向待生成", "进入比分/进球数页或运行赛前优化后更新。"],
+    "#todayScores": ["比分参考待生成", "比分只作倾向参考，等待模型矩阵返回。"],
   };
   Object.entries(fallbackMap).forEach(([selector, [title, body]]) => {
     const target = qs(selector);
     if (target) target.innerHTML = `<div class="emptyState"><strong>${C.escapeHtml(title)}</strong><p>${C.escapeHtml(body)}</p></div>`;
   });
-  const comboBoard = qs("#todayComboBoard");
-  if (comboBoard) {
-    comboBoard.innerHTML = `<div class="parlayDecisionPanel"><span>使用建议</span><strong>先不要根据空数据做组合判断</strong><p>当前应先确认数据源是否恢复；如果急需查看，可以进入“竞彩足球”或“情报覆盖”检查具体来源。</p><em>这不是策略结论，是数据读取状态。</em></div>`;
-  }
+}
+
+function actionableTodayFallback(message = "") {
+  return `
+    <section class="todayActionFallback">
+      <div>
+        <span>FAST PATH</span>
+        <strong>先跑赛前优化，不等首页预读</strong>
+        <p>${C.escapeHtml(message || "数据源预读较慢时，首页不再停在空状态。赛前优化会直接产出每日单关、2串1、3串1纸面候选。")}</p>
+      </div>
+      <div class="todayFallbackSteps">
+        <article><b>1</b><strong>单关</strong><p>先看赔率是否覆盖模型概率。</p></article>
+        <article><b>2</b><strong>2串1</strong><p>每天给纸面候选，检查同向和相关性。</p></article>
+        <article><b>3</b><strong>3串1</strong><p>只作高波动复盘，不包装成强结论。</p></article>
+      </div>
+      <button type="button" class="primary" id="todayFallbackOptimizerBtn">运行赛前优化</button>
+    </section>
+  `;
 }
 
 function renderTodayLoadingState() {
-  startTodayProgressTicker();
   renderWorkflowScore(null, "loading");
   renderScanCalendar(null);
   renderExternalSignalsStrip(null);
   setAiAutoStatus("running", "自动研究下一可售日比赛中", "先找今日到未来几天的可售比赛，随后自动尝试 DeepSeek Pro 研究摘要。若暂不可用，会改用本地研究摘要。");
-  if (qs("#todayOneLook")) {
-    qs("#todayOneLook").innerHTML = `
-      <article class="oneLookHero signalLight signalLight-wait">
-        <span>赛前总览</span>
-        <div class="signalLightRow"><b>读取中</b><strong>正在读取下一可售日观察</strong></div>
-        <p>系统正在读取比赛、赔率、可信度门控和组合纪律，Top 卡片会自动出现。</p>
-        ${todayProgressMarkup(0)}
-      </article>
-    `;
-    updateTodayProgress(0);
-  }
+  safeClearNode("#todayOneLook");
+  setTodayQuickActionStatus("当前：正在读取下一可售比赛与赔率，结果返回后会自动更新。");
   const loadingMap = {
     "#todaySingles": ["Top 单关读取中", "先筛单关，再判断是否能做组合。"],
     "#todayParlay2": ["2串1纪律读取中", "组合需要同时命中，会先过可信度和相关性折扣。"],
@@ -1893,7 +2563,7 @@ function signalCards(rows, kind = "single", message = "暂无观察信号") {
           ["判断", row.safety_margin_label_zh || row.signal_category_zh || "观察"],
         ];
     return `
-      <article class="signalCard ${isCombo && row.status === "未入选" ? "isRejected" : ""}">
+      <article class="signalCard ${isCombo && isComboRejected(row) ? "isRejected" : ""}">
         <div class="signalHead">
           <strong>${C.escapeHtml(title)}</strong>
           <span>${C.escapeHtml(tag)}</span>
@@ -1974,7 +2644,7 @@ function todayCompactCards(rows, kind = "single", message = "暂无观察信号"
     const isTotalGoals = kind === "total_goals";
     const title = isCombo ? (row.legs || row.match || "组合观察") : (row.match || "观察信号");
     const tag = isCombo
-      ? (row.status === "未入选" ? "未入选组合" : "纸面组合")
+      ? (isComboRejected(row) ? "候选待复核" : "纸面组合")
       : isTotalGoals
         ? `总进球 · ${row.direction || "节奏"}`
         : isScore
@@ -1985,6 +2655,13 @@ function todayCompactCards(rows, kind = "single", message = "暂无观察信号"
     const probabilityLabel = isCombo ? "组合概率" : (isScore || isTotalGoals) ? "模型概率" : "校准概率";
     const margin = displayValue(row.safety_margin || row.edge || row.ev, "暂不能计算");
     const marginLabel = isScore ? "可信状态" : isTotalGoals ? "节奏优势" : "安全余量";
+    const verdict = isCombo
+      ? (row.combo_decision_label_zh || comboStatusLabel(row) || "候选待复核")
+      : isScore
+        ? (row.confidence_label_zh || row.signal_category_zh || "高波动参考")
+        : isTotalGoals
+          ? (row.confidence_label_zh || row.signal_category_zh || "节奏参考")
+          : (row.decision_label_zh || row.signal_category_zh || row.confidence_label_zh || "待复核");
     const miniMetrics = isScore
       ? [
           ["模型概率", probability],
@@ -2008,15 +2685,8 @@ function todayCompactCards(rows, kind = "single", message = "暂无观察信号"
               [probabilityLabel, probability],
               [marginLabel, margin],
             ];
-    const verdict = isCombo
-      ? (row.combo_decision_label_zh || row.status || "待复核")
-      : isScore
-        ? (row.confidence_label_zh || row.signal_category_zh || "高波动参考")
-        : isTotalGoals
-          ? (row.confidence_label_zh || row.signal_category_zh || "节奏参考")
-          : (row.decision_label_zh || row.signal_category_zh || row.confidence_label_zh || "待复核");
     const why = isCombo
-      ? (row.discipline_summary_zh || row.combo_action_zh || row.reject_reason || "组合需要同时命中，优先看风险纪律。")
+      ? (row.play_diversity_reason_zh || row.discipline_summary_zh || row.combo_action_zh || row.reject_reason || "组合需要同时命中，优先看风险纪律。")
       : (row.odds_coach_verdict_zh || row.decision_reason_zh || row.recommended_action_zh || "看赔率是否覆盖校准概率。");
     const next = isCombo
       ? (row.combo_parlay_policy_zh || row.combo_action_zh || "不通过时不要强行组合。")
@@ -2030,10 +2700,11 @@ function todayCompactCards(rows, kind = "single", message = "暂无观察信号"
     const gapList = rowMissing.length ? rowMissing : (Array.isArray(sharedMissing) ? sharedMissing : []);
     const gapText = gapList.length ? `关键缺口：${gapList.slice(0, 4).join("、")}` : "";
     const comboChecklist = isCombo ? comboUpgradeChecklist(row) : "";
+    const marketAudit = marketAuditMiniPanel(row);
     const primaryReason = shortText(why, isCombo ? 58 : 66);
     const nextAction = shortText(next || "赛日前复核赔率、首发、伤停和天气。", 52);
     return `
-      <article class="todayCompactCard kind-${C.escapeHtml(kind)} ${isCombo && row.status === "未入选" ? "isRejected" : ""}">
+      <article class="todayCompactCard kind-${C.escapeHtml(kind)} ${isCombo && isComboRejected(row) ? "isRejected" : ""}">
         <div class="todayCardTop">
           <span>${C.escapeHtml(tag)}</span>
           <b>${C.escapeHtml(verdict)}</b>
@@ -2043,13 +2714,32 @@ function todayCompactCards(rows, kind = "single", message = "暂无观察信号"
           ${miniMetrics.map(([label, value]) => `<div><span>${C.escapeHtml(label)}</span><b>${C.escapeHtml(value)}</b></div>`).join("")}
         </div>
         ${tags.length ? `<div class="reasonTags miniTags">${tags.slice(0, 3).map((tag) => `<em>${C.escapeHtml(tag)}</em>`).join("")}</div>` : ""}
+        ${marketAudit}
         ${comboChecklist}
         <p class="compactReason">${C.escapeHtml(primaryReason)}</p>
+        ${isCombo && row.play_type_mix_zh ? `<p class="mutedLine">${C.escapeHtml(`玩法结构：${row.play_type_mix_zh}`)}</p>` : ""}
         ${gapText ? `<p class="mutedLine">${C.escapeHtml(gapText)}</p>` : ""}
         <em class="compactNext">${C.escapeHtml(nextAction)}</em>
       </article>
     `;
   }).join("")}</div>`;
+}
+
+function marketAuditMiniPanel(row = {}) {
+  const summary = row.market_audit_zh || row.market_probability_audit?.message_zh || "";
+  const bias = row.market_bias_zh || row.market_bias_audit?.outcome_message_zh || row.market_bias_audit?.message_zh || "";
+  const shift = row.market_method_shift_zh || (row.market_bias_audit?.outcome_method_shift != null ? fmtPct(row.market_bias_audit.outcome_method_shift) : "");
+  const warning = row.market_audit_warning_zh || "";
+  if (!summary && !bias && !shift && !warning) return "";
+  const riskText = [summary, bias, shift ? `方法分歧 ${shift}` : ""].filter(Boolean).join(" · ");
+  const status = /冷门|分歧|不稳定|异常|较厚/.test(`${summary} ${bias} ${warning}`) ? "watch" : "ok";
+  return `
+    <div class="marketAuditMini" data-status="${C.escapeHtml(status)}">
+      <b>赔率审计</b>
+      <span>${C.escapeHtml(riskText || "市场概率基准已检查")}</span>
+      ${warning ? `<em>${C.escapeHtml(shortText(warning, 72))}</em>` : ""}
+    </div>
+  `;
 }
 
 function displayValue(value, fallback = "暂不能计算") {
@@ -2066,6 +2756,7 @@ function comboUpgradeChecklist(row = {}) {
     { key: "ev_pass", label: "赔率价值", fallbackPass: !/EV 不足|Edge 不足|优势偏薄|安全边际/.test(reason), fix: "等待赔率或模型边际更清楚。" },
     { key: "confidence_pass", label: "可信度", fallbackPass: !/可信度|信心/.test(reason), fix: "补齐伤停、首发、天气和新闻后再评估。" },
     { key: "correlation_pass", label: "相关性", fallbackPass: !/相关性/.test(reason), fix: "避开同赛事、同方向或高度相关的腿。" },
+    { key: "play_diversity_pass", label: "玩法分散", fallbackPass: !/玩法过于集中|同类腿/.test(reason), fix: "混合胜平负、让球和其他玩法，避免同类信号扎堆。" },
     { key: "risk_pass", label: "风险", fallbackPass: !/风险|very_high|高风险/.test(reason), fix: "降低腿数，优先保留单关或低风险 2串1。" },
     { key: "information_pass", label: "情报覆盖", fallbackPass: !/情报|伤停|首发|天气|新闻/.test(reason), fix: "先补情报覆盖，不把未知当优势。" },
     { key: "hit_rate_pass", label: "命中门槛", fallbackPass: !/命中概率|纪律门槛/.test(reason), fix: "组合概率需要覆盖组合赔率和纪律门槛。" },
@@ -2075,7 +2766,7 @@ function comboUpgradeChecklist(row = {}) {
   });
   const blockers = checks.filter((item) => !item.pass);
   const firstBlocker = blockers[0];
-  const status = quality.final_status || (row.daily_candidate ? "daily_candidate" : row.status === "入选" ? "selected" : blockers.length ? "rejected" : "watch");
+  const status = quality.final_status || (row.daily_candidate ? "daily_candidate" : isComboSelected(row) ? "selected" : blockers.length ? "rejected" : "watch");
   const statusZh = status === "selected"
     ? "可观察"
     : status === "daily_candidate"
@@ -2159,7 +2850,7 @@ function renderTodayTopSections(view) {
       reason: view.top_3x1_empty_explanation || "3串1 每天只作最高风险纸面候选，默认不升级为强观察。",
       action: "每天输出用于复盘组合放大效应；优先看联合概率、相关性和单腿弱点。",
     });
-    qs("#todayParlay3").innerHTML = parlay3Intro + todayCompactCards(parlay3Display, "combo", "当前没有可排序的 3串1 纸面候选。", sharedMissing);
+    qs("#todayParlay3").innerHTML = parlay3Intro + todayCompactCards(parlay3Display, "combo", "当前暂无通过门控的 3串1 候选；高风险项默认不升级。", sharedMissing);
   }
   if (qs("#todayTotalGoals")) {
     qs("#todayTotalGoals").innerHTML = todayCompactCards(view.top_total_goals || [], "total_goals", "当前没有总进球观察。 ", sharedMissing);
@@ -2168,10 +2859,10 @@ function renderTodayTopSections(view) {
     qs("#todayScores").innerHTML = todayCompactCards(view.top_scores || [], "score", "当前没有比分观察。 ", sharedMissing);
   }
   if (qs("#todayRejectedParlay2")) {
-    qs("#todayRejectedParlay2").innerHTML = rejectedComboCards(view.top_rejected_2x1 || [], "当前没有 2串1 被拒候选。");
+    qs("#todayRejectedParlay2").innerHTML = rejectedComboCards(view.top_rejected_2x1 || [], "当前暂无 2串1 被拒复盘项。");
   }
   if (qs("#todayRejectedParlay3")) {
-    qs("#todayRejectedParlay3").innerHTML = rejectedComboCards(view.top_rejected_3x1 || [], "当前没有 3串1 被拒候选。");
+    qs("#todayRejectedParlay3").innerHTML = rejectedComboCards(view.top_rejected_3x1 || [], "当前暂无 3串1 被拒复盘项。");
   }
 }
 
@@ -2197,7 +2888,7 @@ function rejectedComboCards(rows, message = "当前没有被拒组合。") {
       <article class="rejectedComboCard">
         <div class="rejectedComboHead">
           <span>${C.escapeHtml(row.type || "组合")}</span>
-          <b>${C.escapeHtml(row.combo_decision_label_zh || row.status || "未入选")}</b>
+        <b>${C.escapeHtml(row.combo_decision_label_zh || comboStatusLabel(row) || "候选待复核")}</b>
         </div>
         <strong>${C.escapeHtml(title)}</strong>
         <div class="rejectedComboMetrics">
@@ -2216,6 +2907,7 @@ function rejectedComboCards(rows, message = "当前没有被拒组合。") {
         </div>
         ${tags.length ? `<div class="reasonTags miniTags">${tags.map((tag) => `<em>${C.escapeHtml(tag)}</em>`).join("")}</div>` : ""}
         <p>${C.escapeHtml(shortText(reason, 150))}</p>
+        ${row.play_diversity_reason_zh ? `<p class="mutedLine">${C.escapeHtml(row.play_diversity_reason_zh)}</p>` : ""}
         <em>${C.escapeHtml(row.discipline_summary_zh || "组合不是赔率越高越好，必须同时通过命中概率、相关性、可信度和赛前情报纪律。")}</em>
       </article>
     `;
@@ -2229,6 +2921,7 @@ function comboRejectQuality(row, reason) {
     { label: "EV/Edge", pass: !/EV 不足|Edge 不足|优势偏薄/.test(text) },
     { label: "可信度", pass: !/可信度|信心|情报/.test(text) },
     { label: "相关性", pass: !/相关性/.test(text) },
+    { label: "玩法分散", pass: !/玩法过于集中|同类腿/.test(text) },
     { label: "风险", pass: !/风险|very_high|高风险/.test(text) && !["high", "very_high"].includes(risk) },
   ];
 }
@@ -2240,7 +2933,7 @@ function aiHintForTodayCard(row, isCombo, kind = "single") {
   const odds = parseNumberLike(isCombo ? row.odds : (row.official_odds || row.odds));
   const status = String(row.status || "");
   const play = String(row.play_type || row.direction || "");
-  if (isCombo && status.includes("未入选")) {
+  if (isCombo && status.includes("未过门控")) {
     return {
       label: source,
       text: contextual || "这类组合先看被拒原因：可信度门控、单腿纪律、相关性和组合命中率，任何一项不过都不升级为强观察。",
@@ -2510,21 +3203,64 @@ const rejectedComboColumns = [
   { key: "discipline_summary_zh", label: "纪律拆解" },
 ];
 
-async function loadToday() {
-  renderTodayLoadingState();
+async function loadToday(options = {}) {
+  const forceRefresh = Boolean(options.forceRefresh);
+  const useFastPreview = options.useFastPreview !== false;
+  const requestToken = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  state.todayLoadToken = requestToken;
+  const preserveCurrent = forceRefresh && state.todayView;
+  if (preserveCurrent) {
+    setAiAutoStatus("running", "正在后台刷新", "先保留当前可读结果，不清空页面；新数据回来后再替换。");
+    setTodayQuickActionStatus("当前：后台刷新中，页面不会清空。");
+  } else {
+    renderTodayLoadingState();
+  }
+  let lightweightRendered = false;
+  if (useFastPreview) {
+    const fastPayload = await request("/api/view/next-available", {
+      provider: providerParam(),
+      date: currentDateParam(),
+      bankroll: bankrollParam(),
+      risk_profile: riskProfileParam(),
+      external_signals: externalSignalsParam(),
+      fast: "1",
+    }, "快速扫描下一可售日比赛", 7000);
+    if (state.todayLoadToken !== requestToken) return;
+    if (fastPayload.ok) {
+      try {
+        renderToday(fastPayload.data);
+        renderResearchArchiveStatus(fastPayload.data?.research_archive_status || state.latestResearchArchive || {});
+        lightweightRendered = Boolean(fastPayload.data?.lightweight_homepage);
+        setAiAutoStatus("fallback", "首页快速扫描完成", "已先确认最近可售比赛和数据源，正在补齐完整概率、组合纪律和研究摘要。");
+      } catch (_error) {
+        lightweightRendered = false;
+      }
+    }
+  }
   let settled = false;
   const watchdog = window.setTimeout(() => {
-    if (settled) return;
+    if (settled || state.todayLoadToken !== requestToken) return;
+    if (lightweightRendered) {
+      setAiAutoStatus("fallback", "完整读取后台继续", "已保留快速结果，完整赔率、组合纪律和情报融合本次较慢；你可以先看结果，再稍后刷新。");
+      setTodayQuickActionStatus("当前：已显示快速结果，完整读取后台继续");
+      return;
+    }
+    if (state.todayView) {
+      setAiAutoStatus("fallback", "刷新仍在后台等待", "已保留最近一次可读结果；可以直接进入赛前优化生成候选。");
+      setTodayQuickActionStatus("当前：保留最近一次结果，刷新仍在等待。");
+      return;
+    }
     renderTodayTimeoutState({ error: { code: "homepage_watchdog", message: "首页读取超过等待时间，已先显示可操作状态。" } });
-  }, 78000);
+  }, forceRefresh ? 18000 : 12000);
   const payload = await request("/api/view/next-available", {
     provider: providerParam(),
     date: currentDateParam(),
     bankroll: bankrollParam(),
     risk_profile: riskProfileParam(),
     external_signals: externalSignalsParam(),
-    refresh: "1",
-  }, "自动读取下一可售日观察", 76000);
+    refresh: "0",
+  }, forceRefresh ? "重新读取下一可售日观察" : "自动读取下一可售日观察", forceRefresh ? 24000 : 18000);
+  if (state.todayLoadToken !== requestToken) return;
   settled = true;
   window.clearTimeout(watchdog);
   stopTodayProgressTicker();
@@ -2542,6 +3278,18 @@ async function loadToday() {
       renderTodayTimeoutState({ error: { code: "render_error", message: `页面渲染遇到问题：${error && error.message ? error.message : "未知错误"}` } });
     }
   } else {
+    if (lightweightRendered) {
+      setAiAutoStatus("fallback", "已保留快速结果", "完整读取本次较慢或失败，页面先保留快速结果；你可以继续进入赛前优化，或稍后再刷新。");
+      setStatus("Check", payload.error?.message || "快速结果已保留，完整读取稍慢。");
+      switchView("today");
+      return;
+    }
+    if (state.todayView) {
+      setAiAutoStatus("fallback", "刷新未完成，保留旧结果", "本次完整读取后台继续或失败，页面保留最近一次可用观察。");
+      setTodayQuickActionStatus("当前：本次刷新未完成，已保留最近一次可用观察。");
+      switchView("today");
+      return;
+    }
     renderTodayTimeoutState(payload);
   }
   switchView("today");
@@ -2678,6 +3426,9 @@ function renderResearchArchiveStatus(status = {}) {
   const dsStatus = data.ai_status || data.ds_status || latest.ds_status || "unknown";
   const tokenTotal = data.token_total ?? latest.token_total ?? "N/A";
   const savedAt = data.created_at || latest.created_at || "";
+  const clvFollowup = data.clv_followup || latest.clv_followup || {};
+  const clvPending = data.clv_pending_count ?? latest.clv_pending_count ?? clvFollowup.pending_count ?? 0;
+  const clvPriorityRows = clvFollowup.priority_rows || latest.clv_priority_rows || [];
   const title = archiveStatus === "saved" || archiveStatus === "available"
     ? "赛前研究档案已保存"
     : archiveStatus === "error"
@@ -2695,7 +3446,17 @@ function renderResearchArchiveStatus(status = {}) {
         <article><b>${C.escapeHtml(dsStatus)}</b><em>DS 状态</em></article>
         <article><b>${C.escapeHtml(String(tokenTotal))}</b><em>token</em></article>
         <article><b>${C.escapeHtml(data.observations_count ?? latest.observations_count ?? "N/A")}</b><em>观察项</em></article>
+        <article><b>${C.escapeHtml(String(clvPending))}</b><em>CLV待填</em></article>
       </div>
+      ${clvFollowup.summary_zh ? `<p class="archivePath">CLV：${C.escapeHtml(clvFollowup.summary_zh)}</p>` : ""}
+      ${clvPriorityRows.length ? `<details class="detailDrawer archiveMiniDrawer"><summary>查看优先回填收盘赔率</summary>${C.table(clvPriorityRows.slice(0, 6), [
+        { key: "match", label: "比赛" },
+        { key: "play_type", label: "玩法" },
+        { key: "direction", label: "方向" },
+        { key: "entry_odds", label: "赛前赔率" },
+        { key: "closing_odds", label: "收盘赔率" },
+        { key: "status_zh", label: "状态" },
+      ])}</details>` : ""}
       ${path ? `<p class="archivePath">档案：${C.escapeHtml(path)}</p>` : ""}
       ${savedAt ? `<p class="archivePath">保存时间：${C.escapeHtml(savedAt)}</p>` : ""}
       ${observationsPath ? `<p class="archivePath">赛前观察：${C.escapeHtml(observationsPath)}</p>` : ""}
@@ -3179,21 +3940,21 @@ function buildTodaySignalLight(view, single, combo, combo3) {
     return {
       level: matches > 0 ? "watch" : "wait",
       label: matches > 0 ? "预筛" : "等待",
-      title: matches > 0 ? "已找到可售比赛" : "暂未读取到可售比赛",
+      title: matches > 0 ? "已找到可售比赛" : "先用赛前优化生成候选",
       body: matches > 0
         ? `已快速确认 ${matches} 场可售比赛，数据源正常；完整概率、组合纪律和情报审计请进入赛前优化或组合审核。`
-        : "轻量扫描未找到比赛，稍后刷新或检查数据源。",
+        : "数据源本轮较慢或暂未返回完整场次；不要停在这里，直接点【运行赛前优化】生成单关、2串1、3串1纸面候选，完整数据回来后会自动替换。",
     };
   }
   const score = Number(view.credibility_audit?.credibility_score ?? view.credibility_score ?? gate.score ?? 0);
-  const hasSelectedCombo = [combo, combo3].some((row) => row && row.status === "入选");
+  const hasSelectedCombo = [combo, combo3].some((row) => row && isComboSelected(row));
   const hasSingle = Boolean(single && (single.match || single.direction));
   if (gate.combo_gate === "open" && hasSelectedCombo && score >= 65) {
     return {
       level: "strong",
       label: "强观察",
-      title: "有组合通过纪律",
-      body: "先看入选组合，再逐腿复核赔率、伤停、首发和天气。",
+        title: "有组合通过纪律",
+      body: "先看通过门控组合，再逐腿复核赔率、伤停、首发和天气。",
     };
   }
   if (hasSingle && score >= 50) {
@@ -3235,6 +3996,7 @@ function reasonTags(text) {
 function renderTodayOneLook(view) {
   const box = qs("#todayOneLook");
   if (!box) return;
+  const finalCard = view.final_decision_card || {};
   const single = (view.top_singles || [])[0] || {};
   const combo = (view.top_parlay_2x1 || view.top_2x1 || view.top_2x1_display || [])[0] || {};
   const combo3 = (view.top_parlay_3x1 || view.top_3x1 || view.top_3x1_display || [])[0] || {};
@@ -3251,84 +4013,87 @@ function renderTodayOneLook(view) {
   const aiTitle = aiDigest.title || (aiLayer.runtime_status === "loaded" ? "DS Pro 已参与研究" : (aiLayer.enabled ? "DS Pro 可自动研究" : (aiLayer.status_zh || "本地研究摘要")));
   const aiBody = aiDigest.body || aiLayer.runtime_notice_zh || aiLayer.display_status_zh || aiLayer.message_zh || "DS Pro 可用时会自动总结为什么看、为什么不串、赛后要学习什么；不可用时回退本地摘要。";
   const comboSummary = view.combo_gate_summary_zh || gate.reason_zh || comboReason;
+  const dailyLanes = view.best_parlay_summary?.daily_output_lanes
+    || view.optimizer?.best_parlay_summary?.daily_output_lanes
+    || view.daily_output_lanes
+    || [];
+  const dailyLanesHtml = dailyOutputLanesPanel(dailyLanes);
   const noComboReason = view.no_combo_reason || gate.reason_zh || comboReason;
   const gateMode = String(gate.combo_gate || "");
   const hasDailyCombo = Boolean((combo && (combo.legs || combo.match)) || (combo3 && (combo3.legs || combo3.match)));
-  const disciplineTitle = gateMode === "open"
-    ? "当前允许正常筛选组合"
-    : gateMode === "restricted"
-      ? "已输出低风险纸面组合"
-      : hasDailyCombo ? "已输出每日纸面组合候选" : "当前暂不强行串联";
-  const disciplineBody = gateMode === "open"
-    ? "可信度、风险和情报覆盖暂时允许继续看组合，但仍要先看单关质量。"
-    : gateMode === "restricted"
-      ? "系统会给出最推荐 2串1 纸面候选，同时标明是否过门控。"
-      : hasDailyCombo
-        ? "按你的要求，T+1 每天输出最推荐 2串1 / 3串1 纸面候选；若未过门控，会明确标注原因。"
-        : noComboReason || "当前更适合先观察单关、进球节奏和临场情报，不建议强行做组合。";
-  const aiStateLine = aiLayer.ds_completed
-    ? `DS 已参与 · 合计 ${aiLayer.last_token_total ?? aiLayer.token_total ?? "N/A"} token`
-    : aiLayer.ds_attempted
-      ? `DS 已尝试但未完成 · ${aiLayer.last_error_label_zh || aiLayer.ds_error_code || "已回退本地摘要"}`
-      : (aiLayer.display_status_zh || aiLayer.runtime_status_zh || aiLayer.status_zh || "待检查");
-  const matchesText = `${view.matches_count ?? 0} 场`;
-  const sourceText = `${view.provider_used || view.data_source_status?.provider_used || "unknown"}`;
   const strictOpinion = gateMode === "open"
     ? "可以继续看组合，但仍要逐腿复核。"
     : gateMode === "restricted"
       ? "每日输出 2串1 纸面候选，3串1 先当高风险练习。"
       : hasDailyCombo ? "每日候选已输出，先看赔率覆盖和未过门控原因。" : "先别强行串联，把精力放在单关质量和情报补齐。";
-  const nextAction = gateMode === "open"
-    ? "下一步：逐腿复核临场赔率、伤停、首发和天气。"
-    : gateMode === "restricted"
-      ? "下一步：查看最推荐 2串1 纸面候选，并记录赛后表现。"
-      : hasDailyCombo ? "下一步：比较单关、2串1、3串1纸面候选，赛后学习命中与偏差。" : "下一步：补齐伤停、首发、天气、新闻面，再重新评估。";
-  box.innerHTML = `
-    <article class="oneLookHero signalLight signalLight-${C.escapeHtml(signalLight.level)}">
-      <span>严厉扫盘结论</span>
-      <div class="signalLightRow">
-        <b>${C.escapeHtml(signalLight.label)}</b>
-        <strong>${C.escapeHtml(signalLight.title)}</strong>
-      </div>
-      <p>${C.escapeHtml(signalLight.body)}</p>
-      <div class="coachDecision">${C.escapeHtml(disciplineTitle)}</div>
-      <p>${C.escapeHtml(strictOpinion)} ${C.escapeHtml(disciplineBody)}</p>
-      ${topTags.length ? `<div class="reasonTags">${topTags.map((tag) => `<em>${C.escapeHtml(tag)}</em>`).join("")}</div>` : ""}
-    </article>
-    <div class="deskKpiStrip">
-      <article><span>可售比赛</span><strong>${C.escapeHtml(matchesText)}</strong></article>
-      <article><span>数据源</span><strong>${C.escapeHtml(sourceText)}</strong></article>
-      <article><span>可信度</span><strong>${C.escapeHtml(String(credibility))}/100</strong></article>
-      <article><span>主要缺口</span><strong>${C.escapeHtml(missingText || "待复核")}</strong></article>
-    </div>
-    <div class="oneLookGrid decisionGrid">
-      <article>
-        <span>交易员看法</span>
-        <strong>${C.escapeHtml(disciplineTitle)}</strong>
-        <p>${C.escapeHtml(strictOpinion)}</p>
-      </article>
-      <article>
-        <span>Top 单关</span>
-        <strong>${C.escapeHtml(single.match || "暂无强单关")}</strong>
-        <p>${C.escapeHtml(single.play_type || "玩法")} · ${C.escapeHtml(single.direction || "方向")} · ${C.escapeHtml(single.decision_label_zh || single.signal_category_zh || "待复核")}</p>
-      </article>
-      <article>
-        <span>2串1纪律</span>
-        <strong>${C.escapeHtml(comboLabel)}</strong>
-        <p>${C.escapeHtml(comboReason)}</p>
-      </article>
-      <article>
-        <span>主要缺口</span>
-        <strong>${C.escapeHtml(missingText || "待复核")}</strong>
-        <p>${C.escapeHtml(nextAction)}</p>
-      </article>
-    </div>
-    <div class="oneLookFooter">
-      <span><b>AI</b> ${C.escapeHtml(aiStateLine)}</span>
-      <span><b>纪律</b> ${C.escapeHtml(shortText(comboSummary, 52))}</span>
-      <span><b>组合</b> ${C.escapeHtml(shortText(noComboReason, 52))}</span>
-    </div>
-  `;
+  const statusBits = [
+    signalLight.title,
+    single.match ? `Top 单关：${single.match}` : "",
+    gateMode === "open" ? "组合可继续复核" : "",
+    gateMode === "restricted" ? "仅低风险 2串1 纸面候选" : "",
+    gateMode === "closed" ? "当前暂不强行串联" : "",
+    strictOpinion,
+  ].filter(Boolean);
+  if (view.lightweight_homepage && !dailyLanesHtml && !finalCard.verdict_zh) {
+    const matches = Number(view.matches_count || 0);
+    box.innerHTML = `
+      <section class="todayActionFallback isPreflight">
+        <div>
+          <span>PRE-FLIGHT</span>
+          <strong>${matches > 0 ? `已找到 ${matches} 场可售比赛` : "先跑赛前优化"}</strong>
+          <p>${C.escapeHtml(matches > 0 ? "快速预读只确认比赛和数据源。要看真正有用的单关、2串1、3串1，请直接运行赛前优化。" : "下一可售日预读暂未返回完整比赛，直接运行赛前优化会尝试缓存、真实源和回退候选。")}</p>
+        </div>
+        <div class="todayFallbackSteps">
+          <article><b>1</b><strong>赔率覆盖</strong><p>模型概率必须覆盖赔率盈亏线。</p></article>
+          <article><b>2</b><strong>方向分散</strong><p>避免全是主胜/让胜。</p></article>
+          <article><b>3</b><strong>赛后验证</strong><p>候选都进入复盘学习。</p></article>
+        </div>
+        <button type="button" class="primary" id="todayFallbackOptimizerBtn">运行赛前优化</button>
+      </section>
+    `;
+  } else if (finalCard.verdict_zh) {
+    const blockers = finalCard.main_blockers_zh || [];
+    box.innerHTML = `
+      <section class="finalDecisionCard level-${C.escapeHtml(finalCard.level || "wait")}">
+        <div class="finalDecisionHead">
+          <span>FINAL READ</span>
+          <strong>${C.escapeHtml(finalCard.verdict_zh || "今日观察待刷新")}</strong>
+          <p>${C.escapeHtml(finalCard.why_zh || "先看证据，再看候选，不强行组合。")}</p>
+        </div>
+        <div class="finalDecisionMetrics">
+          <article><span>比赛</span><b>${C.escapeHtml(String(finalCard.matches_count ?? view.matches_count ?? 0))}</b><em>${C.escapeHtml(finalCard.provider_used || view.provider_used || "auto")}</em></article>
+          <article><span>可信度</span><b>${C.escapeHtml(finalCard.credibility_score == null ? "N/A" : `${finalCard.credibility_score}`)}</b><em>门控</em></article>
+          <article><span>模型分</span><b>${C.escapeHtml(finalCard.professional_score == null ? "N/A" : `${finalCard.professional_score}`)}</b><em>职业审计</em></article>
+          <article><span>长期分</span><b>${C.escapeHtml(finalCard.long_run_score == null ? "N/A" : `${finalCard.long_run_score}`)}</b><em>学习闭环</em></article>
+        </div>
+        <div class="finalDecisionBody">
+          <article>
+            <span>Top 单关</span>
+            <p>${C.escapeHtml(finalCard.single_summary_zh || "暂无单关强信号")}</p>
+          </article>
+          <article>
+            <span>组合态度</span>
+            <p>${C.escapeHtml(finalCard.combo_summary_zh || "暂无优秀串联观察")}</p>
+          </article>
+        </div>
+        <div class="finalDecisionBlockers">
+          ${(blockers.length ? blockers : ["继续等待更可靠数据和赛后学习样本"]).slice(0, 5).map((item) => `<i>${C.escapeHtml(item)}</i>`).join("")}
+        </div>
+        <div class="finalDecisionAction">
+          <button type="button" class="primary" data-jump-view="optimizer">运行赛前优化</button>
+          <button type="button" class="secondary" data-jump-view="bestparlay">看组合审核</button>
+          <button type="button" class="secondary" data-jump-view="proscore">看模型体检</button>
+          <em>${C.escapeHtml(finalCard.next_action_zh || "先刷新今日观察，再看赛前优化。")}</em>
+        </div>
+      </section>
+      ${dailyLanesHtml}
+    `;
+  } else if (dailyLanesHtml) {
+    box.innerHTML = dailyLanesHtml;
+  } else {
+    box.innerHTML = actionableTodayFallback("当前没有拿到完整首页结果，但不影响直接生成每日候选。");
+  }
+  setTodayQuickActionStatus(statusBits.join(" · "));
 }
 
 function renderToday(view) {
@@ -3355,24 +4120,28 @@ function renderToday(view) {
   renderWorkflowScore(view, "ready");
   renderScanCalendar(view);
   renderExternalSignalsStrip(view);
-  renderTodayComboBoard(view.combo_user_board || {}, view.ai_research_layer || {});
   const learningSummary = view.learning_history_summary || view.learning_summary || view.learning_panel?.history_summary || {};
+  const proScore = view.professional_model_score || {};
+  const proRoadmap = proScore.roadmap_to_95 || {};
   const learningCount = Number(learningSummary.settled_count || learningSummary.sample_count || learningSummary.rows || 0);
   const learningCardValue = learningCount > 0 ? `${learningCount} 条` : "待累计";
   const learningCardHelp = learningSummary.summary_zh || learningSummary.message_zh || "赛后录入赛果和收盘赔率后，用 Brier、Log Loss、ROI 和 CLV 复盘。";
   const windowSummary = view.window_review_summary || view.backtest_window || view.learning_panel?.window_summary || {};
   const windowCardValue = windowSummary.label_zh || windowSummary.status_zh || windowSummary.value || "待复盘";
   const windowCardHelp = windowSummary.summary_zh || windowSummary.message_zh || "区间复盘用于判断最近样本是否稳定，不用单日结果过度外推。";
+  const snapshotStatus = view.snapshot_status || view.snapshot_save_status || {};
+  const postReview = view.post_match_review_status || {};
   qs("#todayCards").classList.remove("skeletonBlock");
   qs("#todayCards").innerHTML = C.cards([
-    ...(view.workflow_cards || []),
     { label: "可售比赛", value: `${view.matches_count ?? 0} 场`, help: `${view.selected_date || "自动日期"} · 数据源 ${view.provider_used || "unknown"}` },
     { label: "预观察可信度", value: `${view.credibility_audit?.credibility_score ?? "N/A"}/100`, help: view.credibility_gate?.reason_zh || view.credibility_audit?.reasons?.[0] || "用于判断是否适合组合观察。" },
+    { label: "职业模型分", value: proScore.score == null ? "N/A" : `${proScore.score}/${proScore.ceiling_score || 95}`, help: proRoadmap.summary_zh || proScore.summary_zh || "按市场校准、CLV、概率校准、冷门偏差和学习闭环评分。" },
     { label: "情报完整度", value: `${view.intelligence_completeness?.score ?? "N/A"}/100`, help: view.intelligence_completeness?.summary_zh || "伤停、首发、天气、新闻等只做覆盖审计，不编造。" },
     { label: "串联纪律", value: view.credibility_gate?.label_zh || view.credibility_audit?.credibility_gate?.label_zh || "待评估", help: "没有强组合时会显示暂不组合，而不是强行给组合。" },
     { label: "DS研究", value: aiStatusLabel, help: aiStatusSummary },
+    { label: "赛前快照", value: snapshotStatus.status_zh || snapshotStatus.status || "待保存", help: snapshotStatus.summary_zh || snapshotStatus.pre_match_path || "T+1 输出会落盘，避免赛后回忆偏差。" },
+    { label: "昨日复盘", value: postReview.status_zh || "待复盘", help: postReview.summary_zh || "赛后会对照单关、纸面2串1、纸面3串1和被拒组合。" },
     { label: "赛后学习", value: learningCardValue, help: learningCardHelp },
-    { label: "区间复盘", value: windowCardValue, help: windowCardHelp },
   ]);
   const homepageCoverageCards = (view.coverage_summary_cards || []).length
     ? view.coverage_summary_cards
@@ -3426,6 +4195,9 @@ function renderToday(view) {
   ].join("");
   qs("#todayTraderConclusion").innerHTML = C.list([
     workflow.trader_instruction_zh || "先看单关，再看 2串1 是否通过纪律。",
+    proScore.summary_zh || "",
+    proRoadmap.summary_zh || "",
+    ...((proRoadmap.next_best_actions || []).slice(0, 3).map((item) => `95分短板：${item.label_zh || "改进项"}${item.estimated_score_gain ? `（预计 +${item.estimated_score_gain} 分）` : ""}；${item.current_state_zh || item.why_it_matters_zh || ""}`)),
     view.strict_trader_conclusion || view.trader_review?.final_call_zh || "请先刷新今日观察。",
     view.optimizer?.no_combo_reason || view.best_parlay_summary?.no_combo_reason || view.credibility_gate?.reason_zh || "",
     ...(view.trader_review?.conclusions_zh || []),
@@ -3490,84 +4262,6 @@ function renderMatchdayChecklist(rows, pendingConfirmations = []) {
   `;
 }
 
-function renderTodayComboBoard(board, aiLayer) {
-  const box = qs("#todayComboBoard");
-  if (!box) return;
-  const cards = [
-    board.best_single_card,
-    board.best_2x1_card,
-    board.best_3x1_card,
-    board.best_risk_adjusted_card,
-  ].filter(Boolean).map((card) => ({
-    label: card.title || "观察",
-    value: card.status_zh || "待评估",
-    help: `${card.main_zh || ""} · 赔率 ${card.odds_zh || "N/A"} · 概率 ${card.probability_zh || "N/A"} · 余量 ${card.margin_zh || "N/A"}`,
-  }));
-  const closing = board.closing_line_review || {};
-  const oneLookSingle = board.best_single_card || {};
-  const oneLookCombo = board.best_risk_adjusted_card || board.best_2x1_card || {};
-  const oneLookComboText = oneLookCombo.main_zh || board.nearest_rejected_reason_zh || "暂无合格组合，先不要强行串联。";
-  const oneLookComboStatus = oneLookCombo.status_zh || board.gate_label_zh || "待复核";
-  const oneLookClosing = closing.downgrade_zh || "临近开赛前复核赔率、伤停、首发和天气，再决定是否继续观察。";
-  box.innerHTML = `
-    <div class="oneLookSummary">
-      <span>只看这三句</span>
-      <strong>${C.escapeHtml(board.headline_zh || "今日组合结论")}</strong>
-      <p>1. 先看单关：${C.escapeHtml(oneLookSingle.main_zh || "暂无优先单关")}（${C.escapeHtml(oneLookSingle.status_zh || "待评估")}）</p>
-      <p>2. 再看组合：${C.escapeHtml(oneLookComboText)}（${C.escapeHtml(oneLookComboStatus)}）</p>
-      <p>3. 最后临场复核：${C.escapeHtml(oneLookClosing)}</p>
-    </div>
-    <div class="comboBoardHead">
-      <span>${C.escapeHtml(board.gate_label_zh || "组合纪律")}</span>
-      <strong>${C.escapeHtml(board.headline_zh || "今日组合结论")}</strong>
-      <p>${C.escapeHtml(board.user_verdict_zh || "先看单关，再判断是否有合格 2串1。")}</p>
-      <p class="coachActionLine">${C.escapeHtml(board.primary_action_zh || "查看观察信号")}</p>
-    </div>
-    ${C.cards(cards)}
-    <div class="note">${C.escapeHtml(board.nearest_rejected_reason_zh || "暂无被拒组合原因。")}</div>
-    ${closing.title_zh ? `<div class="closingReviewCard">
-      <strong>${C.escapeHtml(closing.title_zh)} · ${C.escapeHtml(closing.status_zh || "待复核")}</strong>
-      <p>${C.escapeHtml(closing.current_value_zh || "")}</p>
-      <p>${C.escapeHtml(closing.why_zh || "")}</p>
-      <p>${C.escapeHtml(closing.downgrade_zh || "")}</p>
-    </div>` : ""}
-    <div class="usagePlaybook">
-      <article>
-        <span>Step 1</span>
-        <strong>先看强观察</strong>
-        <p>只把通过可信度、赔率覆盖和风险纪律的项放在前面；没有通过时显示“今日不强行组合”。</p>
-      </article>
-      <article>
-        <span>Step 2</span>
-        <strong>再看临场复核</strong>
-        <p>临近开赛检查赔率是否反向漂移，伤停、首发、天气或新闻面是否出现反对因素。</p>
-      </article>
-      <article>
-        <span>Step 3</span>
-        <strong>最后看 AI 研究</strong>
-        <p>DeepSeek 只做研究解释：总结赔率价值、被拒原因和缺失情报，不替代本地概率纪律。</p>
-      </article>
-    </div>
-    <div class="methodGrid">
-      <div><b>赔率先转盈亏线</b><span>赔率越高，需要的命中率越低，但波动也越大。</span></div>
-      <div><b>模型要被校准约束</b><span>赛后反馈会轻微调整概率段，避免单日高 EV 诱导。</span></div>
-      <div><b>组合看同时命中</b><span>2串1/3串1 是概率相乘，不是优势相加。</span></div>
-      <div><b>临场赔率很重要</b><span>若终盘方向反向漂移，观察级别要下降。</span></div>
-    </div>
-    <div class="learningLoopStrip">
-      <strong>赛后学习闭环</strong>
-      <span>赛前生成观察</span>
-      <span>赛日复核赔率</span>
-      <span>赛后录入结果</span>
-      <span>下次自动校准</span>
-      <button type="button" class="secondary miniLearningBtn" onclick="jumpToView('learning')">去赛后学习</button>
-    </div>
-    <div class="note">${C.escapeHtml(aiLayer.message_zh || "AI 研究增强未开启，本地模型先给出组合纪律。")}</div>
-    <div class="note">${C.escapeHtml(aiLayer.research_prompt_zh || board.ai_research_prompt_zh || "开启后用于解释强观察组合和被拒原因。")}</div>
-    ${C.list(board.what_to_check_next || [])}
-  `;
-}
-
 function renderSignalCategorySummary(rows) {
   const box = qs("#signalCategorySummary");
   if (!box) return;
@@ -3607,6 +4301,7 @@ function renderLearningPanel(panel) {
   const oddsLearning = panel.odds_learning || {};
   const learningTodo = panel.learning_todo || {};
   const comboLearning = panel.combo_discipline_learning || {};
+  const strategyAdjustments = panel.strategy_adjustments || [];
   const comboLearningRows = comboLearning.status === "tracked" ? [
     { label: "被拒复盘", value: comboLearning.review_count ?? 0, help: "进入赛后学习的被拒组合数量。" },
     { label: "已完整复盘", value: comboLearning.settled_review_count ?? 0, help: "所有腿都匹配到赛果的被拒组合。" },
@@ -3635,6 +4330,7 @@ function renderLearningPanel(panel) {
       <div class="noteBox">${C.escapeHtml(learningTodo.next_action_zh || "先保存观察快照，赛后补比分和收盘赔率。")}</div>
       ${learningTodo.score_persistence_zh ? `<div class="noteBox softNote">${C.escapeHtml(learningTodo.score_persistence_zh)}</div>` : ""}
       ${comboLearning.message_zh ? `<div class="noteBox softNote">${C.escapeHtml(comboLearning.message_zh)}</div>` : ""}
+      ${strategyAdjustments.length ? `<h4>下一轮调参建议</h4>${strategyAdjustmentCards(strategyAdjustments)}` : ""}
       ${comboLearningRows.length ? `<div class="contentBox">${C.cards(comboLearningRows)}</div>` : ""}
       ${ruleAdjustmentRows.length ? `
         <h4>可能过严的规则</h4>
@@ -3927,12 +4623,30 @@ async function saveDailyLearningResults() {
   }, "一键保存赛后学习");
   if (payload.ok) {
     const saved = payload.data || {};
+    const feedbackRows = (((saved.feedback || {}).feedback || {}).report || {}).rows || [];
+    const clvRows = ((saved.clv || {}).review || {}).rows || [];
+    const aiHypothesisReview = ((saved.ai_hypothesis_review || {}).review || {});
+    const aiCounts = aiHypothesisReview.summary_counts || {};
+    const aiSummary = aiCounts.total
+      ? `AI 假设复盘 ${aiCounts.total} 条：支持 ${aiCounts.supported || 0}，失败 ${aiCounts.failed || 0}，待验证 ${aiCounts.needs_more_data || 0}`
+      : "AI 假设复盘：暂无可验证假设";
+    state.lastLearningImpact = {
+      saved: true,
+      summary: `赛果样本 ${feedbackRows.length} 条，CLV 复盘 ${clvRows.length} 条，${aiSummary}`,
+      detail: saved.summary_zh || "已保存赛后学习。",
+      next: clvRows.length
+        ? "刷新模型体检后，CLV、样本门槛和 AI 研究质量会重新计算。"
+        : "本次未提供收盘赔率；下一步补 CLV，职业模型分上限才更容易打开。",
+    };
     if (qs("#learningBuildSummary")) {
       qs("#learningBuildSummary").innerHTML = C.list([
         saved.summary_zh || "已保存赛后学习。",
         `赛果学习：${saved.feedback_path || "N/A"}`,
         saved.clv_path ? `CLV 学习：${saved.clv_path}` : "CLV 学习：未提供收盘赔率 CSV，已跳过。",
+        saved.ai_hypothesis_review_path ? `AI 假设复盘：${saved.ai_hypothesis_review_path}` : "AI 假设复盘：暂无可验证假设。",
+        aiSummary,
         saved.next_step_zh || "下次打开会自动读取本地样本。",
+        "模型体检页已记录本次学习影响；刷新模型体检可查看门槛进度和 AI 研究质量。",
       ]);
     }
     renderBuiltLearningFeedback((saved.feedback || {}).feedback || {});
@@ -4229,6 +4943,9 @@ function renderLearningFeedback(view) {
     { key: "bayesian_hit_rate", label: "贝叶斯命中率" },
     { key: "message_zh", label: "说明" },
   ], "暂无赔率段样本。");
+  if (qs("#learningPlayTypes")) {
+    qs("#learningPlayTypes").innerHTML = tableOrEmpty((report.play_type_rows || []).map(learningPlayTypeRow), learningPlayTypeColumns(), "暂无玩法历史样本。");
+  }
   if (qs("#learningCalibrationBins")) {
     qs("#learningCalibrationBins").innerHTML = tableOrEmpty((report.calibration_bins || []).map(calibrationBinRow), calibrationBinColumns(), "暂无概率校准分桶。");
   }
@@ -4288,6 +5005,9 @@ function renderLearningHistory(view) {
     allTime.window ? `累计窗口：ROI ${fmtPct(allTime.paper_roi)}，CLV ${fmtSignedPct(allTime.average_clv_pct)}。` : "",
     ...(view.next_actions_zh || []),
   ].filter(Boolean));
+  if (qs("#learningStrategyAdjustments")) {
+    qs("#learningStrategyAdjustments").innerHTML = strategyAdjustmentCards(view.strategy_adjustments || []);
+  }
   if (qs("#learningCalibrationBins")) {
     qs("#learningCalibrationBins").innerHTML = tableOrEmpty((view.calibration_bins || []).map(calibrationBinRow), calibrationBinColumns(), "暂无累计概率校准分桶。");
   }
@@ -4307,6 +5027,28 @@ function renderLearningHistory(view) {
     { key: "hit_rate", label: "命中率" },
     { key: "message_zh", label: "说明" },
   ], "暂无信号类型样本。");
+  if (qs("#learningPlayTypes")) {
+    qs("#learningPlayTypes").innerHTML = tableOrEmpty((view.play_type_rows || []).map(learningPlayTypeRow), learningPlayTypeColumns(), "暂无玩法历史样本。");
+  }
+}
+
+function strategyAdjustmentCards(rows = []) {
+  if (!rows.length) return `<div class="emptyState">暂无可执行调参建议。先累计赛后结果和收盘赔率。</div>`;
+  return `
+    <div class="strategyAdjustmentGrid">
+      ${rows.slice(0, 6).map((row) => `
+        <article>
+          <header>
+            <span>${C.escapeHtml(row.action || "adjust")}</span>
+            <b>${C.escapeHtml(String(row.priority ?? "N/A"))}</b>
+          </header>
+          <strong>${C.escapeHtml(row.label_zh || "调参建议")}</strong>
+          <p>${C.escapeHtml(row.reason_zh || "继续累计样本。")}</p>
+          <em>${C.escapeHtml(row.expected_effect_zh || row.apply_mode_zh || "轻量影响下一次排序。")}</em>
+        </article>
+      `).join("")}
+    </div>
+  `;
 }
 
 function calibrationBinRow(row) {
@@ -4319,6 +5061,34 @@ function calibrationBinRow(row) {
     calibration_gap: fmtSignedPct(row.calibration_gap),
     message_zh: row.message_zh,
   };
+}
+
+function learningPlayTypeRow(row) {
+  return {
+    label_zh: row.label_zh || row.play_type || "未知玩法",
+    attempts: row.attempts ?? 0,
+    hits: row.hits ?? 0,
+    hit_rate: fmtPct(row.hit_rate),
+    paper_roi: fmtSignedPct(row.paper_roi),
+    brier_score: fmtNum(row.brier_score),
+    log_loss: fmtNum(row.log_loss),
+    sample_quality_zh: row.sample_quality_zh || "样本未知",
+    model_action_zh: row.model_action_zh || row.message_zh || "继续累计样本。",
+  };
+}
+
+function learningPlayTypeColumns() {
+  return [
+    { key: "label_zh", label: "玩法" },
+    { key: "attempts", label: "样本" },
+    { key: "hits", label: "命中" },
+    { key: "hit_rate", label: "命中率" },
+    { key: "paper_roi", label: "纸面 ROI" },
+    { key: "brier_score", label: "Brier" },
+    { key: "log_loss", label: "Log Loss" },
+    { key: "sample_quality_zh", label: "样本质量" },
+    { key: "model_action_zh", label: "模型动作" },
+  ];
 }
 
 function calibrationBinColumns() {
@@ -4566,10 +5336,39 @@ function analysisMetric(label, value) {
   return `<div><span>${C.escapeHtml(label)}</span><b>${C.escapeHtml(value || "待计算")}</b></div>`;
 }
 
+
+function normalizeComboStatusValue(value) {
+  const text = String(value || "").toLowerCase();
+  return text
+    .replace(/未入选/g, "未通过门控")
+    .replace(/已入选/g, "通过门控")
+    .replace(/入选/g, "通过门控");
+}
+
+function isComboSelected(item = {}) {
+  const status = normalizeComboStatusValue(item.status || item.final_status || item.selection_status || item.combo_status || "");
+  if (["通过门控", "selected", "pass", "selected_after_gate"].some((k) => status.includes(k))) return true;
+  return false;
+}
+
+function isComboRejected(item = {}) {
+  const status = normalizeComboStatusValue(item.status || item.final_status || item.combo_status || item.selection_status || "");
+  if (["未过门控", "未通过门控", "拒", "rejected", "closed", "no_combo", "暂不组合", "blocked", "blocked_by_risk", "watchlist", "daily_candidate", "paper_candidate"].some((k) => status.includes(k))) return true;
+  return false;
+}
+
+function comboStatusLabel(item = {}) {
+  const status = normalizeComboStatusValue(item.status || item.final_status || item.combo_status || item.selection_status || "");
+  if (isComboSelected(item)) return "可进入观察";
+  if (isComboRejected(item)) return "候选存在，暂未升级";
+  if (item.daily_candidate || item.final_status === "daily_candidate") return "纸面候选";
+  return item.combo_decision_label_zh || item.decision_reason_zh || item.decision_reason_zh || "待复核";
+}
+
 function candidateDisplayStatus(item = {}) {
-  const raw = String(item.status || item.combo_decision_label_zh || item.final_status || "");
-  if (/入选|selected/.test(raw)) return "可进入观察";
-  if (/拒|未入选|rejected|closed|no_combo/.test(raw)) return "候选存在，暂未升级";
+  const raw = normalizeComboStatusValue(item.status || item.combo_decision_label_zh || item.final_status || "");
+  if (/通过门控|selected|selected_after_gate/.test(raw)) return "可进入观察";
+  if (/拒|未通过门控|未过门控|rejected|closed|no_combo|候选待复核|待复核/.test(raw)) return "候选存在，暂未升级";
   if (item.fallback_candidate) return "候选榜待复核";
   return raw || "分析候选";
 }
@@ -4893,19 +5692,35 @@ function renderMatches(view) {
   ]);
 }
 
+async function runOptimizerWithProgress(compareProfiles = true) {
+  startTodayOptimizerInlineProgress();
+  let failed = false;
+  try {
+    return await runOptimizer(compareProfiles);
+  } catch (error) {
+    failed = true;
+    abortTodayOptimizerInlineProgress("运行异常，已回退当前页可读状态");
+    throw error;
+  } finally {
+    if (failed) return;
+    stopTodayOptimizerInlineProgress("完成");
+  }
+}
+
 async function runOptimizer(compareProfiles = true) {
   renderOptimizerLoadingState(compareProfiles);
   switchView("optimizer");
   let settled = false;
   const watchdog = window.setTimeout(() => {
     if (settled) return;
-    renderOptimizerSlowState("完整模型运行超过等待时间。先显示可操作说明；你可以稍后重试，或先看情报覆盖。");
-  }, 30000);
+    renderOptimizerSlowState("完整模型运行超过等待时间。先显示每日候选入口和最近结果；接口回来后会自动替换。");
+  }, 18000);
   const payload = await request("/api/view/optimizer", {
-    provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam(), show_rejected: "1", compare_profiles: compareProfiles ? "1" : "0",
-  }, compareProfiles ? "对比风险档位" : "生成观察组合", 60000);
+    provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam(), show_rejected: "1", compare_profiles: compareProfiles ? "1" : "0", run_ai: "0",
+  }, compareProfiles ? "对比风险档位" : "生成观察组合", 36000);
   settled = true;
   window.clearTimeout(watchdog);
+  stopOptimizerProgressTicker();
   if (payload.ok) {
     try {
       renderOptimizer(payload.data);
@@ -4923,7 +5738,17 @@ function renderOptimizerLoadingState(compareProfiles = true) {
   const body = compareProfiles
     ? "系统会比较保守、均衡、进取三个档位，并检查单关、2串1、3串1；真实数据源可能需要 20 秒左右。"
     : "系统正在拉取赔率、融合概率、计算 Edge/EV，并审查组合风险；真实数据源可能需要 20 秒左右。";
-  if (qs("#optimizerCards")) qs("#optimizerCards").innerHTML = `<div class="optimizerStatePanel isLoading"><span>OPTIMIZER</span><strong>${C.escapeHtml(title)}</strong><p>${C.escapeHtml(body)}</p></div>`;
+  if (qs("#optimizerCards")) {
+    qs("#optimizerCards").innerHTML = `
+      <section class="optimizerStatePanel isLoading">
+        <span>OPTIMIZER</span>
+        <strong>${C.escapeHtml(title)}</strong>
+        <p>${C.escapeHtml(body)}</p>
+        ${optimizerProgressMarkup(0)}
+      </section>
+    `;
+    startOptimizerProgressTicker();
+  }
   if (qs("#optimizerNo2Reason")) qs("#optimizerNo2Reason").innerHTML = C.list(["请稍等，不要重复点击。若完整模型较慢，页面会自动给出可操作状态。"]);
   ["#optimizerProfileComparison", "#optimizerSingles", "#optimizerParlay2", "#optimizerParlay3", "#optimizerSingleRanking", "#optimizerParlay2Ranking", "#optimizerParlay3Ranking", "#optimizerRejected", "#optimizerExplanations"].forEach((selector) => {
     const el = qs(selector);
@@ -4932,48 +5757,62 @@ function renderOptimizerLoadingState(compareProfiles = true) {
 }
 
 function renderOptimizerSlowState(message) {
+  stopOptimizerProgressTicker();
+  const today = state.todayView || {};
+  const fallbackSingles = today.top_singles || [];
+  const fallback2 = today.top_2x1_display || today.top_parlay_2x1 || [];
+  const fallback3 = today.top_3x1_display || today.top_parlay_3x1 || [];
+  const fallbackLanes = today.best_parlay_summary?.daily_output_lanes
+    || today.optimizer?.best_parlay_summary?.daily_output_lanes
+    || state.optimizerView?.best_parlay_summary?.daily_output_lanes
+    || [];
   if (qs("#optimizerCards")) {
     qs("#optimizerCards").innerHTML = `
       <section class="optimizerStatePanel isSlow">
-        <span>模型仍在计算</span>
-        <strong>完整赛前优化暂未完成</strong>
-        <p>${C.escapeHtml(message || "完整模型较慢，本次先不强行给组合。")}</p>
+        <span>保留可用候选</span>
+        <strong>赛前优化后台继续</strong>
+        <p>${C.escapeHtml(message || "完整模型较慢，本次不清空页面。先展示最近一次 / 今日观察里的每日候选，等接口恢复后再替换。")}</p>
         <div class="optimizerStateActions">
           <button type="button" class="primary" id="optimizerRetryInlineBtn">重试生成观察组合</button>
+          <button type="button" class="secondary" data-jump-view="today">回今日观察</button>
           <button type="button" class="secondary" data-jump-view="missinginfo">先看情报覆盖</button>
-          <button type="button" class="secondary" data-jump-view="bestparlay">回组合审核</button>
         </div>
       </section>
+      ${dailyOutputLanesPanel(fallbackLanes)}
     `;
   }
   if (qs("#optimizerNo2Reason")) {
     qs("#optimizerNo2Reason").innerHTML = C.list([
-      "当前不把未完成的模型结果包装成信号。",
-      "若数据源或外部情报接口较慢，先看轻量预筛和情报覆盖。",
-      "完整组合必须等候选池生成后再判断。",
+      "本次没有把未完成请求当作失败页，先保留候选预览。",
+      "如果经常卡住，优先使用 mock/缓存预览，再等真实数据刷新。",
+      "赛前优化恢复后会重新给出单关、2串1、3串1候选榜。",
     ]);
   }
-  if (qs("#optimizerSingles")) qs("#optimizerSingles").innerHTML = `<div class="emptyState"><strong>单关候选尚未生成</strong><p>等待完整模型返回后才展示。</p></div>`;
-  if (qs("#optimizerParlay2")) qs("#optimizerParlay2").innerHTML = `<div class="emptyState"><strong>暂不生成 2串1</strong><p>没有完整单腿和可信度复核前，不生成组合。</p></div>`;
-  if (qs("#optimizerParlay3")) qs("#optimizerParlay3").innerHTML = `<div class="emptyState"><strong>暂不生成 3串1</strong><p>3串1 风险最高，完整模型未完成时默认关闭。</p></div>`;
+  if (qs("#optimizerSingles")) qs("#optimizerSingles").innerHTML = todayCompactCards(fallbackSingles, "single", "暂无缓存单关候选；请稍后重试。", today.missing_signals || []);
+  if (qs("#optimizerParlay2")) qs("#optimizerParlay2").innerHTML = todayCompactCards(fallback2, "combo", "暂无缓存 2串1候选；等待完整候选池。", today.missing_signals || []);
+  if (qs("#optimizerParlay3")) qs("#optimizerParlay3").innerHTML = todayCompactCards(fallback3, "combo", "暂无缓存 3串1候选；等待完整候选池。", today.missing_signals || []);
 }
 
 function renderOptimizer(view) {
+  stopOptimizerProgressTicker();
   state.optimizerView = view;
   const summaryCards = view.summary_cards || [];
-  const priorityLabels = new Set(["观察日期", "实际数据源", "分析比赛数", "候选池", "可信度", "串联纪律", "单关观察", "2串1观察", "3串1观察", "AI研究"]);
+  const priorityLabels = new Set(["观察日期", "实际数据源", "分析比赛数", "候选池", "可信度", "职业模型分", "串联纪律", "玩法偏置", "学习调参", "概率校准", "单关观察", "2串1观察", "3串1观察", "AI研究"]);
   const priorityCards = summaryCards.filter((card) => priorityLabels.has(card.label)).slice(0, 8);
   const extraCards = summaryCards.filter((card) => !priorityLabels.has(card.label));
   qs("#optimizerCards").innerHTML = [
-    `<section class="optimizerResultHero"><span>OPTIMIZER RESULT</span><strong>${C.escapeHtml(view.trader_review?.final_call_zh || view.combo_gate_summary_zh || "赛前优化完成")}</strong><p>${C.escapeHtml(view.no_2x1_reason || view.no_combo_state?.reason_zh || "先看单关，再看组合纪律。")}</p></section>`,
+    optimizerExecutiveBoard(view),
+    dailyOutputLanesPanel(view.daily_output_lanes || view.best_parlay_summary?.daily_output_lanes || []),
+    shortCycleModePanel(view),
     C.cards(priorityCards.length ? priorityCards : summaryCards.slice(0, 6)),
+    `<details class="detailDrawer"><summary>查看模型体检和玩法偏置</summary>${professionalModelScorePanel(view.professional_model_score || {})}${playBiasPanel(view.play_bias_diagnostics || {})}</details>`,
     extraCards.length ? `<details class="detailDrawer"><summary>查看更多指标</summary>${C.cards(extraCards)}</details>` : "",
   ].join("");
   qs("#optimizerNo2Reason").innerHTML = C.list([
-    view.combo_gate_summary_zh || view.no_combo_state?.reason_zh || view.no_2x1_reason || "当前没有 2串1 入选，请查看被拒原因。",
+    view.combo_gate_summary_zh || view.no_combo_state?.reason_zh || view.no_combo_reason || view.no_2x1_reason || "当前暂无通过门控组合，先看单关与被拒复盘。",
     `AI 研究：${view.ai_status_summary_zh || view.ai_combo_research?.display_status_zh || view.ai_combo_research?.ds_status_zh || "待检查"}`,
     view.trader_review?.final_call_zh || "先看单关，再决定是否保留组合观察。",
-    view.no_2x1_reason || "当前没有 2串1 入选，请查看被拒原因。",
+    view.no_combo_reason || view.no_2x1_reason || "当前暂无通过门控组合，先看单关与被拒复盘。",
   ]);
   renderClvTracking(view.clv_tracking || {});
   const profileRows = view.profile_comparison || [];
@@ -4981,30 +5820,22 @@ function renderOptimizer(view) {
     { key: "profile", label: "方案" }, { key: "daily_exposure_cap", label: "每日上限" }, { key: "recommended_paper_exposure", label: "纸面投入" },
     { key: "singles_count", label: "单关" }, { key: "parlay_2x1_count", label: "2串1" }, { key: "parlay_3x1_count", label: "3串1" }, { key: "note", label: "说明" },
   ])}</details>` : "";
-  const selectedCols = [
-    { key: "type", label: "类型" }, { key: "match", label: "比赛" }, { key: "legs", label: "组成" }, { key: "odds", label: "赔率" },
-    { key: "model_prob", label: "模型概率" }, { key: "market_prob", label: "市场概率" }, { key: "ev", label: "EV" }, { key: "edge", label: "Edge" },
-    { key: "confidence", label: "观察可信度" }, { key: "confidence_label_zh", label: "评级" }, { key: "recommended_action_zh", label: "建议动作" },
-    { key: "paper_stake", label: "纸面投入" }, { key: "risk_level", label: "风险" }, { key: "reason", label: "原因" },
-  ];
+  const selectedCols = compactOptimizerColumns();
   qs("#optimizerSingles").innerHTML = [
     todayCompactCards(view.singles_table || [], "single", "当前没有通过纪律筛选的单关观察。", view.missing_signals || []),
     (view.singles_table || []).length ? detailsTable("查看单关详细字段", view.singles_table || [], selectedCols) : "",
   ].join("");
+  const parlay2Rows = (view.parlay_2x1_table || []).length ? (view.parlay_2x1_table || []) : (view.candidate_rankings?.parlay_2x1 || []).slice(0, 3);
+  const parlay3Rows = (view.parlay_3x1_table || []).length ? (view.parlay_3x1_table || []) : (view.candidate_rankings?.parlay_3x1 || []).slice(0, 3);
   qs("#optimizerParlay2").innerHTML = [
-    todayCompactCards(view.parlay_2x1_table || [], "combo", "当前没有 2串1 入选。不要因为赔率高就盲目组合。", view.missing_signals || []),
-    (view.parlay_2x1_table || []).length ? detailsTable("查看2串1详细字段", view.parlay_2x1_table || [], selectedCols) : "",
+    todayCompactCards(parlay2Rows, "combo", "当前没有可排序 2串1；请先确认比赛数据源。", view.missing_signals || []),
+    parlay2Rows.length ? detailsTable("查看2串1详细字段", parlay2Rows, selectedCols) : "",
   ].join("");
   qs("#optimizerParlay3").innerHTML = [
-    todayCompactCards(view.parlay_3x1_table || [], "combo", "当前没有 3串1 入选。3串1 风险最高。", view.missing_signals || []),
-    (view.parlay_3x1_table || []).length ? detailsTable("查看3串1详细字段", view.parlay_3x1_table || [], selectedCols) : "",
+    todayCompactCards(parlay3Rows, "combo", "当前没有可排序 3串1；请先确认比赛数据源。", view.missing_signals || []),
+    parlay3Rows.length ? detailsTable("查看3串1详细字段", parlay3Rows, selectedCols) : "",
   ].join("");
-  const rankCols = [
-    { key: "type", label: "类型" }, { key: "match", label: "候选" }, { key: "legs", label: "组成" }, { key: "odds", label: "赔率" },
-    { key: "model_prob", label: "模型概率" }, { key: "market_prob", label: "市场概率" }, { key: "ev", label: "EV" }, { key: "edge", label: "Edge" },
-    { key: "confidence", label: "观察可信度" }, { key: "confidence_label_zh", label: "评级" }, { key: "recommended_action_zh", label: "建议动作" },
-    { key: "correlation_discount", label: "相关性折扣" }, { key: "paper_stake", label: "纸面投入" }, { key: "status", label: "状态" }, { key: "reject_reason", label: "被拒原因" },
-  ];
+  const rankCols = compactOptimizerColumns(true);
   qs("#optimizerSingleRanking").innerHTML = detailsTable("查看单关候选排行榜", view.candidate_rankings?.singles || [], rankCols);
   qs("#optimizerParlay2Ranking").innerHTML = (view.candidate_rankings?.parlay_2x1 || []).length ? detailsTable("查看2串1候选排行榜", view.candidate_rankings?.parlay_2x1 || [], rankCols) : "";
   qs("#optimizerParlay3Ranking").innerHTML = (view.candidate_rankings?.parlay_3x1 || []).length ? detailsTable("查看3串1候选排行榜", view.candidate_rankings?.parlay_3x1 || [], rankCols) : "";
@@ -5014,9 +5845,431 @@ function renderOptimizer(view) {
   qs("#optimizerExplanations").innerHTML = C.list(view.explanations || []);
   qs("#parlay2Table").innerHTML = qs("#optimizerParlay2").innerHTML;
   qs("#parlay3Table").innerHTML = qs("#optimizerParlay3").innerHTML;
-  qs("#parlay2RejectedTable").innerHTML = tableOrEmpty(view.candidate_rankings?.parlay_2x1 || [], rankCols, "当前没有 2串1 被拒候选。 ");
-  qs("#parlay3RejectedTable").innerHTML = tableOrEmpty(view.candidate_rankings?.parlay_3x1 || [], rankCols, "当前没有 3串1 被拒候选。 ");
-  qs("#riskNotes").innerHTML = C.list([view.no_2x1_reason || "组合观察会放大风险。", ...(view.explanations || [])]);
+  qs("#parlay2RejectedTable").innerHTML = tableOrEmpty(view.candidate_rankings?.parlay_2x1 || [], rankCols, "当前暂无 2串1 被拒复盘项。 ");
+  qs("#parlay3RejectedTable").innerHTML = tableOrEmpty(view.candidate_rankings?.parlay_3x1 || [], rankCols, "当前暂无 3串1 被拒复盘项。 ");
+  qs("#riskNotes").innerHTML = C.list([view.no_combo_reason || view.no_2x1_reason || "组合放大风险高，建议先看候选纪律复核。", ...(view.explanations || [])]);
+}
+
+function dailyOutputLanesPanel(lanes = []) {
+  const safe = Array.isArray(lanes) ? lanes : [];
+  if (!safe.length) return "";
+  return `
+    <section class="dailyOutputLanes">
+      <header>
+        <span>今日输出</span>
+        <strong>单关 / 2串1 / 3串1 候选</strong>
+        <p>每天固定给出三条可复盘候选。没过纪律门槛也会显示为纸面候选，方便赛后验证规则是不是太保守。</p>
+      </header>
+      <div>
+        ${safe.map((lane) => `
+          <article data-status="${C.escapeHtml(lane.status || "unknown")}">
+            <div>
+              <span>${C.escapeHtml(lane.label_zh || "候选")}</span>
+              <b>${C.escapeHtml(lane.status_zh || "待复核")}</b>
+            </div>
+            <strong>${C.escapeHtml(shortText(lane.target_zh || "暂无候选", 54))}</strong>
+            ${lane.verdict_zh ? `<mark>${C.escapeHtml(lane.verdict_zh)}</mark>` : ""}
+            <dl>
+              <dt>赔率</dt><dd>${C.escapeHtml(lane.odds_zh || "N/A")}</dd>
+              <dt>模型</dt><dd>${C.escapeHtml(lane.model_prob_zh || "N/A")}</dd>
+              <dt>市场</dt><dd>${C.escapeHtml(lane.market_prob_zh || "N/A")}</dd>
+              <dt>EV</dt><dd>${C.escapeHtml(lane.ev_zh || "N/A")}</dd>
+              <dt>Edge</dt><dd>${C.escapeHtml(lane.edge_zh || "N/A")}</dd>
+              <dt>风险</dt><dd>${C.escapeHtml(lane.risk_zh || "N/A")}</dd>
+            </dl>
+            <p>${C.escapeHtml(lane.action_zh || "等待复核")}</p>
+            <em>${C.escapeHtml(shortText(lane.why_zh || lane.next_review_zh || "", 110))}</em>
+            ${Array.isArray(lane.review_checklist_zh) && lane.review_checklist_zh.length ? `
+              <ul>
+                ${lane.review_checklist_zh.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}
+              </ul>
+            ` : ""}
+            ${lane.next_review_zh ? `<small>${C.escapeHtml(shortText(`下一步：${lane.next_review_zh}`, 120))}</small>` : ""}
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function shortCycleModePanel(view = {}) {
+  const note = view.candidate_rankings?.singles?.[0]?.short_cycle_reason_zh || view.singles_table?.[0]?.short_cycle_reason_zh || "短周期调整会显示在候选明细里。";
+  return `
+    <section class="shortCycleModePanel">
+      <span>WORLD CUP SHORT-CYCLE MODE</span>
+      <strong>短赛会模式：先给候选，再防同质化</strong>
+      <p>世界杯/杯赛阶段样本少，系统会优先看市场一致、概率区间稳、方向分散；不再只按高 EV 或高赔率排序。</p>
+      <div>
+        <em>同向主胜/让胜刷屏会被同质化降权。</em>
+        <em>2串1/3串1保留纸面候选，但未过纪律不会包装成强观察。</em>
+        <em>${C.escapeHtml(shortText(note, 96))}</em>
+      </div>
+    </section>
+  `;
+}
+
+function compactOptimizerColumns(includeStatus = false) {
+  const cols = [
+    { key: "type", label: "类型" },
+    { key: "match", label: "比赛/候选" },
+    { key: "legs", label: "组成" },
+    { key: "odds", label: "赔率" },
+    { key: "model_prob", label: "模型概率" },
+    { key: "market_prob", label: "市场概率" },
+    { key: "ev", label: "EV" },
+    { key: "edge", label: "Edge" },
+    { key: "confidence", label: "可信度" },
+    { key: "risk_level", label: "风险" },
+    { key: "short_cycle_reason_zh", label: "短周期调整" },
+    { key: "combo_homogeneity_reason_zh", label: "同质化" },
+    { key: "recommended_action_zh", label: "动作" },
+    { key: "reject_reason", label: "拒绝/保留原因" },
+  ];
+  if (includeStatus) cols.splice(10, 0, { key: "status", label: "状态" });
+  return cols;
+}
+
+function optimizerExecutiveBoard(view = {}) {
+  const singles = view.singles_table || view.candidate_rankings?.singles || [];
+  const parlay2 = view.parlay_2x1_table || view.candidate_rankings?.parlay_2x1 || [];
+  const parlay3 = view.parlay_3x1_table || view.candidate_rankings?.parlay_3x1 || [];
+  const brief = view.daily_candidate_brief || {};
+  const topSingle = singles[0] || {};
+  const top2 = parlay2[0] || {};
+  const top3 = parlay3[0] || {};
+  const homogeneity = firstNonEmpty([
+    top2.combo_homogeneity_reason_zh,
+    top3.combo_homogeneity_reason_zh,
+    (view.play_bias_diagnostics || {}).summary_zh,
+  ], "如果候选集中在让胜/主胜，系统会标记玩法偏置：这说明方向单一，不能当作多样化组合。");
+  const comboTruth = firstNonEmpty([
+    top2.legs ? `2串1纸面候选：${top2.legs}` : "",
+    view.no_2x1_reason,
+    view.no_combo_reason,
+    "没有足够分散、概率覆盖和可信度支撑时，不升级为正式组合。",
+  ], "");
+  const cards = [
+    optimizerDecisionCard("最先看", topSingle.match || "暂无可用单关", topSingle.decision_label_zh || topSingle.status || "待复核", firstNonEmpty([topSingle.decision_reason_zh, topSingle.reason, "先判断单腿是否真的有赔率价值。"], "")),
+    optimizerDecisionCard("2串1", top2.legs || top2.match || "暂无合格 2串1", top2.status || "纸面/待复核", comboTruth),
+    optimizerDecisionCard("3串1", top3.legs || top3.match || "暂无合格 3串1", top3.status || "高风险", firstNonEmpty([top3.reject_reason, top3.discipline_summary_zh, "3串1 只保留作学习样本，不能用赔率高掩盖低命中概率。"], "")),
+    optimizerDecisionCard("为什么方向单一", "玩法同质化审计", (view.play_bias_diagnostics || {}).label_zh || "检查中", homogeneity),
+  ];
+  return `
+    <section class="optimizerExecutiveBoard">
+      <header>
+        <span>${C.escapeHtml(brief.score_zh ? `USEFUL RESULT · ${brief.score_zh}` : "USEFUL RESULT")}</span>
+        <strong>${C.escapeHtml(brief.headline_zh || view.trader_review?.final_call_zh || view.combo_gate_summary_zh || "赛前优化完成")}</strong>
+        <p>${C.escapeHtml(brief.summary_zh || view.no_combo_state?.reason_zh || view.no_combo_reason || "先看候选质量，再看是否值得组合。")}</p>
+        ${brief.score_explain_zh ? `<em>${C.escapeHtml(brief.score_explain_zh)}</em>` : ""}
+      </header>
+      <div>${cards.join("")}</div>
+      ${optimizerChecklistStrip(brief)}
+      ${brief.next_action_zh ? `<p class="optimizerBoardNext">${C.escapeHtml(brief.next_action_zh)}</p>` : ""}
+    </section>
+  `;
+}
+
+function optimizerChecklistStrip(brief = {}) {
+  const pre = Array.isArray(brief.pre_match_checklist_zh) ? brief.pre_match_checklist_zh : [];
+  const post = Array.isArray(brief.post_match_learning_checklist_zh) ? brief.post_match_learning_checklist_zh : [];
+  if (!pre.length && !post.length) return "";
+  return `
+    <div class="optimizerChecklistStrip">
+      ${pre.length ? `
+        <article>
+          <span>赛前复核</span>
+          <ul>${pre.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}</ul>
+        </article>
+      ` : ""}
+      ${post.length ? `
+        <article>
+          <span>赛后学习</span>
+          <ul>${post.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}</ul>
+        </article>
+      ` : ""}
+    </div>
+  `;
+}
+
+function optimizerDecisionBoard(view = {}) {
+  const singles = view.singles_table || view.candidate_rankings?.singles || [];
+  const parlay2 = view.parlay_2x1_table || view.candidate_rankings?.parlay_2x1 || [];
+  const parlay3 = view.parlay_3x1_table || view.candidate_rankings?.parlay_3x1 || [];
+  const topSingle = singles[0] || {};
+  const top2 = parlay2[0] || {};
+  const top3 = parlay3[0] || {};
+  const bias = view.play_bias_diagnostics || {};
+  const pro = view.professional_model_score || {};
+  const radar = pro.score_gap_radar || [];
+  const biasGap = radar.find((row) => row.key === "play_bias_control") || {};
+  const marketGap = firstNonEmpty([
+    topSingle.model_disagreement_reason_zh,
+    top2.model_disagreement_reason_zh,
+    top3.model_disagreement_reason_zh,
+    topSingle.discipline_summary_zh && topSingle.discipline_summary_zh.includes("模型分歧") ? topSingle.discipline_summary_zh : "",
+  ], "模型与市场分歧待复核。");
+  const learningAdjustment = firstNonEmpty([
+    topSingle.strategy_adjustment_reason_zh,
+    top2.strategy_adjustment_reason_zh,
+    top3.strategy_adjustment_reason_zh,
+    top2.combo_homogeneity_reason_zh,
+    top3.combo_homogeneity_reason_zh,
+    view.strategy_adjustment_status?.reason_zh,
+  ], "赛后学习样本不足时，只做轻量调参，不会大幅改变排序。");
+  const probabilityCalibration = firstNonEmpty([
+    topSingle.probability_shrinkage_reason_zh,
+    top2.probability_shrinkage_reason_zh,
+    top3.probability_shrinkage_reason_zh,
+    topSingle.market_benchmark_discipline_zh,
+    top2.market_benchmark_discipline_zh,
+    top3.market_benchmark_discipline_zh,
+    view.probability_shrinkage_status?.reason_zh,
+  ], "样本不足或市场分歧较大时，模型概率会向市场概率收缩。");
+  const robustValue = firstNonEmpty([
+    topSingle.robust_value_reason_zh,
+    top2.robust_value_reason_zh,
+    top3.robust_value_reason_zh,
+  ], "用概率区间下沿检查 EV 和 Edge，避免只看点概率造成虚高。");
+  const cards = [
+    optimizerDecisionCard("单关优先级", topSingle.match || "暂无强单关", topSingle.decision_label_zh || topSingle.status || "待复核", firstNonEmpty([topSingle.decision_reason_zh, topSingle.reason, topSingle.discipline_summary_zh], "先看概率、赔率价值和情报完整度。")),
+    optimizerDecisionCard("2串1纪律", top2.legs || top2.match || "暂无合格 2串1", top2.status || view.no_combo_state?.label_zh || "未过门控", firstNonEmpty([top2.reject_reason, top2.discipline_summary_zh, view.no_2x1_reason, view.no_combo_reason], "2串1 需要两腿同时命中，先看联合概率和相关性。")),
+    optimizerDecisionCard("3串1纪律", top3.legs || top3.match || "暂无合格 3串1", top3.status || "高风险待复核", firstNonEmpty([top3.reject_reason, top3.discipline_summary_zh, "3串1 风险最高，只保留纸面候选用于赛后学习。"], "")),
+    optimizerDecisionCard("玩法偏置", bias.label_zh || "玩法分布待检查", biasGap.score == null ? "待检查" : `${biasGap.score}/${biasGap.target_score || 84}`, firstNonEmpty([bias.summary_zh, biasGap.next_step_zh], "如果让球胜平负或同方向刷屏，系统会降权并等待赛后验证。")),
+    optimizerDecisionCard("组合同质化", firstNonEmpty([top2.combo_homogeneity_reason_zh, top3.combo_homogeneity_reason_zh], "组合结构相对分散"), top2.combo_homogeneity?.level || top3.combo_homogeneity?.level || "audit", "不是不同比赛就一定分散；同玩法、同方向、同赔率段、同AI因子会被额外审计。"),
+    optimizerDecisionCard("模型-市场一致性", marketGap, "分歧审计", "模型看好但市场不支持时，不直接升级为强组合；先降权、再看 CLV 和赛后样本。"),
+    optimizerDecisionCard("市场基准纪律", firstNonEmpty([topSingle.market_benchmark_discipline_zh, top2.market_benchmark_discipline_zh, top3.market_benchmark_discipline_zh], "等待赛后样本证明模型是否优于市场概率。"), "market", "专业模型必须证明概率长期优于市场基准；否则排序更尊重市场赔率。"),
+    optimizerDecisionCard("概率纪律校准", probabilityCalibration, view.probability_shrinkage_status?.status || "calibrated", "原模型概率保留作审计，排序使用校准概率，避免小样本模型过度自信。"),
+    optimizerDecisionCard("稳健价值检验", robustValue, topSingle.robust_value_label_zh || top2.robust_value_label_zh || "区间审计", "只要概率下沿无法覆盖赔率，候选就会被降权；组合腿更严格。"),
+    optimizerDecisionCard("赛后学习调参", learningAdjustment, view.strategy_adjustment_status?.status || "learning", "弱玩法、长赔、负 CLV 或弱赔率段会轻量压低排序；样本不足时只提醒，不硬改模型。"),
+    optimizerDecisionCard("下一步", view.trader_review?.final_call_zh || view.combo_gate_summary_zh || "先看结论，再看排行榜", view.risk_profile_label || "进取", firstNonEmpty([view.ai_status_summary_zh, view.no_combo_reason, "展开排行榜查看完整证据。"], "")),
+  ];
+  return `
+    <section class="optimizerDecisionBoard">
+      <header>
+        <span>DECISION BOARD</span>
+        <strong>先看结论，再看细表</strong>
+        <p>这里压缩显示使用者真正需要的判断：单关、2串1、3串1、玩法偏置、模型市场分歧和下一步。</p>
+      </header>
+      <div>${cards.join("")}</div>
+    </section>
+  `;
+}
+
+function optimizerDecisionCard(label, title, badge, body) {
+  return `
+    <article>
+      <span>${C.escapeHtml(label || "判断")}</span>
+      <strong>${C.escapeHtml(shortText(title || "待复核", 46))}</strong>
+      <b>${C.escapeHtml(shortText(badge || "待检查", 24))}</b>
+      <p>${C.escapeHtml(shortText(body || "继续查看候选和被拒原因。", 96))}</p>
+    </article>
+  `;
+}
+
+function firstNonEmpty(values = [], fallback = "") {
+  for (const value of values) {
+    const text = value == null ? "" : String(value).trim();
+    if (text) return text;
+  }
+  return fallback;
+}
+
+function playBiasPanel(diag = {}) {
+  if (!diag || !Object.keys(diag).length) return "";
+  const sections = diag.sections || [];
+  return `
+    <section class="playBiasPanel" data-status="${C.escapeHtml(diag.status || "balanced")}">
+      <div>
+        <span>玩法偏置诊断</span>
+        <strong>${C.escapeHtml(diag.label_zh || "玩法分布待检查")}</strong>
+        <p>${C.escapeHtml(diag.summary_zh || "检查候选是否过度集中在某一种玩法或方向。")}</p>
+      </div>
+      <div class="playBiasGrid">
+        ${sections.map((item) => `
+          <article>
+            <b>${C.escapeHtml(item.label_zh || "候选")}</b>
+            <span>${C.escapeHtml(item.top_play_type || "暂无")} · ${C.escapeHtml(fmtPct(item.top_play_share))}</span>
+            <em>${C.escapeHtml(item.message_zh || "")}</em>
+          </article>
+        `).join("")}
+      </div>
+      <p class="mutedLine">${C.escapeHtml(diag.next_step_zh || "长期按玩法统计命中率，不因单日集中就盲目调权重。")}</p>
+    </section>
+  `;
+}
+
+function professionalModelScorePanel(score) {
+  if (!score || !Object.keys(score).length) return "";
+  const components = Array.isArray(score.components) ? score.components : [];
+  const missing = Array.isArray(score.missing_to_95) ? score.missing_to_95 : [];
+  const principles = Array.isArray(score.principles_zh) ? score.principles_zh : [];
+  const researchSources = Array.isArray(score.research_sources_zh) ? score.research_sources_zh : [];
+  const benchmarks = Array.isArray(score.industry_benchmark_zh) ? score.industry_benchmark_zh : [];
+  const evidence = score.learning_evidence || {};
+  const roadmap = score.roadmap_to_95 || {};
+  const roadmapItems = Array.isArray(roadmap.items) ? roadmap.items : [];
+  const gapRows = Array.isArray(score.score_gap_radar) ? score.score_gap_radar : [];
+  const topGap = gapRows[0] || {};
+  const nextActions = Array.isArray(roadmap.next_best_actions) ? roadmap.next_best_actions : [];
+  const firstAction = nextActions[0] || {};
+  const benchmarkSummary = professionalBenchmarkSummary(benchmarks);
+  const evidenceRequirements = score.evidence_requirements || {};
+  const gateChecklist = Array.isArray(evidenceRequirements.gate_checklist) ? evidenceRequirements.gate_checklist : [];
+  const current = Number(score.score || 0);
+  const ceiling = Number(score.ceiling_score || 0);
+  const pct = Math.max(0, Math.min(100, current));
+  const ceilingPct = Math.max(0, Math.min(100, ceiling || 95));
+  return `
+    <section class="proScorePanel">
+      <div class="proScoreHeader">
+        <div>
+          <span>PRO MODEL SCORE</span>
+          <strong>${C.escapeHtml(score.label_zh || "职业模型评估")}</strong>
+          <p>${C.escapeHtml(score.summary_zh || "按市场、模型、情报、校准、CLV、组合纪律和学习闭环综合评估。")}</p>
+        </div>
+        <div class="proScoreDial" style="--score:${pct}%;--ceiling:${ceilingPct}%">
+          <b>${C.escapeHtml(String(current || "--"))}</b>
+          <em>/100</em>
+        </div>
+      </div>
+      <div class="proScoreTrack" aria-label="职业模型分">
+        <i style="--score:${pct}%"></i>
+        <b style="left:${ceilingPct}%">上限 ${C.escapeHtml(String(ceiling || 95))}</b>
+      </div>
+      <div class="proScoreConclusionStrip">
+        <article>
+          <span>当前判断</span>
+          <strong>${C.escapeHtml(current >= 85 ? "接近职业级" : current >= 70 ? "可研究但需复盘" : "证据仍不足")}</strong>
+          <p>${C.escapeHtml(ceiling < 95 ? `当前上限 ${ceiling}，先补硬证据再谈 95。` : "理论上限已打开，继续看缺口雷达。")}</p>
+        </article>
+        <article>
+          <span>最大拖分项</span>
+          <strong>${C.escapeHtml(topGap.label_zh || "待生成")}</strong>
+          <p>${C.escapeHtml(topGap.impact_zh || topGap.next_step_zh || "生成模型体检后查看。")}</p>
+        </article>
+        <article>
+          <span>第一动作</span>
+          <strong>${C.escapeHtml(firstAction.title_zh || "补赛后证据")}</strong>
+          <p>${C.escapeHtml(firstAction.action_zh || "保存赛前观察，赛后补比分和收盘赔率。")}</p>
+        </article>
+        <article>
+          <span>行业基准</span>
+          <strong>${C.escapeHtml(benchmarkSummary.label)}</strong>
+          <p>${C.escapeHtml(benchmarkSummary.detail)}</p>
+        </article>
+      </div>
+      ${components.length ? `
+        <div class="proScoreGrid">
+          ${components.map((item) => `
+            <article>
+              <header><span>${C.escapeHtml(item.label_zh || item.key || "评分项")}</span><b>${C.escapeHtml(String(item.score ?? "--"))}</b></header>
+              <div class="miniMeter"><i style="--score:${Math.max(0, Math.min(100, Number(item.score || 0)))}%"></i></div>
+              <p>${C.escapeHtml(item.detail_zh || "")}</p>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+      <div class="proEvidenceStrip" aria-label="职业模型证据">
+        <article><span>赛后样本</span><b>${C.escapeHtml(String(evidence.settled_count ?? 0))}</b><em>已结算观察</em></article>
+        <article><span>Brier</span><b>${C.escapeHtml(evidence.brier_score == null ? "N/A" : String(evidence.brier_score))}</b><em>概率校准</em></article>
+        <article><span>Log Loss</span><b>${C.escapeHtml(evidence.log_loss == null ? "N/A" : String(evidence.log_loss))}</b><em>过度自信惩罚</em></article>
+        <article><span>CLV</span><b>${C.escapeHtml(evidence.average_clv_pct == null ? "N/A" : fmtSignedPct(evidence.average_clv_pct))}</b><em>${C.escapeHtml(String(evidence.clv_settled_count ?? 0))} 条收盘样本</em></article>
+        <article><span>市场技能分</span><b>${C.escapeHtml(evidence.market_benchmark?.brier_skill_score == null ? "N/A" : fmtSignedPct(evidence.market_benchmark.brier_skill_score))}</b><em>模型 vs 市场概率</em></article>
+      </div>
+      ${evidence.evidence_zh || evidence.market_benchmark_summary_zh ? `<p class="proEvidenceNote">${C.escapeHtml([evidence.evidence_zh, evidence.market_benchmark_summary_zh].filter(Boolean).join(" "))}</p>` : ""}
+      ${gateChecklist.length ? `
+        <section class="proGateChecklist">
+          <header>
+            <span>EVIDENCE GATES</span>
+            <strong>证据门槛</strong>
+            <p>${C.escapeHtml(evidenceRequirements.summary_zh || "职业级不是靠单日命中证明，而是靠长期证据逐档解锁。")}</p>
+          </header>
+          <div>
+            ${gateChecklist.map((item) => `
+              <article class="${item.passed ? "passed" : "blocked"}">
+                <b>${C.escapeHtml(String(item.level || ""))}</b>
+                <strong>${C.escapeHtml(item.label_zh || "门槛")}</strong>
+                <p>${C.escapeHtml(item.next_missing_zh || item.message_zh || "")}</p>
+              </article>
+            `).join("")}
+          </div>
+        </section>
+      ` : ""}
+      ${roadmapItems.length ? `
+        <section class="proRoadmap">
+          <header>
+            <span>PATH TO 95</span>
+            <strong>95 分路线图</strong>
+            <p>${C.escapeHtml(roadmap.summary_zh || "先补真实数据、赛后样本和 CLV，再谈接近职业级。")}</p>
+          </header>
+          <div class="proRoadmapList">
+            ${roadmapItems.map((item) => `
+              <article class="status-${C.escapeHtml(item.status || "todo")}">
+                <b>${C.escapeHtml(item.label_zh || "改进项")}</b>
+                <em>${C.escapeHtml(item.status_zh || "")}${item.estimated_score_gain ? ` · 预计 +${C.escapeHtml(String(item.estimated_score_gain))} 分` : ""}</em>
+                <div class="miniMeter"><i style="--score:${Math.max(0, Math.min(100, Number(item.score || 0)))}%"></i></div>
+                <p>${C.escapeHtml(item.current_state_zh || "")}</p>
+                <small>${C.escapeHtml(item.priority_zh || "")}${item.priority_rank ? ` · 优先级 ${C.escapeHtml(String(item.priority_rank))}` : ""}</small>
+                <small>${C.escapeHtml(item.why_it_matters_zh || "")}</small>
+              </article>
+            `).join("")}
+          </div>
+        </section>
+      ` : ""}
+      ${benchmarks.length ? `
+        <details class="detailDrawer proBenchmarkDrawer" open>
+          <summary>按职业模型基准检查</summary>
+          <div class="proBenchmarkGrid">
+            ${benchmarks.map((item) => `
+              <article class="status-${C.escapeHtml(item.status || "not_yet")}">
+                <header>
+                  <b>${C.escapeHtml(item.label_zh || "检查项")}</b>
+                  <em>${C.escapeHtml(item.status_zh || "")}</em>
+                </header>
+                <div class="miniMeter"><i style="--score:${Math.max(0, Math.min(100, Number(item.score || 0)))}%"></i></div>
+                <p>${C.escapeHtml(item.detail_zh || "")}</p>
+                <small>${C.escapeHtml(item.next_step_zh || "")}</small>
+              </article>
+            `).join("")}
+          </div>
+        </details>
+      ` : ""}
+      ${missing.length ? `
+        <details class="detailDrawer proScorePath" open>
+          <summary>距离 95 分还差什么</summary>
+          ${C.list(missing)}
+        </details>
+      ` : ""}
+      ${principles.length ? `
+        <details class="detailDrawer proScorePath">
+          <summary>职业级判断原则</summary>
+          ${C.list(principles)}
+        </details>
+      ` : ""}
+      ${researchSources.length ? `
+        <details class="detailDrawer proScorePath">
+          <summary>主流模型依据摘要</summary>
+          ${C.list(researchSources)}
+        </details>
+      ` : ""}
+    </section>
+  `;
+}
+
+function professionalBenchmarkSummary(benchmarks = []) {
+  const rows = Array.isArray(benchmarks) ? benchmarks : [];
+  if (!rows.length) {
+    return { label: "待检查", detail: "暂无行业基准明细。" };
+  }
+  const passed = rows.filter((item) => ["passed", "done", "ok"].includes(String(item.status || ""))).length;
+  const partial = rows.filter((item) => ["partial", "warning", "in_progress"].includes(String(item.status || ""))).length;
+  const total = rows.length;
+  const label = `${passed}/${total} 通过`;
+  const blockers = rows.filter((item) => !["passed", "done", "ok"].includes(String(item.status || ""))).slice(0, 2).map((item) => item.label_zh || item.key).filter(Boolean);
+  const detail = blockers.length
+    ? `未完全达标：${blockers.join("、")}。`
+    : `全部核心基准已通过，继续扩大样本。`;
+  return { label, detail: partial ? `${detail} 其中 ${partial} 项仍需观察。` : detail };
 }
 
 async function loadScoreGoals() {
@@ -5073,6 +6326,7 @@ function compactObsColumns() {
     { key: "official_odds", label: "赔率" },
     { key: "ev_status_zh", label: "EV 状态" },
     { key: "confidence_label_zh", label: "可信度" },
+    { key: "market_audit_zh", label: "赔率审计" },
     { key: "recommended_action_zh", label: "动作" },
   ];
 }
@@ -5265,6 +6519,12 @@ document.addEventListener("click", (event) => {
   runOptimizer(false);
 });
 document.addEventListener("click", (event) => {
+  const button = event.target && event.target.closest ? event.target.closest("#todayFallbackOptimizerBtn") : null;
+  if (!button) return;
+  event.preventDefault();
+  runOptimizerWithProgress(false);
+});
+document.addEventListener("click", (event) => {
   const button = event.target && event.target.closest ? event.target.closest("[data-run-optimizer]") : null;
   if (!button) return;
   event.preventDefault();
@@ -5399,7 +6659,7 @@ bind("#todayRefreshBtn", "click", refreshTodayFromRail);
 bind("#todayQuickRefreshBtn", "click", refreshTodayFromRail);
 bind("#aiComboResearchBtn", "click", loadAiComboResearch);
 bind("#saveDeepSeekTopBtn", "click", saveLocalSecrets);
-bind("#todayOptimizerBtn", "click", () => runOptimizer(true));
+bind("#todayOptimizerBtn", "click", () => runOptimizerWithProgress(false));
 bind("#todayOperationBtn", "click", runOperation);
 bind("#todayImportBtn", "click", previewImport);
 bind("#healthBtn", "click", checkHealth);
@@ -5617,8 +6877,8 @@ function foldDenseResultTables() {
     ["operationEquityTable", "查看每日本金曲线"],
     ["operationComboTable", "查看单关 / 组合表现明细"],
     ["operationWalkLog", "查看逐笔走盘明细"],
-    ["parlay2Table", "查看入选 2串1 明细"],
-    ["parlay3Table", "查看入选 3串1 明细"],
+    ["parlay2Table", "查看 2串1 复核明细"],
+    ["parlay3Table", "查看 3串1 复核明细"],
     ["parlay2RejectedTable", "查看 2串1 被拒明细"],
     ["parlay3RejectedTable", "查看 3串1 被拒明细"],
   ];
@@ -5703,7 +6963,7 @@ function installOptimizerResultPolish() {
 // Unified below by installUnifiedUiPolishLoop().
 
 function hideOptimizerSecondaryHeadings() {
-  const hiddenTitles = new Set(["CLV / 收盘赔率复盘", "方案对比", "候选排行榜", "被拒原因", "交易纪律"]);
+  const hiddenTitles = new Set(["收盘赔率复盘", "方案对比", "候选排行榜", "被拒原因", "交易纪律"]);
   document.querySelectorAll("#view-optimizer h3").forEach((heading) => {
     const text = (heading.innerText || "").trim();
     if (hiddenTitles.has(text)) heading.classList.add("visuallyHiddenHeading");
@@ -5792,38 +7052,14 @@ function polishLowFrequencyPages() {
 }
 // Unified by runUnifiedUiPolishPass().
 
-function installTodayPrimaryPath() {
+function removeTodayPrimaryPath() {
   const view = qs("#view-today");
-  if (!view || view.querySelector(".todayPrimaryPath")) return;
-  const anchor = view.querySelector(".sectionHeading");
-  if (!anchor) return;
-  const path = document.createElement("div");
-  path.className = "todayPrimaryPath";
-  path.innerHTML = `
-    <article>
-      <span>1</span>
-      <strong>先跑赛前优化</strong>
-      <p>生成 Top 单关、可信度和是否暂不串联。</p>
-      <button type="button" data-run-optimizer="single">运行赛前优化</button>
-    </article>
-    <article>
-      <span>2</span>
-      <strong>再看组合审核</strong>
-      <p>只看为什么不串、哪些组合仅作纸面观察。</p>
-      <button type="button" data-jump-view="bestparlay">查看组合审核</button>
-    </article>
-    <article>
-      <span>3</span>
-      <strong>赛后保存学习</strong>
-      <p>记录比分和收盘赔率，让下次判断更稳。</p>
-      <button type="button" data-jump-view="learning">进入赛后学习</button>
-    </article>
-  `;
-  anchor.insertAdjacentElement("afterend", path);
+  if (!view) return;
+  view.querySelectorAll(".todayPrimaryPath").forEach((node) => node.remove());
 }
 
 function installFinalUsabilityPass() {
-  installTodayPrimaryPath();
+  removeTodayPrimaryPath();
 }
 
 if (document.readyState === "loading") {

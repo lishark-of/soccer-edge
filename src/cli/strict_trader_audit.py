@@ -189,9 +189,9 @@ def _acceptance_checks(html: str, combined: str, payloads: dict[str, dict]) -> l
         QaCheckResult(
             "acceptance.07_observations_have_discipline_context",
             bool(observation_rows)
-            and all(_has_any(row, ["selection_reason", "入选原因", "reason", "selected_reason"]) for row in observation_rows[:8])
+            and all(_has_any(row, ["selection_reason", "通过门控原因", "reason", "selected_reason"]) for row in observation_rows[:8])
             and all(label in combined for label in ["支持因素", "反对因素", "缺失情报"]),
-            message="观察项包含并展示入选原因、反对因素和缺失情报等严厉交易者上下文。",
+            message="观察项包含并展示通过门控原因、反对因素和缺失情报等严厉交易者上下文。",
             details={"checked_rows": min(len(observation_rows), 8), "total_rows": len(observation_rows)},
         ),
         QaCheckResult(
@@ -614,7 +614,7 @@ def _goal_readiness(
         ),
         _goal_item(
             "技术目标",
-            "组合优化显示入选原因和拒绝原因",
+            "组合优化显示通过门控原因和拒绝原因",
             bool(observation_rows)
             and bool(rejected_combo_rows)
             and all(_has_any(row, ["selection_reason", "reason"]) for row in observation_rows[:5])

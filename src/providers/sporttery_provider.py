@@ -37,8 +37,24 @@ class SportteryProvider(BaseProvider):
     def get_matches(self, date: str | None = None) -> list[Match]:
         target_date = date
         cache_key = target_date or "__selling__"
+        cached_exact = self._restore_matches(cache_key)
+        if cached_exact:
+            return cached_exact
+        if target_date:
+            cached_selling = self._restore_matches("__selling__")
+            if cached_selling:
+                filtered_cached = [
+                    match
+                    for match in cached_selling
+                    if match.date == target_date or str((match.raw or {}).get("businessDate") or "") == target_date
+                ]
+                if filtered_cached:
+                    self._remember_matches(cache_key, filtered_cached)
+                    return filtered_cached
         try:
             selling_matches = self._get_selling_matches()
+            if selling_matches:
+                self._remember_matches("__selling__", selling_matches)
             if target_date:
                 filtered = [
                     match

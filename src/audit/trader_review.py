@@ -9,7 +9,10 @@ def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> 
     optimizer = optimizer_result or preview.get("optimizer") or {}
     credibility = audit_credibility(preview, optimizer)
     gate = credibility.get("credibility_gate", {})
+    pro_score = credibility.get("professional_model_score", {})
     best = optimizer.get("best_parlay_summary") or build_best_parlay_summary(optimizer)
+    daily_2x1 = best.get("daily_2x1_candidate") or {}
+    daily_3x1 = best.get("daily_3x1_candidate") or {}
     conclusions = []
     selected = optimizer.get("selected_portfolio") or {}
     singles_count = len(selected.get("singles", []) or [])
@@ -21,28 +24,74 @@ def build_trader_review(preview: dict, optimizer_result: dict | None = None) -> 
         conclusions.append("当前存在 2串1 纸面观察，必须同时看相关性折扣、组合命中概率和缺失情报。")
     else:
         best2 = best.get("best_2x1") or {}
-        conclusions.append("当前没有足够强的 2串1 入选。" + (f"最接近候选原因：{best2.get('reject_reason')}" if best2.get("reject_reason") else ""))
+        if _has_paper_candidate(daily_2x1):
+            conclusions.append(_paper_combo_review_line("2串1", daily_2x1))
+        else:
+            conclusions.append("当前没有足够强的 2串1 通过门控观察项。" + (f"最接近候选原因：{best2.get('reject_reason')}" if best2.get("reject_reason") else ""))
     if p3_count:
         conclusions.append("当前有 3串1 纸面观察，但这是最高风险组合，只能作研究。")
     else:
         best3 = best.get("best_3x1_if_allowed") or {}
-        conclusions.append("当前没有足够理由启用 3串1。" + (f"原因：{best3.get('reject_reason')}" if best3.get("reject_reason") else ""))
+        if _has_paper_candidate(daily_3x1):
+            conclusions.append(_paper_combo_review_line("3串1", daily_3x1))
+        else:
+            conclusions.append("当前没有足够理由启用 3串1。" + (f"原因：{best3.get('reject_reason')}" if best3.get("reject_reason") else ""))
     if credibility.get("missing_information"):
         conclusions.append("缺少 " + "、".join(credibility["missing_information"][:5]) + "，信心降级。")
+    if pro_score:
+        conclusions.append(pro_score.get("summary_zh", "职业模型成熟度仍需结合市场、校准和赛后学习验证。"))
     return {
         "review_version": "phase2p_trader_review_v0",
         "selected_date": preview.get("selected_date") or preview.get("date"),
         "provider_used": preview.get("provider_used"),
         "credibility": credibility,
         "credibility_gate": gate,
+        "professional_model_score": pro_score,
         "intelligence_coverage": build_intelligence_coverage_table(preview),
         "best_parlay": best,
         "no_combo_reason": optimizer.get("no_combo_reason") or best.get("no_combo_reason") or gate.get("reason_zh", ""),
         "conclusions_zh": conclusions,
         "final_call_zh": _final_call(credibility, best, p2_count, p3_count),
+        "post_match_review_policy_zh": _post_match_review_policy(best),
+        "path_to_95_zh": pro_score.get("missing_to_95", []),
         "fixed_language_zh": "所有结论使用观察、纸面模拟和风险诊断语言，不提供真实交易动作。",
         "disclaimer": "严厉交易者复盘不构成投注建议，不提供投注、下单、支付、代购或自动化购彩能力。",
     }
+
+
+def _has_paper_candidate(candidate: dict) -> bool:
+    if not isinstance(candidate, dict) or not candidate:
+        return False
+    status = str(candidate.get("status") or candidate.get("selection_status") or "")
+    return bool(candidate.get("legs") or candidate.get("match")) and status not in {"empty", "missing"}
+
+
+def _paper_combo_review_line(label: str, candidate: dict) -> str:
+    legs = candidate.get("legs") or candidate.get("match") or "候选腿待补齐"
+    reason = (
+        candidate.get("selected_reason_zh")
+        or candidate.get("review_focus_zh")
+        or candidate.get("reject_reason")
+        or candidate.get("hit_rate_discipline_zh")
+        or "用于检查组合纪律是否过严，以及赛后是否需要调整拒绝规则。"
+    )
+    return (
+        f"没有通过门控的强{label}，但每日{label}纸面候选已进入赛后复盘：{legs}。"
+        f"复盘重点：{reason}"
+    )
+
+
+def _post_match_review_policy(best: dict) -> str:
+    daily_2x1 = best.get("daily_2x1_candidate") or {}
+    daily_3x1 = best.get("daily_3x1_candidate") or {}
+    tracked = []
+    if _has_paper_candidate(daily_2x1):
+        tracked.append("每日2串1纸面候选")
+    if _has_paper_candidate(daily_3x1):
+        tracked.append("每日3串1纸面候选")
+    if not tracked:
+        return "赛后复盘会审核单关、被拒组合和已有学习样本；若没有纸面组合候选，会记录为空样本而不是假装有组合。"
+    return "赛后复盘必须审核" + "、".join(tracked) + "，即使它们未通过可信度门控；目的在于验证系统是否过度拒绝组合。"
 
 
 def _final_call(credibility: dict, best: dict, p2_count: int, p3_count: int) -> str:

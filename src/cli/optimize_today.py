@@ -5,6 +5,7 @@ import json
 import sys
 
 from src.intelligence.fusion import build_intelligence_preview
+from src.learning.daily_snapshots import build_daily_decision_board, save_daily_snapshot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
             "no_combo_reason": result.get("no_combo_reason") or (payload.get("credibility_gate", {}) or {}).get("reason_zh", ""),
             "warnings": payload.get("warnings", []),
         })
+        result["snapshot_status"] = save_daily_snapshot(payload, result, prepare_learning=True)
+        result["post_match_review_status"] = (build_daily_decision_board(result.get("selected_date") or result.get("date")).get("yesterday_review") or {})
+        result["strategy_adjustments_applied"] = _strategy_adjustments_applied(result)
         if args.format == "json":
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -50,6 +54,24 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(message, file=sys.stderr)
         return 1
+
+
+def _strategy_adjustments_applied(result: dict) -> list[dict]:
+    rows = []
+    for group in (result.get("candidate_rankings") or {}).values():
+        if not isinstance(group, list):
+            continue
+        for row in group:
+            rows.extend(row.get("strategy_adjustments_applied", []) or [])
+    out = []
+    seen = set()
+    for row in rows:
+        key = (row.get("key"), row.get("action"), row.get("label_zh"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out[:12]
 
 
 if __name__ == "__main__":

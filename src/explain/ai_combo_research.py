@@ -1163,7 +1163,7 @@ def _single_note(item: dict, missing: list) -> str:
 
 
 def _combo_note(item: dict, gate: dict, combo_type: str = "2串1") -> str:
-    if item.get("status") == "入选":
+    if item.get("status") == "通过门控":
         return f"{combo_type} 已进入纸面观察，但仍要逐腿复核赔率、伤停、首发和天气。"
     reason = item.get("reject_reason") or item.get("message_zh") or gate.get("reason_zh")
     return reason or f"{combo_type} 当前未通过可信度、相关性、赔率覆盖或风险纪律，不强行组合。"

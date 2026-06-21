@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.intelligence.missing_info import build_missing_info_from_preview
 from src.intelligence.coverage_status import normalize_coverage_status
+from src.audit.pro_model_score import build_professional_model_score
 
 
 def audit_credibility(preview: dict | None = None, optimizer_result: dict | None = None, backtest_result: dict | None = None, operation_result: dict | None = None) -> dict:
@@ -49,7 +50,7 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
         high_risk = [item for item in all_selected if str(item.get("risk_level", "medium")) in {"high", "very_high"} or item.get("legs")]
         if thin:
             score -= 8
-            reasons.append("部分入选观察 Edge/EV 较薄，高 EV 不等于高可信。")
+            reasons.append("部分通过门控观察 Edge/EV 较薄，高 EV 不等于高可信。")
             must_not.append("不要只因为 EV 为正就提高信心。")
         if high_risk:
             score -= min(12, len(high_risk) * 3)
@@ -101,6 +102,7 @@ def audit_credibility(preview: dict | None = None, optimizer_result: dict | None
         "prematch_workflow": preview.get("prematch_workflow", {}),
         "disclaimer": "可信度审计只用于观察信号和风险诊断，不构成投注建议。",
     }
+    result["professional_model_score"] = build_professional_model_score(preview, optimizer_result, result)
     result["credibility_gate"] = build_credibility_gate(result)
     return result
 
@@ -159,19 +161,21 @@ def _coverage_penalty(preview: dict) -> tuple[float, list[str]]:
     rows = ((preview.get("source_coverage") or {}).get("match_coverage") or [])
     if not rows:
         return 0.0, []
+    workflow = preview.get("prematch_workflow") or {}
+    is_t_plus = str(workflow.get("stage") or "").startswith("t_plus_")
     penalty = 0.0
     counts = {"checked_empty": 0, "fallback_estimated": 0, "not_connected": 0, "unknown": 0, "error": 0}
     for row in rows:
         for key in ("injuries", "lineup", "weather", "news"):
             status = normalize_coverage_status((row.get(key) or {}).get("status"))
             if status == "checked_empty":
-                penalty += 1.0
+                penalty += 0.5 if is_t_plus else 1.0
                 counts[status] += 1
             elif status == "fallback_estimated":
-                penalty += 3.0
+                penalty += 1.5 if is_t_plus and key in {"lineup", "weather"} else 3.0
                 counts[status] += 1
             elif status in {"not_connected", "unknown"}:
-                penalty += 4.0
+                penalty += 2.0 if is_t_plus and key in {"lineup", "weather"} else 4.0
                 counts[status] += 1
             elif status == "error":
                 penalty += 5.0
@@ -185,7 +189,10 @@ def _coverage_penalty(preview: dict) -> tuple[float, list[str]]:
         reasons.append(f"{counts['not_connected'] + counts['unknown']} 项情报未接入或未知，降低可信度。")
     if counts["error"]:
         reasons.append(f"{counts['error']} 项情报查询失败，降低可信度。")
-    return min(16.0, penalty), reasons
+    cap = 10.0 if is_t_plus else 16.0
+    if is_t_plus and reasons:
+        reasons.append("T+1 阶段对首发、临场天气等待确认项采用较轻扣分，赛日复核时再提高权重。")
+    return min(cap, penalty), reasons
 
 
 def _has_many_weak_coverage(preview: dict) -> bool:

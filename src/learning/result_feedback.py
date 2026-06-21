@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 
+from src.learning.competition_segments import classify_competition_segment
 from src.learning.odds_bucket_calibrator import bayesian_bucket_rate
 from src.learning.signal_classifier import classify_signal
 
@@ -19,7 +20,10 @@ def evaluate_observation_hit(observation: dict, match_result: dict) -> bool | No
     if play in {"had", "胜平负"}:
         return direction in {actual, _outcome_zh(actual)}
     if play in {"hhad", "让球胜平负"}:
-        return direction == str(match_result.get("actual_handicap_outcome_zh") or "")
+        handicap_result = str(match_result.get("actual_handicap_outcome_zh") or "").strip()
+        if not handicap_result or handicap_result == "未知":
+            return None
+        return direction == handicap_result
     if play == "total_goals":
         return direction.endswith(str(match_result.get("total_goals")))
     if play == "correct_score":
@@ -34,6 +38,7 @@ def build_feedback_report(feedback: dict) -> dict:
     for match in matches:
         result = match.get("result", {}) or {}
         for obs in match.get("observations", []) or []:
+            segment = classify_competition_segment({**match, **obs})
             hit = evaluate_observation_hit(obs, result)
             classification = classify_signal(obs, match.get("intelligence_score"), use_history=False)
             probability_scores = _probability_scores(classification.get("calibrated_prob"), hit)
@@ -45,7 +50,9 @@ def build_feedback_report(feedback: dict) -> dict:
                 bucket_stats[bucket]["hits"] += 1 if hit else 0
             rows.append({
                 "date": match.get("date") or feedback.get("date"),
+                "league": obs.get("league") or match.get("league"),
                 "match": match.get("match") or f"{match.get('home_team','')} vs {match.get('away_team','')}",
+                **segment,
                 "play_type": obs.get("play_type"),
                 "direction": obs.get("direction") or obs.get("outcome_label"),
                 "odds": obs.get("odds") or obs.get("official_odds"),

@@ -79,6 +79,11 @@ def test_research_archive_saves_ai_telemetry_and_learning_pack(tmp_path, monkeyp
         "token_out": 180,
         "token_total": 780,
         "ai_summary": {"provider": "deepseek", "text": "DS 研究摘要"},
+        "structured_notes": {
+            "single_notes": [{"target": "单关A", "note_zh": "市场可能低估该方向。"}],
+            "combo_notes": [{"target": "2串1A", "note_zh": "组合风险需要复盘。"}],
+            "rejected_combo_notes": [{"target": "被拒A", "note_zh": "相关性过高。"}],
+        },
         "ai_cost_ledger": {"deepseek_call_count": 1, "message_zh": "本次调用 DS Pro 1 次。"},
     }
     saved = save_research_archive(preview, optimizer, ai_research, output_dir="data/research_archive")
@@ -89,8 +94,37 @@ def test_research_archive_saves_ai_telemetry_and_learning_pack(tmp_path, monkeyp
     assert saved["observations_path"]
     assert saved["results_path"]
     assert saved["closing_odds_path"]
+    assert saved["clv_pending_count"] >= 1
     archive = saved["archive"]
+    assert archive["clv_followup"]["pending_count"] >= 1
+    assert archive["clv_followup"]["priority_rows"][0]["status"] == "pending_closing_odds"
+    assert "closing_odds" in archive["clv_followup"]["field_requirements"]
     assert archive["daily_candidates"]["daily_2x1_candidate"]["learning_track"] == "daily_2x1_candidate"
+    assert archive["ai_research"]["verifiable_hypotheses"]
+    assert archive["ai_research"]["verifiable_hypotheses"][0]["ai_factor"]
+    assert archive["ai_research"]["verifiable_hypotheses"][0]["ai_factor_zh"]
+    assert archive["ai_research"]["verifiable_hypotheses"][0]["validation_rule_zh"]
     latest = load_latest_research_archive("2026-06-19", archive_dir="data/research_archive")
     assert latest["status"] == "available"
     assert latest["latest"]["token_total"] == 780
+    assert latest["latest"]["verifiable_hypothesis_count"] >= 1
+
+
+def test_research_archive_keeps_3x1_ai_hypotheses_separate(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    preview, optimizer = _preview_and_optimizer()
+    saved = save_research_archive(
+        preview,
+        optimizer,
+        {
+            "structured_notes": {
+                "combo_notes": [
+                    {"target": "3串1A", "note_zh": "3串1 只作极高风险纸面观察。"},
+                ],
+            },
+        },
+        output_dir="data/research_archive",
+    )
+    hypotheses = saved["archive"]["ai_research"]["verifiable_hypotheses"]
+    assert hypotheses[0]["category"] == "daily_3x1_candidate"
+    assert hypotheses[0]["label_zh"] == "3串1假设"

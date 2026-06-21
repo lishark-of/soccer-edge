@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.learning.result_feedback import build_feedback_report, load_feedback
+from src.learning.ai_hypothesis_review import build_ai_hypothesis_review_history
 from src.learning.odds_bucket_calibrator import bayesian_bucket_rate
 from src.market.clv import build_clv_history
 
@@ -48,9 +49,12 @@ def build_learning_history(feedback_dir: str | Path | None = None, include_fixtu
     rejected_combo_rows = [row for row in rows if row.get("learning_track") == "rejected_combo"]
     bucket_rows = _aggregate_buckets(settled)
     category_rows = _aggregate_categories(settled)
+    play_type_rows = aggregate_play_type_rows(settled)
+    competition_rows = aggregate_competition_segment_rows(settled)
     probability_quality = _aggregate_probability_quality(settled)
     calibration_bins = _aggregate_calibration_bins(settled)
-    clv_history = build_clv_history()
+    clv_history = _safe_build_clv_history(errors)
+    ai_review_history = _safe_build_ai_review_history(errors)
     daily_metrics = _daily_metrics(rows, clv_history.get("rows", []) or [])
     window_metrics = _window_metrics(rows, clv_history.get("rows", []) or [], daily_metrics)
     latest_daily = daily_metrics[0] if daily_metrics else {}
@@ -78,9 +82,12 @@ def build_learning_history(feedback_dir: str | Path | None = None, include_fixtu
             "average_clv_pct": clv_history.get("average_clv_pct"),
             "summary_zh": clv_history.get("summary_zh", ""),
         },
+        "ai_hypothesis_review_history": ai_review_history,
         "calibration_bins": calibration_bins,
         "bucket_rows": bucket_rows,
         "category_rows": category_rows,
+        "play_type_rows": play_type_rows,
+        "competition_segment_rows": competition_rows,
         "daily_metrics": daily_metrics,
         "window_metrics": window_metrics,
         "latest_daily_summary_zh": _daily_summary_zh(latest_daily),
@@ -89,13 +96,220 @@ def build_learning_history(feedback_dir: str | Path | None = None, include_fixtu
         "window_digests": window_digests,
         "daily_report": daily_report,
         "window_reports": window_reports,
-        "lessons": _lessons(bucket_rows, category_rows, len(settled), probability_quality),
+        "strategy_adjustments": build_strategy_adjustments(
+            play_type_rows=play_type_rows,
+            competition_rows=competition_rows,
+            category_rows=category_rows,
+            bucket_rows=bucket_rows,
+            combo_discipline=_combo_discipline_history(rejected_combo_rows, combo_reviews),
+            probability_quality=probability_quality,
+            clv_summary=clv_history,
+            ai_review_history=ai_review_history,
+            settled_count=len(settled),
+        ),
+        "lessons": _lessons(bucket_rows, category_rows, play_type_rows, len(settled), probability_quality),
         "next_actions_zh": [
             "每天赛后把观察快照和赛果生成 feedback JSON，放入 data/learning_feedback/。",
             "累计样本不足时，模型更靠近市场概率；高赔率冷门保持降权。",
-            "当某个赔率段长期命中率稳定后，再逐步调整排序权重。",
+            "当某个赔率段或玩法长期命中率稳定后，再逐步调整排序权重。",
         ],
         "disclaimer": "累计学习只用于模型校准和纸面复盘，不构成投注建议。",
+    }
+
+
+def build_strategy_adjustments(
+    *,
+    play_type_rows: list[dict],
+    category_rows: list[dict],
+    bucket_rows: list[dict],
+    combo_discipline: dict,
+    probability_quality: dict,
+    clv_summary: dict,
+    settled_count: int,
+    competition_rows: list[dict] | None = None,
+    ai_review_history: dict | None = None,
+) -> list[dict]:
+    adjustments: list[dict] = []
+    for row in (ai_review_history or {}).get("factor_rows", []) or []:
+        reviewed = int(row.get("reviewed") or 0)
+        failed_rate = _float_or_none(row.get("failed_rate"))
+        if reviewed >= 5 and failed_rate is not None and failed_rate >= 0.40:
+            adjustments.append(
+                _strategy_adjustment(
+                    key=f"ai_factor_{row.get('ai_factor')}_downweight",
+                    label=f"降低AI因子：{row.get('ai_factor_zh') or row.get('ai_factor')}",
+                    action="downweight_ai_factor",
+                    priority=83,
+                    confidence=0.66 if reviewed >= 12 else 0.54,
+                    target={"ai_factor": row.get("ai_factor")},
+                    reason=f"AI 因子「{row.get('ai_factor_zh') or row.get('ai_factor')}」已有 {reviewed} 条复盘，失败率 {_pct_text(failed_rate)}，不应继续提高同类候选自信。",
+                    effect="下一轮同类 AI 因子候选只作辅助解释，不能凭摘要提高排序。",
+                )
+            )
+    for row in competition_rows or []:
+        attempts = int(row.get("attempts") or 0)
+        roi = _float_or_none(row.get("paper_roi"))
+        brier = _float_or_none(row.get("brier_score"))
+        if attempts >= 10 and ((roi is not None and roi < -0.03) or (brier is not None and brier > 0.30)):
+            adjustments.append(
+                _strategy_adjustment(
+                    key=f"competition_{row.get('competition_segment')}_downweight",
+                    label=f"降低{row.get('label_zh') or row.get('competition_segment')}语境自信",
+                    action="downweight_competition_segment",
+                    priority=85,
+                    confidence=0.64 if attempts >= 30 else 0.52,
+                    target={"competition_segment": row.get("competition_segment")},
+                    reason=f"{row.get('label_zh') or row.get('competition_segment')} 历史 ROI {_pct_text(roi)}，Brier {brier if brier is not None else 'N/A'}；该赛事语境暂不应和常规联赛同权重。",
+                    effect="下一轮同类赛事候选需要更强市场一致性、情报覆盖和稳健价值下沿。",
+                )
+            )
+    for row in play_type_rows:
+        attempts = int(row.get("attempts") or 0)
+        roi = _float_or_none(row.get("paper_roi"))
+        brier = _float_or_none(row.get("brier_score"))
+        if attempts >= 10 and ((roi is not None and roi < -0.02) or (brier is not None and brier > 0.28)):
+            adjustments.append(
+                _strategy_adjustment(
+                    key=f"play_type_{row.get('play_type')}_downweight",
+                    label=f"降低{row.get('label_zh') or row.get('play_type')}权重",
+                    action="downweight_play_type",
+                    priority=86,
+                    confidence=0.66 if attempts >= 30 else 0.52,
+                    target={"play_type": row.get("play_type")},
+                    reason=f"{row.get('label_zh') or row.get('play_type')} 历史 ROI {_pct_text(roi)}，Brier {brier if brier is not None else 'N/A'}，不应继续机械刷屏。",
+                    effect="优化器应降低该玩法排序分，并要求更多 CLV/赛后样本后再恢复权重。",
+                )
+            )
+    longshot = next((row for row in category_rows if row.get("category") == "longshot_watch"), None)
+    if longshot and int(longshot.get("attempts") or 0) >= 5 and int(longshot.get("hits") or 0) <= 0:
+        adjustments.append(
+            _strategy_adjustment(
+                key="longshot_gate_tighten",
+                label="收紧高赔率冷门门槛",
+                action="tighten_longshot_gate",
+                priority=82,
+                confidence=0.58,
+                target={"odds_min": 6.0},
+                reason="冷门观察已有样本但暂未兑现，高赔率不能因为表面 EV 被放大。",
+                effect="赔率 >= 6 的候选继续保留观察，但默认不做串联核心。",
+            )
+        )
+    weak_buckets = [row for row in bucket_rows if int(row.get("attempts") or 0) >= 5 and int(row.get("hits") or 0) <= 0]
+    if weak_buckets:
+        bucket = weak_buckets[0]
+        adjustments.append(
+            _strategy_adjustment(
+                key=f"odds_bucket_{bucket.get('bucket')}_prior_down",
+                label=f"降低{bucket.get('bucket_label_zh') or bucket.get('bucket')}先验",
+                action="downweight_odds_bucket",
+                priority=74,
+                confidence=0.54,
+                target={"bucket": bucket.get("bucket")},
+                reason=f"{bucket.get('bucket_label_zh') or bucket.get('bucket')} 已有 {bucket.get('attempts')} 条样本但暂未命中。",
+                effect="下一次同赔率段候选应更靠近市场概率，减少模型自信。",
+            )
+        )
+    combo = combo_discipline or {}
+    if int(combo.get("over_strict_candidate_count") or 0) > 0:
+        adjustments.append(
+            _strategy_adjustment(
+                key="review_combo_gate_over_strict",
+                label="复查组合门控是否过严",
+                action="review_combo_gate",
+                priority=70,
+                confidence=0.50,
+                target={"rule": "combo_gate"},
+                reason=f"已有 {combo.get('over_strict_candidate_count')} 条被拒组合赛后全中，需要复查当时被拒原因。",
+                effect="不是直接放宽组合，而是定位是相关性、玩法集中、可信度还是命中概率门槛过严。",
+            )
+        )
+    if int(settled_count or 0) < 30:
+        adjustments.append(
+            _strategy_adjustment(
+                key="sample_size_guard",
+                label="保持小样本保护",
+                action="keep_small_sample_guard",
+                priority=68,
+                confidence=0.80,
+                target={"settled_target": 30},
+                reason=f"当前已结算 {settled_count} 条，未到 30 条稳定样本。",
+                effect="学习建议只轻微影响排序，不自动大幅调权。",
+            )
+        )
+    avg_clv = _float_or_none((clv_summary or {}).get("average_clv_pct"))
+    clv_count = int((clv_summary or {}).get("settled_count") or 0)
+    for row in (clv_summary or {}).get("play_type_rows", []) or []:
+        attempts = int(row.get("attempts") or 0)
+        avg = _float_or_none(row.get("average_clv_pct"))
+        if attempts >= 8 and avg is not None and avg < -0.015:
+            adjustments.append(
+                _strategy_adjustment(
+                    key=f"clv_play_type_{row.get('play_type')}_downweight",
+                    label=f"降低{row.get('label_zh') or row.get('play_type')}CLV自信",
+                    action="downweight_play_type",
+                    priority=89,
+                    confidence=0.68 if attempts >= 20 else 0.56,
+                    target={"play_type": row.get("play_type")},
+                    reason=f"{row.get('label_zh') or row.get('play_type')} 已有 {attempts} 条 CLV 样本，平均 CLV {_pct_text(avg)}，说明该玩法赛前价格暂未跑赢收盘市场。",
+                    effect="下一轮同玩法候选需要更强市场一致性、稳健 Edge 和情报支撑。",
+                )
+            )
+    for row in (clv_summary or {}).get("bucket_rows", []) or []:
+        attempts = int(row.get("attempts") or 0)
+        avg = _float_or_none(row.get("average_clv_pct"))
+        if attempts >= 8 and avg is not None and avg < -0.015:
+            adjustments.append(
+                _strategy_adjustment(
+                    key=f"clv_bucket_{row.get('signal_bucket') or row.get('bucket')}_downweight",
+                    label=f"降低{row.get('bucket_label_zh') or row.get('signal_bucket') or row.get('bucket')}CLV自信",
+                    action="downweight_odds_bucket",
+                    priority=87,
+                    confidence=0.66 if attempts >= 20 else 0.55,
+                    target={"bucket": row.get("signal_bucket") or row.get("bucket")},
+                    reason=f"{row.get('bucket_label_zh') or row.get('signal_bucket') or row.get('bucket')} 已有 {attempts} 条 CLV 样本，平均 CLV {_pct_text(avg)}，后续同赔率段不能只凭 EV 升级。",
+                    effect="下一轮同赔率段候选会被轻量降权，并要求概率下沿仍覆盖赔率。",
+                )
+            )
+    if clv_count >= 10 and avg_clv is not None and avg_clv < 0:
+        adjustments.append(
+            _strategy_adjustment(
+                key="negative_clv_reduce_confidence",
+                label="CLV 偏负，降低模型自信",
+                action="reduce_confidence_on_negative_clv",
+                priority=88,
+                confidence=0.70,
+                target={"average_clv_pct": avg_clv},
+                reason=f"已有 {clv_count} 条 CLV 样本，平均 CLV {_pct_text(avg_clv)}，说明赛前价格判断没有跑赢终盘。",
+                effect="高 EV 候选需要更强市场一致性和更高安全边际。",
+            )
+        )
+    if (probability_quality or {}).get("grade_zh") == "需要降权":
+        adjustments.append(
+            _strategy_adjustment(
+                key="probability_quality_downweight",
+                label="概率质量偏弱，降低模型概率权重",
+                action="downweight_model_probability",
+                priority=84,
+                confidence=0.64,
+                target={"brier_score": probability_quality.get("brier_score"), "log_loss": probability_quality.get("log_loss")},
+                reason=probability_quality.get("message_zh") or "Brier/Log Loss 显示概率质量偏弱。",
+                effect="模型概率应更靠近市场概率，避免过度自信。",
+            )
+        )
+    return sorted(adjustments, key=lambda row: (row["priority"], row["confidence"]), reverse=True)[:8]
+
+
+def _strategy_adjustment(key: str, label: str, action: str, priority: int, confidence: float, target: dict, reason: str, effect: str) -> dict:
+    return {
+        "key": key,
+        "label_zh": label,
+        "action": action,
+        "priority": priority,
+        "confidence": round(float(confidence), 6),
+        "target": target,
+        "reason_zh": reason,
+        "expected_effect_zh": effect,
+        "apply_mode_zh": "建议进入下一次排序的轻量调权；样本不足时只提示，不大幅改权重。",
     }
 
 
@@ -124,6 +338,170 @@ def probability_bin_hit_rates(feedback_dir: str | Path | None = None) -> dict[st
         }
         for row in history.get("calibration_bins", [])
     }
+
+
+def _safe_build_clv_history(errors: list[dict] | None = None) -> dict:
+    try:
+        payload = build_clv_history()
+    except Exception as exc:
+        if errors is not None:
+            errors.append({"path": "data/learning_clv", "message_zh": f"CLV 历史读取失败：{str(exc).splitlines()[0]}"})
+        return {
+            "files_loaded": 0,
+            "settled_count": 0,
+            "average_clv_pct": None,
+            "summary_zh": "CLV 历史暂不可用，学习历史仍保留命中率、ROI、Brier 和 Log Loss。",
+            "rows": [],
+        }
+    if not isinstance(payload, dict):
+        return {
+            "files_loaded": 0,
+            "settled_count": 0,
+            "average_clv_pct": None,
+            "summary_zh": "CLV 历史格式异常，暂不参与学习评分。",
+            "rows": [],
+        }
+    return payload
+
+
+def _safe_build_ai_review_history(errors: list[dict] | None = None) -> dict:
+    try:
+        payload = build_ai_hypothesis_review_history()
+    except Exception as exc:
+        if errors is not None:
+            errors.append({"path": "data/learning_ai_hypotheses", "message_zh": f"AI 假设历史读取失败：{str(exc).splitlines()[0]}"})
+        return {
+            "files_loaded": 0,
+            "reviewed_count": 0,
+            "factor_rows": [],
+            "summary_zh": "AI 假设历史暂不可用，学习历史仍保留赛果与 CLV。",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "files_loaded": 0,
+            "reviewed_count": 0,
+            "factor_rows": [],
+            "summary_zh": "AI 假设历史格式异常，暂不参与学习评分。",
+        }
+    return payload
+
+
+def aggregate_play_type_rows(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        play_type = str(row.get("play_type") or row.get("learning_track") or "unknown")
+        label = row.get("play_type_zh") or _play_type_label(play_type)
+        item = grouped.setdefault(
+            play_type,
+            {
+                "play_type": play_type,
+                "label_zh": label,
+                "attempts": 0,
+                "hits": 0,
+                "brier_sum": 0.0,
+                "brier_count": 0,
+                "log_loss_sum": 0.0,
+                "log_loss_count": 0,
+                "paper_staked": 0.0,
+                "paper_profit": 0.0,
+            },
+        )
+        item["attempts"] += 1
+        item["hits"] += 1 if row.get("hit") else 0
+        brier = _float_or_none(row.get("brier_score"))
+        if brier is not None:
+            item["brier_sum"] += brier
+            item["brier_count"] += 1
+        log_loss = _float_or_none(row.get("log_loss"))
+        if log_loss is not None:
+            item["log_loss_sum"] += log_loss
+            item["log_loss_count"] += 1
+        stake = _float_or_none(row.get("paper_stake"))
+        if stake is not None:
+            item["paper_staked"] += stake
+        profit = _float_or_none(row.get("settlement_profit"))
+        if profit is not None:
+            item["paper_profit"] += profit
+    out = []
+    for item in grouped.values():
+        attempts = int(item["attempts"])
+        hits = int(item["hits"])
+        paper_staked = float(item["paper_staked"])
+        paper_profit = float(item["paper_profit"])
+        hit_rate = hits / attempts if attempts else None
+        paper_roi = paper_profit / paper_staked if paper_staked > 0 else None
+        avg_brier = item["brier_sum"] / item["brier_count"] if item["brier_count"] else None
+        avg_log_loss = item["log_loss_sum"] / item["log_loss_count"] if item["log_loss_count"] else None
+        out.append(
+            {
+                "play_type": item["play_type"],
+                "label_zh": item["label_zh"],
+                "attempts": attempts,
+                "hits": hits,
+                "hit_rate": round(hit_rate, 6) if hit_rate is not None else None,
+                "paper_staked": round(paper_staked, 2),
+                "paper_profit": round(paper_profit, 2),
+                "paper_roi": round(paper_roi, 6) if paper_roi is not None else None,
+                "brier_score": round(avg_brier, 6) if avg_brier is not None else None,
+                "log_loss": round(avg_log_loss, 6) if avg_log_loss is not None else None,
+                "sample_quality_zh": _play_type_sample_quality(attempts),
+                "message_zh": _play_type_message(item["play_type"], attempts, hits, paper_roi),
+                "model_action_zh": _play_type_model_action(item["play_type"], attempts, hit_rate, paper_roi),
+            }
+        )
+    return sorted(out, key=lambda row: (row.get("attempts", 0), row.get("hit_rate") or 0), reverse=True)
+
+
+def aggregate_competition_segment_rows(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        segment = str(row.get("competition_segment") or "unknown")
+        label = row.get("competition_segment_zh") or _competition_segment_label(segment)
+        item = grouped.setdefault(
+            segment,
+            {
+                "competition_segment": segment,
+                "label_zh": label,
+                "attempts": 0,
+                "hits": 0,
+                "brier_sum": 0.0,
+                "brier_count": 0,
+                "paper_staked": 0.0,
+                "paper_profit": 0.0,
+            },
+        )
+        item["attempts"] += 1
+        item["hits"] += 1 if row.get("hit") else 0
+        brier = _float_or_none(row.get("brier_score"))
+        if brier is not None:
+            item["brier_sum"] += brier
+            item["brier_count"] += 1
+        stake = _float_or_none(row.get("paper_stake"))
+        if stake is not None:
+            item["paper_staked"] += stake
+        profit = _float_or_none(row.get("settlement_profit"))
+        if profit is not None:
+            item["paper_profit"] += profit
+    out = []
+    for item in grouped.values():
+        attempts = int(item["attempts"])
+        hits = int(item["hits"])
+        staked = float(item["paper_staked"])
+        profit = float(item["paper_profit"])
+        roi = profit / staked if staked > 0 else None
+        brier = item["brier_sum"] / item["brier_count"] if item["brier_count"] else None
+        hit_rate = hits / attempts if attempts else None
+        out.append({
+            "competition_segment": item["competition_segment"],
+            "label_zh": item["label_zh"],
+            "attempts": attempts,
+            "hits": hits,
+            "hit_rate": round(hit_rate, 6) if hit_rate is not None else None,
+            "paper_roi": round(roi, 6) if roi is not None else None,
+            "brier_score": round(brier, 6) if brier is not None else None,
+            "message_zh": _competition_segment_message(item["label_zh"], attempts, roi, brier),
+        })
+    return sorted(out, key=lambda row: (row.get("attempts", 0), row.get("hit_rate") or 0), reverse=True)
 
 
 def _aggregate_buckets(rows: list[dict]) -> list[dict]:
@@ -332,7 +710,103 @@ def _category_message(category: str, hits: int, attempts: int) -> str:
     return "已有命中样本，但仍需继续累计。"
 
 
-def _lessons(bucket_rows: list[dict], category_rows: list[dict], settled_count: int, probability_quality: dict | None = None) -> list[str]:
+def _play_type_label(play_type: str) -> str:
+    labels = {
+        "had": "胜平负",
+        "hhad": "让球胜平负",
+        "total_goals": "总进球",
+        "correct_score": "比分",
+        "single": "单关",
+        "parlay_2x1": "2串1",
+        "parlay_3x1": "3串1",
+        "rejected_combo": "被拒组合",
+        "unknown": "未知玩法",
+    }
+    return labels.get(str(play_type or "unknown"), str(play_type or "未知玩法"))
+
+
+def _competition_segment_label(segment: str) -> str:
+    return {
+        "national_team": "国家队/国际赛",
+        "friendly": "友谊赛",
+        "cup": "杯赛/淘汰赛",
+        "club_league": "俱乐部联赛",
+        "unknown": "未知赛事类型",
+    }.get(str(segment or "unknown"), str(segment or "未知赛事类型"))
+
+
+def _competition_segment_message(label: str, attempts: int, roi: float | None, brier: float | None) -> str:
+    if attempts < 10:
+        return f"{label} 只有 {attempts} 条样本，只作语境提示，不大幅调权。"
+    if roi is not None and roi < -0.03:
+        return f"{label} 纸面 ROI 偏弱，下一轮同类赛事需要更严格的市场一致性和情报覆盖。"
+    if brier is not None and brier > 0.30:
+        return f"{label} Brier 偏高，说明该语境下概率质量需要降权。"
+    return f"{label} 已开始累计语境样本，继续结合 CLV 和 Brier 验证。"
+
+
+def _play_type_sample_quality(attempts: int) -> str:
+    if attempts >= 80:
+        return "样本较充分"
+    if attempts >= 30:
+        return "样本可参考"
+    if attempts >= 10:
+        return "样本偏少"
+    return "样本很少"
+
+
+def _play_type_message(play_type: str, attempts: int, hits: int, paper_roi: float | None) -> str:
+    label = _play_type_label(play_type)
+    if attempts <= 0:
+        return f"{label} 暂无已结算样本。"
+    if attempts < 10:
+        return f"{label} 只有 {attempts} 条样本，只能提示方向，不能据此加大权重。"
+    if paper_roi is not None and paper_roi < -0.05:
+        return f"{label} 纸面 ROI 偏弱，后续排序应先降权或复核赔率段。"
+    if hits <= 0:
+        return f"{label} 当前未命中，不能继续凭当天 EV 放大权重。"
+    return f"{label} 已有可复盘样本，下一步看命中率、ROI、Brier/Log Loss 是否同向支持。"
+
+
+def _play_type_model_action(play_type: str, attempts: int, hit_rate: float | None, paper_roi: float | None) -> str:
+    label = _play_type_label(play_type)
+    if attempts < 10:
+        return f"{label} 暂不调权，继续累计赛后样本。"
+    if paper_roi is not None and paper_roi < 0:
+        return f"{label} 先降权观察，避免玩法偏置继续放大。"
+    if hit_rate is not None and hit_rate >= 0.55:
+        return f"{label} 可保留观察，但还要用 CLV 和概率校准确认。"
+    return f"{label} 保守保留，等待更多赛果和收盘赔率验证。"
+
+
+def _play_type_lesson(play_type_rows: list[dict]) -> str:
+    if not play_type_rows:
+        return ""
+    top = play_type_rows[0]
+    label = top.get("label_zh") or top.get("play_type") or "某玩法"
+    attempts = int(top.get("attempts") or 0)
+    if attempts < 10:
+        return f"当前最常出现的玩法是 {label}，但样本只有 {attempts} 条，不足以证明它优于其他玩法。"
+    weak = [row for row in play_type_rows if (row.get("paper_roi") is not None and float(row.get("paper_roi")) < 0)]
+    if weak:
+        return f"{weak[0].get('label_zh') or '某玩法'} 的纸面 ROI 偏弱，后续需要降权或复核为什么模型仍频繁选择它。"
+    return f"玩法维度已开始累计：{label} 样本最多。后续会用命中率、ROI 和 Brier/Log Loss 共同判断是否存在玩法偏置。"
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lessons(
+    bucket_rows: list[dict],
+    category_rows: list[dict],
+    play_type_rows: list[dict],
+    settled_count: int,
+    probability_quality: dict | None = None,
+) -> list[str]:
     if settled_count <= 0:
         return ["暂无可结算样本，模型不会假装已经学习。"]
     lessons = [f"累计已结算观察 {settled_count} 条，样本仍偏少，先做保守校准。"]
@@ -342,6 +816,9 @@ def _lessons(bucket_rows: list[dict], category_rows: list[dict], settled_count: 
     weak_buckets = [row for row in bucket_rows if row.get("attempts", 0) and not row.get("hits")]
     if weak_buckets:
         lessons.append("未命中赔率段会被贝叶斯先验拉回，避免单次高 EV 过度影响排序。")
+    play_lesson = _play_type_lesson(play_type_rows)
+    if play_lesson:
+        lessons.append(play_lesson)
     if probability_quality and probability_quality.get("message_zh"):
         lessons.append(probability_quality["message_zh"])
     return lessons
@@ -434,6 +911,7 @@ def _metrics_row(
         "log_loss": round(avg_log_loss, 6) if avg_log_loss is not None else None,
         "clv_settled_count": len(clv_settled),
         "average_clv_pct": round(avg_clv, 6) if avg_clv is not None else None,
+        "play_type_rows": aggregate_play_type_rows(settled),
         "message_zh": _metrics_message(label_zh, len(settled), paper_staked, avg_clv),
     }
 

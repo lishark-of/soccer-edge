@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.learning.competition_segments import classify_competition_segment
 from src.optimizer.best_parlay import build_best_parlay_summary
 
 
@@ -86,8 +87,10 @@ def save_observation_snapshot(preview: dict, output_dir: str | Path = "data/lear
 
 
 def _compact(row: dict, fallback_play_type: str, selected_date: str | None) -> dict:
+    segment = classify_competition_segment(row)
     return {
         "date": row.get("date") or selected_date,
+        "league": row.get("league") or row.get("competition") or row.get("tournament"),
         "match_id": row.get("match_id"),
         "match_no": row.get("match_no"),
         "match": row.get("match") or f"{row.get('home_team','')} vs {row.get('away_team','')}".strip(),
@@ -109,6 +112,7 @@ def _compact(row: dict, fallback_play_type: str, selected_date: str | None) -> d
         "signal_category_zh": row.get("signal_category_zh"),
         "decision_label_zh": row.get("decision_label_zh"),
         "learning_score_summary_zh": row.get("learning_score_summary_zh"),
+        **segment,
     }
 
 
@@ -116,8 +120,10 @@ def _compact_combo(row: dict, combo_type: str, selected_date: str | None) -> dic
     legs = row.get("legs", [])
     leg_rows = legs if isinstance(legs, list) else []
     match_label = "；".join(_leg_label(leg) for leg in leg_rows) if leg_rows else str(row.get("match") or row.get("legs") or "")
+    segment = classify_competition_segment(row if not leg_rows else leg_rows[0])
     return {
         "date": row.get("date") or selected_date,
+        "league": row.get("league") or row.get("competition") or row.get("tournament"),
         "type": combo_type,
         "candidate_type": combo_type,
         "match": match_label,
@@ -135,6 +141,7 @@ def _compact_combo(row: dict, combo_type: str, selected_date: str | None) -> dic
         "status": row.get("status") or row.get("selection_status") or "",
         "reject_reason": row.get("reject_reason") or row.get("discipline_summary_zh") or "",
         "learning_track": row.get("learning_track") or "selected_combo",
+        **segment,
     }
 
 
@@ -145,7 +152,7 @@ def _rejected_combo_rows(optimizer: dict, limit_per_type: int = 5) -> list[dict]
         picked = 0
         for row in rankings.get(combo_type, []) or []:
             status = str(row.get("status") or row.get("selection_status") or "")
-            if status.strip() == "入选" or status.lower() == "selected":
+            if status in {"selected", "selected_after_gate", "通过门控", "pass"} or status.lower() == "selected":
                 continue
             compact = _compact_combo({**row, "learning_track": "rejected_combo"}, combo_type, optimizer.get("date") or optimizer.get("selected_date"))
             compact["direction"] = "被拒组合复盘"

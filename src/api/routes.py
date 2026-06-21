@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 import tempfile
 import time
@@ -36,9 +37,11 @@ from src.intelligence.missing_info import build_missing_info_from_preview
 from src.market.clv import build_clv_tracking, build_clv_history, load_closing_odds_csv, load_observations_json, save_clv_review
 from src.learning.home_learning_view import build_home_learning_panel
 from src.learning.odds_education import build_odds_learning_view
+from src.learning.data_expansion import build_data_expansion_summary
 from src.learning.feedback_builder import build_feedback_from_files, save_feedback_from_files
 from src.learning.daily_learning_pack import prepare_daily_learning_pack, save_daily_learning_results, save_quick_learning_results
 from src.learning.history import build_learning_history
+from src.learning.daily_snapshots import auto_review_yesterday, build_daily_decision_board, load_latest_snapshot, refresh_t1_snapshot, save_daily_snapshot
 from src.learning.observation_snapshot import save_observation_snapshot
 from src.learning.research_archive import load_latest_research_archive, save_research_archive
 from src.learning.result_template import save_result_template_from_observations
@@ -71,6 +74,8 @@ from src.view_models.signal_explanation_view import build_signal_explanation_vie
 VERSION = "0.1.0-local"
 DISABLED_CAPABILITIES = ["betting", "payment", "order_placement", "proxy_purchase", "automation"]
 NEXT_AVAILABLE_VIEW_CACHE_TTL_SECONDS = 180
+NEXT_AVAILABLE_VIEW_STALE_TTL_SECONDS = 6 * 60 * 60
+NEXT_AVAILABLE_VIEW_CACHE_DIRNAME = "jc_edge_next_available_cache"
 AI_COMBO_RESEARCH_CACHE_TTL_SECONDS = 180
 AI_COMBO_RESEARCH_STALE_FALLBACK_TTL_SECONDS = 21600
 AI_COMBO_RESEARCH_CACHE_DIRNAME = "jc_edge_ai_combo_cache"
@@ -106,6 +111,38 @@ def _refresh_runtime_status_from_cached_ai_payload(payload: dict) -> None:
 def _ai_combo_research_cache_path(key: tuple) -> Path:
     digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
     return Path(tempfile.gettempdir()) / AI_COMBO_RESEARCH_CACHE_DIRNAME / f"{digest}.json"
+
+
+def _next_available_view_cache_path(key: tuple) -> Path:
+    digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
+    return Path(tempfile.gettempdir()) / NEXT_AVAILABLE_VIEW_CACHE_DIRNAME / f"{digest}.json"
+
+
+def _load_next_available_view_disk_cache(key: tuple, ttl_seconds: int, now: float | None = None) -> dict | None:
+    path = _next_available_view_cache_path(key)
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    created_at = float(raw.get("created_at", 0.0) or 0.0)
+    view = raw.get("view", {})
+    reference_now = time.time() if now is None else now
+    if not isinstance(view, dict):
+        return None
+    if created_at <= 0 or reference_now - created_at > ttl_seconds:
+        return None
+    return {"created_at": created_at, "view": view}
+
+
+def _persist_next_available_view_disk_cache(key: tuple, created_at: float, view: dict) -> None:
+    if not isinstance(view, dict) or not (view.get("selected_date") or view.get("date")):
+        return
+    path = _next_available_view_cache_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"created_at": created_at, "view": view}
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def _load_ai_combo_research_disk_cache(key: tuple, ttl_seconds: int, now: float | None = None) -> dict | None:
@@ -193,6 +230,7 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "intelligence_coverage",
                     "audit_user_journey",
                     "audit_credibility",
+                    "audit_professional_model_score",
                     "view_best_parlay",
                     "view_ai_combo_research",
                     "view_trader_review",
@@ -200,6 +238,12 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
                     "view_clv_review",
                     "view_backtest_credibility",
                     "view_phase2r_acceptance",
+                    "snapshot_today",
+                    "snapshot_latest",
+                    "snapshot_refresh_t1",
+                    "learning_auto_review_yesterday",
+                    "view_daily_decision_board",
+                    "view_data_expansion",
                 ],
                 "disabled_capabilities": DISABLED_CAPABILITIES,
                 "version": metadata["version"],
@@ -209,6 +253,8 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         )
     if path == "/api/llm/status":
         return success_response(llm_status_payload())
+    if path == "/api/view/data-expansion":
+        return success_response(build_data_expansion_summary(query.get("date")))
     if path == "/api/view/learning-history":
         payload = build_learning_history()
         return success_response(payload, [item.get("message_zh", "") for item in payload.get("errors", []) if item.get("message_zh")])
@@ -283,7 +329,14 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
     if path == "/api/view/next-available":
         view = _cached_next_available_view(query)
         _attach_research_archive_status(view)
+        _attach_daily_snapshot_status(view, query)
         return success_response(view, view.get("warnings", []))
+    if path == "/api/snapshot/today":
+        payload = load_latest_snapshot(query.get("date"))
+        return success_response(payload, [] if payload.get("status") == "available" else [payload.get("summary_zh", "")])
+    if path == "/api/snapshot/latest":
+        payload = load_latest_snapshot(query.get("date"))
+        return success_response(payload, [] if payload.get("status") == "available" else [payload.get("summary_zh", "")])
     if path == "/api/view/data-sources":
         payload = build_free_data_source_status()
         return success_response(payload, [])
@@ -346,6 +399,28 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         result = _run_intelligence_from_query(query)
         payload = audit_credibility(result, result.get("optimizer", {}))
         return success_response(payload, [])
+    if path == "/api/audit/professional-model-score":
+        result = _run_intelligence_from_query(query)
+        optimizer = result.get("optimizer", {}) or {}
+        credibility = result.get("credibility_audit") or audit_credibility(result, optimizer)
+        payload = {
+            "title": "职业模型评分审计",
+            "selected_date": result.get("selected_date") or result.get("date") or query.get("date"),
+            "provider_used": result.get("provider_used"),
+            "matches_count": result.get("matches_count", 0),
+            "risk_profile": optimizer.get("risk_profile") or query.get("risk_profile", "aggressive"),
+            "professional_model_score": credibility.get("professional_model_score", {}),
+            "credibility_score": credibility.get("credibility_score"),
+            "credibility_grade": credibility.get("grade"),
+            "credibility_gate": credibility.get("credibility_gate", result.get("credibility_gate", {})),
+            "next_best_actions": ((credibility.get("professional_model_score", {}) or {}).get("roadmap_to_95", {}) or {}).get("next_best_actions", []),
+            "missing_to_95": (credibility.get("professional_model_score", {}) or {}).get("missing_to_95", []),
+            "industry_benchmark_zh": (credibility.get("professional_model_score", {}) or {}).get("industry_benchmark_zh", []),
+            "research_sources_zh": (credibility.get("professional_model_score", {}) or {}).get("research_sources_zh", []),
+            "principles_zh": (credibility.get("professional_model_score", {}) or {}).get("principles_zh", []),
+            "disclaimer": "仅用于本地概率研究、纸面观察和模型审计，不提供真实投注、下单、支付或代购能力。",
+        }
+        return success_response(payload, result.get("warnings", []))
     if path == "/api/view/credibility-gate":
         result = _run_intelligence_from_query(query)
         payload = result.get("credibility_gate", {})
@@ -364,11 +439,13 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         return success_response(result, result.get("warnings", []))
     if path == "/api/view/optimizer":
         result = _run_optimizer_from_query(query)
-        run_ai = _truthy(query.get("run_ai")) if "run_ai" in query else True
+        _attach_optimizer_snapshot_status(result)
+        run_ai = _truthy(query.get("run_ai")) if "run_ai" in query else False
         if run_ai:
             result["ai_combo_research"] = _cached_ai_combo_research(result, query, True)
         view = build_optimizer_view(result)
         _attach_research_archive_status(view)
+        _attach_daily_snapshot_status(view, query)
         return success_response(view, view.get("warnings", []))
     if path == "/api/view/best-parlay":
         result = _run_optimizer_from_query(query)
@@ -395,6 +472,9 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
     if path == "/api/learning/auto-archive-research":
         payload = _auto_archive_research_from_query(query)
         return success_response(payload, payload.get("warnings", []))
+    if path == "/api/view/daily-decision-board":
+        payload = build_daily_decision_board(query.get("date"))
+        return success_response(payload, [] if payload.get("status") == "available" else [payload.get("summary_zh", "")])
     if path == "/api/view/research-archive":
         payload = load_latest_research_archive(query.get("date"), limit=_int_param(query, "limit", 12))
         return success_response(payload, [])
@@ -533,6 +613,18 @@ def dispatch_post_route(path: str, body: dict) -> dict:
             raise ApiError("validation_error", "请至少填写一场比赛的比分。")
         payload = save_quick_learning_results(observations_json, rows)
         return success_response(payload, [])
+    if path == "/api/snapshot/refresh-t1":
+        payload = refresh_t1_snapshot(
+            str((body or {}).get("provider") or "auto"),
+            (body or {}).get("date") or None,
+            bankroll=float((body or {}).get("bankroll") or 10000.0),
+            risk_profile=str((body or {}).get("risk_profile") or "aggressive"),
+            external_signals_path=(body or {}).get("external_signals") or (body or {}).get("signals_path") or None,
+        )
+        return success_response(payload, payload.get("warnings", []))
+    if path == "/api/learning/auto-review-yesterday":
+        payload = auto_review_yesterday((body or {}).get("date") or None)
+        return success_response(payload, [] if payload.get("status") in {"reviewed", "pending_results"} else [payload.get("summary_zh", "")])
     raise ApiError("not_found", f"unknown endpoint: {path}", status=404)
 
 
@@ -598,6 +690,40 @@ def _attach_research_archive_status(payload: dict) -> None:
 
 
 def _cached_next_available_view(query: dict[str, str]) -> dict:
+    query_date = query.get("date") or datetime.now().strftime("%Y-%m-%d")
+    key = (
+        query.get("provider", "auto"),
+        query_date,
+        str(_float_param(query, "bankroll", 10000.0)),
+        query.get("risk_profile", "aggressive"),
+        query.get("external_signals") or query.get("signals_path") or query.get("signals") or "",
+    )
+    now = time.time()
+    force_refresh = _truthy(query.get("refresh"))
+    if not force_refresh:
+        snapshot_preview = _usable_daily_snapshot_preview(query)
+        if snapshot_preview:
+            view = build_next_available_view(snapshot_preview)
+            view["cache_status"] = "daily_snapshot_hit"
+            view["cache_status_zh"] = "已读取真实 Sporttery 每日快照，后台可继续刷新。"
+            view["cache_age_seconds"] = 0
+            return view
+    if (_truthy(query.get("fast")) or _truthy(query.get("lightweight"))) and not force_refresh:
+        cached = _NEXT_AVAILABLE_VIEW_CACHE.get(key)
+        if cached and now - float(cached.get("created_at", 0.0)) <= NEXT_AVAILABLE_VIEW_CACHE_TTL_SECONDS:
+            view = dict(cached.get("view", {}))
+            view["cache_status"] = "fast_cache_hit"
+            view["cache_status_zh"] = "已先显示最近一次可用结果，后台可继续刷新。"
+            view["cache_age_seconds"] = round(now - float(cached.get("created_at", now)), 2)
+            return view
+        stale_cached = _load_next_available_view_disk_cache(key, NEXT_AVAILABLE_VIEW_STALE_TTL_SECONDS, now)
+        if stale_cached:
+            _NEXT_AVAILABLE_VIEW_CACHE[key] = stale_cached
+            view = dict(stale_cached.get("view", {}))
+            view["cache_status"] = "fast_stale_hit"
+            view["cache_status_zh"] = "已先显示最近一次成功快照，避免首页卡住。"
+            view["cache_age_seconds"] = round(now - float(stale_cached.get("created_at", now)), 2)
+            return view
     if _truthy(query.get("fast")) or _truthy(query.get("lightweight")):
         result = build_next_available_light_preview(
             query.get("provider", "auto"),
@@ -611,15 +737,7 @@ def _cached_next_available_view(query: dict[str, str]) -> dict:
         view["cache_status_zh"] = "首页轻量扫描，完整模型请进入赛前优化。"
         view["cache_age_seconds"] = 0
         return view
-    key = (
-        query.get("provider", "auto"),
-        query.get("date", ""),
-        str(_float_param(query, "bankroll", 10000.0)),
-        query.get("risk_profile", "aggressive"),
-        query.get("external_signals") or query.get("signals_path") or query.get("signals") or "",
-    )
-    now = time.time()
-    if not _truthy(query.get("refresh")):
+    if not force_refresh:
         cached = _NEXT_AVAILABLE_VIEW_CACHE.get(key)
         if cached and now - float(cached.get("created_at", 0.0)) <= NEXT_AVAILABLE_VIEW_CACHE_TTL_SECONDS:
             view = dict(cached.get("view", {}))
@@ -627,18 +745,71 @@ def _cached_next_available_view(query: dict[str, str]) -> dict:
             view["cache_status_zh"] = "已使用本地短时缓存，避免重复慢算。"
             view["cache_age_seconds"] = round(now - float(cached.get("created_at", now)), 2)
             return view
-    result = _run_next_available_from_query(query)
-    view = build_next_available_view(result)
-    view["cache_status"] = "miss"
-    view["cache_status_zh"] = "已重新计算明日预观察。"
-    view["cache_age_seconds"] = 0
-    _NEXT_AVAILABLE_VIEW_CACHE[key] = {"created_at": now, "view": dict(view)}
-    return view
+        disk_cached = _load_next_available_view_disk_cache(key, NEXT_AVAILABLE_VIEW_CACHE_TTL_SECONDS, now)
+        if disk_cached:
+            _NEXT_AVAILABLE_VIEW_CACHE[key] = disk_cached
+            view = dict(disk_cached.get("view", {}))
+            view["cache_status"] = "disk_hit"
+            view["cache_status_zh"] = "已复用最近一次成功快照，避免首页重复慢读。"
+            view["cache_age_seconds"] = round(now - float(disk_cached.get("created_at", now)), 2)
+            return view
+        stale_cached = _load_next_available_view_disk_cache(key, NEXT_AVAILABLE_VIEW_STALE_TTL_SECONDS, now)
+        if stale_cached:
+            _NEXT_AVAILABLE_VIEW_CACHE[key] = stale_cached
+            view = dict(stale_cached.get("view", {}))
+            view["cache_status"] = "stale_hit"
+            view["cache_status_zh"] = "已先展示最近一次可用快照，保证首页先打开；你仍可手动刷新拉新数据。"
+            view["cache_age_seconds"] = round(now - float(stale_cached.get("created_at", now)), 2)
+            warnings = list(view.get("warnings", []) or [])
+            warnings.append("当前先使用最近一次成功快照，避免首页因慢源卡住。")
+            view["warnings"] = list(dict.fromkeys(warnings))
+            return view
+    stale_cached = _load_next_available_view_disk_cache(key, NEXT_AVAILABLE_VIEW_STALE_TTL_SECONDS, now)
+    try:
+        result = _run_next_available_from_query(query)
+        view = build_next_available_view(result)
+        view["cache_status"] = "miss"
+        view["cache_status_zh"] = "已重新计算下一可售日观察。"
+        view["cache_age_seconds"] = 0
+        snapshot = {"created_at": now, "view": dict(view)}
+        _NEXT_AVAILABLE_VIEW_CACHE[key] = snapshot
+        _persist_next_available_view_disk_cache(key, now, view)
+        return view
+    except Exception as exc:
+        if stale_cached:
+            _NEXT_AVAILABLE_VIEW_CACHE[key] = stale_cached
+            view = dict(stale_cached.get("view", {}))
+            view["cache_status"] = "stale_fallback"
+            view["cache_status_zh"] = "本轮实时刷新较慢，已回退到最近一次成功快照。"
+            view["cache_age_seconds"] = round(now - float(stale_cached.get("created_at", now)), 2)
+            warnings = list(view.get("warnings", []) or [])
+            warnings.append(f"本轮实时刷新未完成，已保留最近一次成功结果：{str(exc)[:160]}")
+            view["warnings"] = list(dict.fromkeys(warnings))
+            return view
+        raise
 
 
 def _run_optimizer_from_query(query: dict[str, str]) -> dict:
+    if not _truthy(query.get("refresh")):
+        snapshot_preview = _usable_daily_snapshot_preview(query)
+        if snapshot_preview:
+            return _optimizer_result_from_preview(snapshot_preview, query)
     preview = _run_intelligence_from_query(query)
     return _optimizer_result_from_preview(preview, query)
+
+
+def _usable_daily_snapshot_preview(query: dict[str, str]) -> dict | None:
+    latest = load_latest_snapshot(query.get("date"))
+    snapshot = latest.get("snapshot") or {}
+    preview = snapshot.get("preview") or {}
+    if not preview:
+        return None
+    provider_used = str(snapshot.get("provider_used") or preview.get("provider_used") or "")
+    if provider_used == "sporttery":
+        return {**preview, "snapshot_status": latest, "snapshot_reused": True}
+    if query.get("provider") == "mock":
+        return {**preview, "snapshot_status": latest, "snapshot_reused": True}
+    return None
 
 
 def _cached_ai_combo_research(result: dict, query: dict[str, str], run_ai: bool) -> dict:
@@ -804,7 +975,82 @@ def _optimizer_result_from_preview(preview: dict, query: dict[str, str]) -> dict
         "warnings": list(dict.fromkeys(list(result.get("warnings", []) or []) + list(preview.get("warnings", []) or []))),
     })
     result["trader_review"] = build_trader_review(preview, result)
+    result["snapshot_status"] = _safe_save_daily_snapshot(preview, result, prepare_learning=False)
+    result["post_match_review_status"] = _latest_post_match_status(result.get("selected_date") or result.get("date"))
+    result["strategy_adjustments_applied"] = _optimizer_strategy_adjustments(result)
     return result
+
+
+def _safe_save_daily_snapshot(preview: dict, optimizer: dict, *, prepare_learning: bool = False) -> dict:
+    try:
+        return save_daily_snapshot(preview, optimizer, prepare_learning=prepare_learning)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "status_zh": "每日快照保存失败",
+            "message_zh": str(exc).splitlines()[0][:180],
+        }
+
+
+def _attach_optimizer_snapshot_status(result: dict) -> None:
+    preview = {
+        "selected_date": result.get("selected_date") or result.get("date"),
+        "date": result.get("date"),
+        "provider": result.get("provider"),
+        "provider_used": result.get("provider_used"),
+        "matches_count": result.get("matches_analyzed"),
+        "data_source_status": result.get("data_source_status", {}),
+        "optimizer": result,
+        "top_total_goals_observations": result.get("top_total_goals_observations", []),
+        "top_score_observations": result.get("top_score_observations", []),
+        "missing_signals": result.get("missing_signals", []),
+        "credibility_gate": result.get("credibility_gate", {}),
+        "credibility_audit": result.get("credibility_audit", {}),
+    }
+    result["snapshot_status"] = _safe_save_daily_snapshot(preview, result, prepare_learning=True)
+    result["post_match_review_status"] = _latest_post_match_status(result.get("selected_date") or result.get("date"))
+    result["strategy_adjustments_applied"] = _optimizer_strategy_adjustments(result)
+
+
+def _attach_daily_snapshot_status(view: dict, query: dict[str, str]) -> None:
+    if view.get("selected_date") and (view.get("matches_count") is not None):
+        optimizer = view.get("optimizer") or {"best_parlay_summary": view.get("best_parlay_summary", {})}
+        saved = _safe_save_daily_snapshot(view, optimizer, prepare_learning=False)
+        view["snapshot_save_status"] = saved
+    latest = load_latest_snapshot(view.get("selected_date") or query.get("date"))
+    view["snapshot_status"] = latest
+    view["post_match_review_status"] = _latest_post_match_status(view.get("selected_date") or query.get("date"))
+    if latest.get("status") == "available":
+        view["cache_status_zh"] = view.get("cache_status_zh") or "已读取本地每日快照。"
+
+
+def _latest_post_match_status(date: str | None) -> dict:
+    latest = build_daily_decision_board(date)
+    review = latest.get("yesterday_review") or {}
+    return {
+        "status": review.get("status", "missing"),
+        "status_zh": review.get("status_zh", "暂无赛后复盘"),
+        "summary_zh": review.get("summary_zh", "赛后复盘等待生成。"),
+        "path": review.get("post_match_review_path") or review.get("path", ""),
+    }
+
+
+def _optimizer_strategy_adjustments(result: dict) -> list[dict]:
+    rows = []
+    rankings = result.get("candidate_rankings") or {}
+    for bucket in ("singles", "parlay_2x1", "parlay_3x1"):
+        for row in rankings.get(bucket, []) or []:
+            for item in row.get("strategy_adjustments_applied", []) or []:
+                rows.append(item)
+    deduped = []
+    seen = set()
+    for row in rows:
+        key = (row.get("key"), row.get("action"), row.get("label_zh"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped[:12]
 
 
 def _run_operation_from_query(query: dict[str, str]) -> dict:

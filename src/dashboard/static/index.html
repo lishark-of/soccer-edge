@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>JC Edge</title>
-  <link rel="stylesheet" href="/style.css?v=worldcup-desk-r244">
+  <link rel="stylesheet" href="/style.css?v=worldcup-desk-r266">
 </head>
 <body>
   <a class="skipLink" href="#view-today">跳到今日观察</a>
@@ -65,6 +65,7 @@
           <div class="labNavGrid">
             <button class="tab" type="button" id="tab-signalexplain" role="tab" data-view="signalexplain" aria-selected="false" aria-controls="view-signalexplain">信号解释</button>
             <button class="tab" type="button" id="tab-traderreview" role="tab" data-view="traderreview" aria-selected="false" aria-controls="view-traderreview">严厉复盘</button>
+            <button class="tab" type="button" id="tab-proscore" role="tab" data-view="proscore" aria-selected="false" aria-controls="view-proscore">模型体检</button>
             <button class="tab" type="button" id="tab-parlay" role="tab" data-view="parlay" aria-selected="false" aria-controls="view-parlay">组合风险</button>
             <button class="tab" type="button" id="tab-matches" role="tab" data-view="matches" aria-selected="false" aria-controls="view-matches">竞彩足球</button>
             <button class="tab" type="button" id="tab-reliability" role="tab" data-view="reliability" aria-selected="false" aria-controls="view-reliability">数据来源</button>
@@ -83,168 +84,20 @@
         <div class="sectionHeading">
           <p class="eyebrow">下一可售日</p>
           <h2>今日观察</h2>
-          <p>先看结论，再看 Top 单关，最后看组合纪律。页面只保留对赛前判断真正有用的信息。</p>
+          <p>直接看 Top 结果；如果要完整排序和组合纪律，再运行赛前优化。</p>
         </div>
-        <div class="strictLensPanel">
-          <article><span>先看结论</span><strong>能不能观察</strong><p>可信度低、情报缺口大时，不把高 EV 包装成强信号。</p></article>
-          <article><span>再看单关</span><strong>单腿够不够硬</strong><p>赔率、模型概率、安全余量和冷门风险必须同时看。</p></article>
-          <article><span>最后看组合</span><strong>不强行串联</strong><p>2串1/3串1 只在门控通过时升级，否则只保留纸面候选。</p></article>
-        </div>
-        <div id="todayOneLook" class="worldCupDeskSummary"></div>
-        <div class="topGrid topSignalGrid">
-          <article><h3>单关主看</h3><div id="todaySingles"></div></article>
-          <article><h3>串联纪律</h3><div id="todayParlay2"></div></article>
-          <article><h3>高风险候选</h3><div id="todayParlay3"></div></article>
-          <article><h3>进球数</h3><div id="todayTotalGoals"></div></article>
-          <article><h3>比分倾向</h3><div id="todayScores"></div></article>
-        </div>
+	        <div id="todayOneLook" class="worldCupDeskSummary"></div>
         <div class="quickActionRail" role="navigation" aria-label="推荐使用路径">
           <span>下一步</span>
           <button class="primary isActiveStep" id="todayQuickRefreshBtn" type="button" aria-pressed="true" aria-label="重新读取下一可售日比赛并刷新今日观察">刷新观察</button>
+          <button id="todayOptimizerBtn" class="secondary" type="button" aria-pressed="false" aria-label="运行赛前优化">运行赛前优化</button>
           <button class="secondary" type="button" data-jump-view="bestparlay" aria-pressed="false" aria-label="查看组合审核和串联纪律">组合审核</button>
           <button class="secondary" type="button" data-jump-view="missinginfo" aria-pressed="false" aria-label="查看伤停首发天气新闻等情报覆盖状态">情报覆盖</button>
-          <button class="secondary" type="button" data-jump-view="learning" aria-pressed="false" aria-label="进入赛后学习和复盘页面">赛后学习</button>
-          <em id="quickActionStatus" aria-live="polite">当前：重新读取比赛</em>
+          <em id="quickActionStatus" aria-live="polite">当前：自动等待下一可售比赛扫描结果</em>
         </div>
-        <div id="todayComboBoard" class="noteBox"></div>
-        <details class="detailDrawer systemStatusDrawer">
-          <summary>系统状态 / DS Pro / 数据扫描</summary>
-          <div class="todayFocusNote">核心顺序：先看 Top 单关，再看每日 2串1 / 3串1 纸面候选；总进球和比分只作节奏/倾向参考。T+1 不强行给最终结论。</div>
-          <div id="aiAutoStatusStrip" class="aiAutoStatusStrip" data-status="idle"><span>AUTO</span><strong>自动研究待启动</strong><p>打开后会自动读取 T+1 比赛，并自动运行 DS Pro / 本地研究摘要。</p></div>
-          <div id="researchArchivePanel" class="researchArchivePanel"></div>
-          <div id="workflowScorePanel" class="workflowScorePanel"></div>
-          <div id="scanCalendarPanel" class="scanCalendarPanel"></div>
-          <div id="externalSignalsStrip" class="externalSignalsStrip"></div>
-        </details>
-        <details class="methodPlaybookDrawer">
-          <summary>外部世界杯预测模型通常怎么分析</summary>
-          <div class="methodPlaybookGrid">
-            <article>
-              <span>TEAM STRENGTH</span>
-              <strong>Elo / 球队强度</strong>
-              <p>先估计长期强弱、主客/中立场、对手质量和近期权重，不直接从单场印象下结论。</p>
-            </article>
-            <article>
-              <span>SCORE MATRIX</span>
-              <strong>Poisson + Dixon-Coles</strong>
-              <p>用预期进球生成比分矩阵，再推导胜平负、让球、总进球和比分倾向；比分只作高波动参考。</p>
-            </article>
-            <article>
-              <span>MARKET BASELINE</span>
-              <strong>赔率去水基准</strong>
-              <p>把官方赔率转成去水市场概率，用模型概率和校准概率对比，正 EV 也要过可信度门控。</p>
-            </article>
-            <article>
-              <span>LEARNING LOOP</span>
-              <strong>回测 / 收盘赔率复盘 / 校准</strong>
-              <p>赛后用 Brier、Log Loss、赔率段和收盘赔率复盘；样本不足时宁可降权，不强行串联。</p>
-            </article>
-          </div>
-          <p class="methodPlaybookNote">来自公开足球预测项目的共识：AI 适合解释逻辑，概率引擎仍应由模型、赔率、校准和赛后学习约束。</p>
-          <details class="methodUseDrawer">
-            <summary>这些模型逻辑在 JC Edge 里看哪里</summary>
-            <div class="methodUseSteps">
-              <article>
-                <b>1</b>
-                <strong>先看一眼结论</strong>
-                <p>对应外部模型的总概率纪律：如果可信度门控关闭，就先接受“不强行组合”。</p>
-              </article>
-              <article>
-                <b>2</b>
-                <strong>再看 Top 单关</strong>
-                <p>对应 Elo/球队强度、赔率去水和校准概率的交叉结果；不是只看最高 EV。</p>
-              </article>
-              <article>
-                <b>3</b>
-                <strong>再看 2串1纪律</strong>
-                <p>对应组合概率相乘、相关性折扣和回撤风险；没有通过就不要为了赔率强行拼。</p>
-              </article>
-              <article>
-                <b>4</b>
-                <strong>进球/比分只看倾向</strong>
-                <p>对应 Poisson + Dixon-Coles 矩阵；总进球可看节奏，比分波动更高。</p>
-              </article>
-              <article>
-                <b>5</b>
-                <strong>赛日复核</strong>
-                <p>对应临场信息：赔率漂移、首发、伤停、天气、新闻面，任何反向变化都要降级。</p>
-              </article>
-              <article>
-                <b>6</b>
-                <strong>赛后学习</strong>
-                <p>对应公开模型的 回测、概率误差和收盘赔率复盘；样本少时先保守降权。</p>
-              </article>
-            </div>
-          </details>
-          <details class="methodSourceDrawer">
-            <summary>参考的公开模型 / GitHub 仓库</summary>
-            <div class="methodSourceGrid">
-              <a href="https://github.com/Hicruben/world-cup-2026-prediction-model" target="_blank" rel="noopener">World Cup 2026 prediction model：Elo、Poisson、Dixon-Coles、Monte Carlo、回测</a>
-              <a href="https://github.com/topics/fifa-world-cup-2026" target="_blank" rel="noopener">GitHub World Cup 2026 topic：公开预测项目集合</a>
-              <a href="https://docs.pena.lt/y/models/dixon_coles.html" target="_blank" rel="noopener">Penaltyblog Dixon-Coles：低比分相关修正与比分矩阵</a>
-              <a href="https://dashee87.github.io/football/python/predicting-football-results-with-statistical-modelling-dixon-coles-and-time-weighting/" target="_blank" rel="noopener">Dixon-Coles time weighting：足球比分统计建模思路</a>
-              <a href="https://www.datacamp.com/tutorial/fifa-world-cup-2026-winner-prediction" target="_blank" rel="noopener">DataCamp World Cup prediction：球队强度与赛事模拟示例</a>
-              <a href="https://www.footballhacking.com/p/log-loss-explained-the-essential" target="_blank" rel="noopener">Log Loss 解释：为什么要评估概率而不只看命中率</a>
-            </div>
-          </details>
-        </details>
-        <div class="dailyRoutinePanel">
-          <div>
-            <span>DAILY LOOP</span>
-            <strong>每天两步：赛前准备，赛后学习</strong>
-            <p>赛前一键保存观察和模板；赛后填比分/收盘赔率后回到学习页保存样本，让模型持续校准。</p>
-          </div>
-          <div class="dailyRoutineActions">
-            <button type="button" id="dailyPackTodayBtn" class="primary">赛前一键准备</button>
-            <button type="button" id="dailyReviewTodayBtn" class="secondary">赛后学习入口</button>
-          </div>
-        </div>
-        <div class="matchdayPulse">
-          <article>
-            <span>早上</span>
-            <strong>先看 Top 观察</strong>
-            <p>只看单关、2串1是否过门控、总进球和比分倾向。没有强组合时不强行组合。</p>
-          </article>
-          <article>
-            <span>临场</span>
-            <strong>复核赔率和情报</strong>
-            <p>把最新赔率填进卡片复核；首发、伤停、天气或赔率反向漂移会让信号降级。</p>
-          </article>
-          <article>
-            <span>赛后</span>
-            <strong>保存学习样本</strong>
-            <p>填比分和可选收盘赔率，保存赛果学习与 收盘赔率学习，让模型下次更懂赔率段。</p>
-          </article>
-        </div>
-        <div id="matchdayChecklist" class="matchdayChecklist"></div>
-        <details class="detailDrawer aiResearchDrawer">
-          <summary>AI 研究摘要 / 赛后学习</summary>
-          <div class="inlineActions">
-            <button type="button" id="aiComboResearchBtn" class="secondary">重新跑 AI 研究</button>
-          </div>
-          <div id="aiComboResearchBox" class="noteBox"></div>
-          <div id="researchArchiveDetailPanel" class="researchArchivePanel"></div>
-          <div id="aiResearchMemoryPanel" class="researchMemoryPanel"></div>
-          <div id="learningPanel" class="learningPanel"></div>
-          <div id="signalCategorySummary" class="signalCategorySummary"></div>
-        </details>
-        <details class="detailDrawer rejectedDrawer">
-          <summary>查看被拒组合原因（高级）</summary>
-          <h3>Top 2串1被拒原因</h3><div id="todayRejectedParlay2"></div>
-          <h3>Top 3串1被拒原因</h3><div id="todayRejectedParlay3"></div>
-        </details>
-        <details class="detailDrawer todayDetails">
-          <summary>查看数据源、可信度和情报覆盖详情</summary>
-          <div id="todayCards" class="contentBox skeletonBlock"></div>
-          <div id="todayReliabilityCards" class="contentBox"></div>
-          <h3>数据源覆盖</h3><div id="todaySourceCoverage"></div>
-          <div id="dataSourceStatus" class="noteBox"></div>
-          <h3>最大风险提示</h3><div id="todayRiskTip" class="noteBox"></div>
-          <h3>严厉交易者结论</h3><div id="todayTraderConclusion" class="noteBox"></div>
-          <h3>情报覆盖状态</h3><div id="todayMissing" class="noteBox"></div>
-        </details>
+        <div id="todayOptimizerProgressHost" class="todayOptimizerProgressHost" aria-live="polite"></div>
+        <div id="aiAutoStatusStrip" class="aiAutoStatusStrip" data-status="idle"><span>AUTO</span><strong>自动研究待启动</strong><p>先扫描 T+1 / T+3，若有比赛再进入赛前优化。</p></div>
       </section>
-
       <section id="view-signalexplain" role="tabpanel" aria-labelledby="tab-signalexplain" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
         <div class="sectionHeading"><p class="eyebrow">信号纪律</p><h2>信号解释</h2><p>把候选信号分成可观察、弱观察、等待赔率/情报和放弃，并解释为什么。</p></div>
         <div id="signalExplainCards" class="contentBox"></div>
@@ -275,6 +128,25 @@
         <h3>评分原因</h3><div id="credibilityReasons" class="noteBox"></div>
         <h3>缺失与部分覆盖</h3><div id="credibilityMissing"></div>
         <h3>不能过度相信的点</h3><div id="credibilityMustNot" class="noteBox"></div>
+      </section>
+
+      <section id="view-proscore" role="tabpanel" aria-labelledby="tab-proscore" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
+        <div class="sectionHeading"><p class="eyebrow">Professional Audit</p><h2>模型体检</h2><p>按职业足球概率模型的标准检查：市场基准、赔率转概率、模型融合、情报覆盖、校准、CLV、冷门偏差和组合纪律。</p></div>
+        <div class="reviewGuardPanel">
+          <article><span>先看分数</span><strong>现在能信到什么程度</strong><p>职业模型分不是命中承诺，而是衡量当前数据、模型和学习闭环是否足够扎实。</p></article>
+          <article><span>再看上限</span><strong>为什么还到不了 95</strong><p>如果真实数据、收盘赔率、赛后样本或情报覆盖不足，系统会主动压低理论上限。</p></article>
+          <article><span>最后看动作</span><strong>下一步补什么最划算</strong><p>优先补 CLV、赛后回填、真实情报和校准样本，而不是盲目加复杂模型。</p></article>
+        </div>
+        <button type="button" id="proScoreBtn" class="secondary">刷新模型体检</button>
+        <div id="proScoreCards" class="contentBox"></div>
+        <div id="proScorePanelHost"></div>
+        <h3>95 分缺口雷达</h3><div id="proScoreGapRadar"></div>
+        <h3>最快提分动作</h3><div id="proScoreLearningBridge" class="proScoreLearningBridge"></div>
+        <h3>AI 研究质量</h3><div id="proScoreAiQuality"></div>
+        <h3>7天 / 30天模型分趋势</h3><div id="proScoreTrend"></div>
+        <h3>职业证据门槛</h3><div id="proScoreEvidenceGates"></div>
+        <h3>到 95 分路线图</h3><div id="proScoreRoadmap" class="noteBox"></div>
+        <h3>市面专业基准对照</h3><div id="proScoreBenchmark"></div>
       </section>
 
       <section id="view-missinginfo" role="tabpanel" aria-labelledby="tab-missinginfo" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
@@ -308,7 +180,7 @@
       </section>
 
       <section id="view-traderreview" role="tabpanel" aria-labelledby="tab-traderreview" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
-        <div class="sectionHeading"><p class="eyebrow">严厉复盘</p><h2>严厉交易者复盘</h2><p>像交易员一样问：为什么入选、为什么拒绝、缺什么情报、当前应不应该强行组合。</p></div>
+        <div class="sectionHeading"><p class="eyebrow">严厉复盘</p><h2>严厉交易者复盘</h2><p>像交易员一样问：为什么通过门控、为什么拒绝、缺什么情报、当前应不应该强行组合。</p></div>
         <div class="reviewGuardPanel">
           <article><span>问 1</span><strong>信号够不够硬？</strong><p>高 EV 只是起点，还要看市场概率、校准概率、历史学习和情报缺口。</p></article>
           <article><span>问 2</span><strong>风险有没有被放大？</strong><p>组合概率会快速下降，相关性、冷门腿和缺失情报都会降低可观察等级。</p></article>
@@ -371,9 +243,11 @@
           <div id="learningCards" class="contentBox"></div>
           <h3>学习结论</h3><div id="learningLessons" class="noteBox"></div>
           <h3>累计学习</h3><div id="learningHistoryCards" class="contentBox"></div><div id="learningHistoryLessons" class="noteBox"></div>
+          <h3>下一轮调参建议</h3><div id="learningStrategyAdjustments"></div>
           <h3>概率校准分桶</h3><div id="learningCalibrationBins"></div>
           <h3>赔率段校准</h3><div id="learningBuckets"></div>
           <h3>信号类型命中率</h3><div id="learningCategories"></div>
+          <h3>玩法历史表现</h3><div id="learningPlayTypes"></div>
           <h3>观察项复盘</h3><div id="learningRows"></div>
         </details>
       </section>
@@ -386,7 +260,7 @@
 
       <section id="view-optimizer" role="tabpanel" aria-labelledby="tab-optimizer" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
         <div class="sectionHeading"><p class="eyebrow">赛前纪律</p><h2>赛前优化</h2><p>综合赔率、融合概率、理论期望、安全余量、风险等级、命中率纪律和纸面本金约束，生成观察组合；不是操作指令。</p></div>
-        <div class="reviewGuardPanel preRunGuide">
+        <div class="reviewGuardPanel preRunGuide optimizerPreRunGuide">
           <article><span>第一步</span><strong>先找单腿质量</strong><p>只看赔率高不够，必须同时看模型概率、市场去水概率、Edge、EV 和冷门惩罚。</p></article>
           <article><span>第二步</span><strong>再审串联资格</strong><p>2串1 / 3串1 只有在每一腿都过纪律、相关性可控、可信度门控允许时才升级。</p></article>
           <article><span>第三步</span><strong>拒绝也是结论</strong><p>如果情报缺失或组合风险大于优势，页面应明确说暂不组合，而不是硬凑。</p></article>
@@ -395,9 +269,9 @@
         <div id="optimizerCards" class="contentBox"></div><div id="optimizerNo2Reason" class="noteBox"></div>
         <h3>收盘赔率复盘</h3><div id="optimizerClvCards" class="contentBox"></div><div id="optimizerClvTable"></div><div id="optimizerClvNotes" class="noteBox"></div>
         <h3>方案对比</h3><div id="optimizerProfileComparison"></div>
-        <h3>入选单关观察</h3><div id="optimizerSingles"></div>
-        <h3>入选2串1观察</h3><div id="optimizerParlay2"></div>
-        <h3>入选3串1观察</h3><div id="optimizerParlay3"></div>
+        <h3>单关候选观察</h3><div id="optimizerSingles"></div>
+        <h3>2串1纸面候选</h3><div id="optimizerParlay2"></div>
+        <h3>3串1纸面候选</h3><div id="optimizerParlay3"></div>
         <h3>候选排行榜</h3><div id="optimizerSingleRanking"></div><div id="optimizerParlay2Ranking"></div><div id="optimizerParlay3Ranking"></div>
         <h3>被拒原因</h3><div id="optimizerRejected"></div>
         <h3>交易纪律</h3><div id="optimizerExplanations" class="noteBox"></div>
@@ -415,8 +289,8 @@
       </section>
 
       <section id="view-parlay" role="tabpanel" aria-labelledby="tab-parlay" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
-        <div class="sectionHeading"><p class="eyebrow">组合风险</p><h2>组合风险</h2><p>组合会叠加不确定性；赔率变高不等于风险变低。这里重点展示入选组合和被拒组合原因。</p></div>
-        <h3>入选 2串1 / 3串1</h3><div id="parlay2Table"></div><div id="parlay3Table"></div>
+        <div class="sectionHeading"><p class="eyebrow">组合风险</p><h2>组合风险</h2><p>组合会叠加不确定性；赔率变高不等于风险变低。重点展示候选是否通过门控、是否被拒和拒绝原因。</p></div>
+        <h3>2串1 / 3串1 候选卡片</h3><div id="parlay2Table"></div><div id="parlay3Table"></div>
         <h3>2串1 被拒候选</h3><div id="parlay2RejectedTable"></div>
         <h3>3串1 被拒候选</h3><div id="parlay3RejectedTable"></div>
         <div id="riskNotes" class="noteBox"></div>
@@ -452,8 +326,8 @@
 
     <footer class="footerNote" hidden></footer>
   </div>
-  <script src="/components.js?v=worldcup-desk-r212"></script>
-  <script src="/glossary.js?v=worldcup-desk-r41"></script>
-  <script src="/app.js?v=worldcup-desk-r244"></script>
+  <script src="/components.js?v=worldcup-desk-r266"></script>
+  <script src="/glossary.js?v=worldcup-desk-r266"></script>
+  <script src="/app.js?v=worldcup-desk-r266"></script>
 </body>
 </html>

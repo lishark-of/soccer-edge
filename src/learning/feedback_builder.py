@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from difflib import SequenceMatcher
 
+from src.learning.competition_segments import classify_competition_segment
 from src.market.clv import load_observations_json
 from src.learning.result_feedback import build_feedback_report
 
@@ -24,6 +25,7 @@ def load_results_csv(path: str | Path) -> list[dict]:
             outcome = "home" if home_goals > away_goals else "away" if away_goals > home_goals else "draw"
             rows.append({
                 "date": _first(raw, "date", "match_date", "日期"),
+                "league": _first(raw, "league", "competition", "赛事", "联赛"),
                 "match_id": _first(raw, "match_id", "id"),
                 "match_no": _first(raw, "match_no", "num", "编号"),
                 "match": _first(raw, "match") or f"{home} vs {away}".strip(),
@@ -94,6 +96,7 @@ def build_feedback_from_observations_and_results(observations: list[dict], resul
         matches.append({
             "match": result.get("match") or f"{result.get('home_team','')} vs {result.get('away_team','')}",
             "date": result.get("date") or date,
+            "league": result.get("league"),
             "match_id": result.get("match_id"),
             "match_no": result.get("match_no"),
             "home_team": result.get("home_team"),
@@ -244,8 +247,10 @@ def _best_result_match(obs: dict, results: list[dict]) -> tuple[int | None, floa
 
 
 def _compact_observation(obs: dict, match_score: float | None = None) -> dict:
+    segment = classify_competition_segment(obs)
     return {
         "date": obs.get("date"),
+        "league": obs.get("league") or obs.get("competition") or obs.get("tournament"),
         "match_id": obs.get("match_id"),
         "match_no": obs.get("match_no"),
         "home_team": obs.get("home_team"),
@@ -268,6 +273,7 @@ def _compact_observation(obs: dict, match_score: float | None = None) -> dict:
         "candidate_type": obs.get("candidate_type") or obs.get("type"),
         "legs": obs.get("legs") or [],
         "match_score": round(float(match_score or 0.0), 4),
+        **segment,
     }
 
 

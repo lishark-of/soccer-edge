@@ -156,20 +156,22 @@ def build_next_available_light_preview(
         attempts.append(attempt)
         if first_available_date is None and int(attempt.get("matches_count", 0) or 0) > 0:
             first_available_date = current
+            break
     selected_date = first_available_date or start.isoformat()
     selected_attempt = next((item for item in attempts if item.get("date") == selected_date), attempts[0] if attempts else {})
     matches_count = int(selected_attempt.get("matches_count", 0) or 0)
     provider_used = selected_attempt.get("provider_used") or provider_name
     fallback_used = bool(selected_attempt.get("fallback_used")) or provider_used == "mock"
+    stopped_early = bool(first_available_date and len(attempts) < max_offset + 1)
     scan_window = {
         "start_date": start.isoformat(),
         "end_date": (start + timedelta(days=max_offset)).isoformat(),
         "days_checked": len(attempts),
         "complete": len(attempts) == max_offset + 1,
-        "stopped_after_first_available": False,
+        "stopped_after_first_available": stopped_early,
         "scan_mode": "lightweight_homepage_scan",
     }
-    message = "已完成轻量扫描；完整概率、组合和情报融合请进入赛前优化或组合审核。" if matches_count else "轻量扫描暂未读取到可售比赛；可稍后刷新或检查数据源。"
+    message = "已快速锁定最近可售比赛；完整概率、组合和情报融合请进入赛前优化或组合审核。" if matches_count else "轻量扫描暂未读取到可售比赛；可稍后刷新或检查数据源。"
     return {
         "date": selected_date,
         "selected_date": selected_date,
@@ -359,8 +361,8 @@ def _mark_rankings_gate(optimizer: dict, reason: str) -> None:
         for row in rankings.get(key, []) or []:
             if row.get("selected"):
                 row["selected"] = False
-                row["status"] = "未入选"
-            row["reject_reason"] = reason if not row.get("reject_reason") or row.get("reject_reason") == "已入选" else f"{reason}；{row.get('reject_reason')}"
+                row["status"] = "未通过门控"
+            row["reject_reason"] = reason if not row.get("reject_reason") or row.get("reject_reason") == "通过门控" else f"{reason}；{row.get('reject_reason')}"
 
 
 def _external_signals_status(path: str | None, signals: dict[str, dict], match_ids: list[str], load_status: dict | None = None) -> dict:
@@ -452,8 +454,8 @@ def explain_trade_discipline(result: dict) -> list[str]:
     if not any(selected.get(key) for key in ("singles", "parlay_2x1", "parlay_3x1")):
         messages.append("无观察价值：当前候选没有通过 EV、Edge、风险或纸面暴露约束。")
     else:
-        messages.append("入选原因：入选项通过市场去水概率、模型融合概率、EV、Edge 和纸面风险约束。")
-    messages.append("拒绝原因：未入选项通常是 EV 不足、Edge 不足、风险等级过高、相关性折扣后不达标，或超过纸面暴露上限。")
+        messages.append("通过门控原因：通过项满足市场去水概率、模型融合概率、EV、Edge 和纸面风险约束。")
+    messages.append("拒绝原因：未通过门控项通常是 EV 不足、Edge 不足、风险等级过高、相关性折扣后不达标，或超过纸面暴露上限。")
     messages.append("赔率价值判断：只有模型融合概率足以覆盖官方赔率隐含概率时，才可能形成观察价值；否则显示“无观察价值”。")
     messages.append("串关纪律：2串1/3串1 会把多场不确定性叠加，不要因为赔率高就盲目组合。")
     missing = result.get("missing_signals") or []
@@ -546,6 +548,9 @@ def _context_probs(context: dict) -> dict[str, float]:
 
 
 def _observation(match: dict, play_type: str, outcome: str, odds: float, market_prob: float, model_prob: float, edge: float, ev: float, context: dict) -> dict:
+    market_report = (context.get("market_probability_report") or {}).get(play_type) or {}
+    market_bias = market_report.get("favorite_longshot_bias") or {}
+    bias_row = _market_bias_row(market_bias, outcome)
     row = {
         "match_id": match["match_id"],
         "match_no": match.get("match_no", ""),
@@ -568,6 +573,25 @@ def _observation(match: dict, play_type: str, outcome: str, odds: float, market_
         "missing_signals": context.get("missing_signals", []),
         "selection_status": "candidate" if ev > 0 and edge > 0 else "rejected",
         "selection_reason": "有观察价值" if ev > 0 and edge > 0 else "无观察价值：赔率未覆盖模型概率或 Edge 不足",
+        "market_probability_audit": {
+            "status": market_report.get("status", ""),
+            "label_zh": market_report.get("label_zh", ""),
+            "score": market_report.get("score"),
+            "method_primary": market_report.get("method_primary", ""),
+            "method_cross_check": market_report.get("method_cross_check", ""),
+            "overround": market_report.get("overround"),
+            "max_method_shift": market_report.get("max_method_shift"),
+            "message_zh": market_report.get("message_zh", ""),
+        },
+        "market_bias_audit": {
+            "status": market_bias.get("status", ""),
+            "label_zh": market_bias.get("label_zh", ""),
+            "confidence_penalty": market_bias.get("confidence_penalty"),
+            "outcome_bias_bucket": bias_row.get("bias_bucket", ""),
+            "outcome_method_shift": bias_row.get("method_shift"),
+            "outcome_message_zh": bias_row.get("message_zh", ""),
+            "message_zh": market_bias.get("message_zh", ""),
+        },
     }
     row.update(explain_signal_reliability(row, context))
     learning = classify_signal({**row, "odds": odds}, (context.get("intelligence_completeness") or {}).get("score") or context.get("confidence_score", 0.45) * 100)
@@ -683,6 +707,8 @@ def _candidate_from_observation(row: dict) -> dict:
         "recommended_action_zh": row.get("recommended_action_zh"),
         "odds_status_zh": row.get("odds_status_zh"),
         "ev_status_zh": row.get("ev_status_zh"),
+        "market_probability_audit": row.get("market_probability_audit", {}),
+        "market_bias_audit": row.get("market_bias_audit", {}),
     }
 
 
@@ -694,6 +720,13 @@ def _risk_level(probability: float, play_type: str) -> str:
     if probability >= 0.25:
         return "medium"
     return "high"
+
+
+def _market_bias_row(bias: dict, outcome: str) -> dict:
+    for row in bias.get("rows") or []:
+        if row.get("outcome") == outcome:
+            return row
+    return {}
 
 
 def _supporting_factors(edge: float, ev: float, context: dict) -> list[str]:

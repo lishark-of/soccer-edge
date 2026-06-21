@@ -56,3 +56,7 @@ def test_next_available_view_exposes_ai_combo_and_learning_summaries():
     assert isinstance(view.get("critical_gap_list_zh"), list)
     assert isinstance(view.get("homepage_missing_actions"), list)
     assert view.get("today_focus_summary_zh")
+    assert view.get("final_decision_card", {}).get("verdict_zh")
+    assert "single_summary_zh" in view["final_decision_card"]
+    assert "combo_summary_zh" in view["final_decision_card"]
+    assert isinstance(view["final_decision_card"].get("main_blockers_zh"), list)

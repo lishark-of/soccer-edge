@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.audit.credibility import audit_credibility
+from src.audit.source_reliability import build_source_reliability
 from src.audit.trader_review import build_trader_review
 from src.explain.deepseek_config import llm_status_payload
 from src.intelligence.signal_explainer import explain_combo_discipline
@@ -18,6 +19,7 @@ def build_next_available_view(preview: dict) -> dict:
     top_2x1_display = top_2x1 if top_2x1 else top_rejected_2x1[:3]
     optimizer = preview.get("optimizer", {}) or {}
     credibility = preview.get("credibility_audit", {}) if preview.get("lightweight_homepage") else audit_credibility(preview, optimizer)
+    professional_score = credibility.get("professional_model_score", {}) or {}
     best_parlay = build_best_parlay_summary(optimizer)
     llm_status = llm_status_payload()
     ai_layer = _ai_research_layer(best_parlay, llm_status)
@@ -34,6 +36,18 @@ def build_next_available_view(preview: dict) -> dict:
         gate=preview.get("credibility_gate", {}) or {},
         learning_panel=learning_panel,
         has_combo_context=bool(daily_2x1_display or daily_3x1_display or top_rejected_2x1 or top_rejected_3x1),
+    )
+    final_decision_card = _final_decision_card(
+        preview=preview,
+        view=view,
+        source_health=_source_health(preview, status),
+        credibility=credibility,
+        professional_score=professional_score,
+        gate=credibility.get("credibility_gate") or preview.get("credibility_gate", {}),
+        best_parlay=best_parlay,
+        long_run_score=long_run_score,
+        daily_2x1_display=daily_2x1_display,
+        daily_3x1_display=daily_3x1_display,
     )
     view.update(
         {
@@ -56,6 +70,7 @@ def build_next_available_view(preview: dict) -> dict:
             "data_source_status": status,
             "source_health": _source_health(preview, status),
             "long_run_score": long_run_score,
+            "final_decision_card": final_decision_card,
             "reliability_summary": preview.get("reliability_summary", {}),
             "intelligence_completeness": preview.get("intelligence_completeness", {}),
             "coverage_notes": preview.get("coverage_notes", []),
@@ -71,6 +86,7 @@ def build_next_available_view(preview: dict) -> dict:
             "top_rejected_2x1": top_rejected_2x1,
             "top_rejected_3x1": top_rejected_3x1,
             "credibility_audit": credibility,
+            "professional_model_score": professional_score,
             "credibility_gate": credibility.get("credibility_gate") or preview.get("credibility_gate", {}),
             "best_parlay_summary": best_parlay,
             "combo_user_board": best_parlay.get("user_combo_board", {}),
@@ -91,9 +107,135 @@ def build_next_available_view(preview: dict) -> dict:
         best_for_display["label_zh"] = "已输出每日纸面候选"
         view["best_parlay_summary"] = best_for_display
         view["combo_gate_summary_zh"] = (
-            "已输出 T+1 最推荐单关、2串1、3串1纸面候选；若未通过门控，会保留原因用于赛后学习。"
+            "已保留 T+1 单关、2串1、3串1纸面候选用于赛后学习；未通过门控的组合不包装成入选观察。"
         )
     return view
+
+
+def _final_decision_card(
+    *,
+    preview: dict,
+    view: dict,
+    source_health: dict,
+    credibility: dict,
+    professional_score: dict,
+    gate: dict,
+    best_parlay: dict,
+    long_run_score: dict,
+    daily_2x1_display: list[dict],
+    daily_3x1_display: list[dict],
+) -> dict:
+    singles = view.get("top_singles") or []
+    single = singles[0] if singles else {}
+    combo_gate = str(gate.get("combo_gate") or "")
+    credibility_score = _safe_int(credibility.get("credibility_score"))
+    pro_score = _safe_int(professional_score.get("score"))
+    source_score = _safe_int(source_health.get("reliability_score"))
+    long_score = _safe_int(long_run_score.get("score"))
+    missing = list(preview.get("missing_signals") or view.get("missing_information") or [])
+    has_single = bool(single.get("match") or single.get("home_team"))
+    has_combo = bool(daily_2x1_display or daily_3x1_display)
+    if has_single and combo_gate == "open" and (credibility_score or 0) >= 65:
+        verdict = "可观察，组合需逐腿复核"
+        level = "observe"
+    elif has_single:
+        verdict = "先看单关，暂不强行组合"
+        level = "single_first"
+    elif has_combo:
+        verdict = "仅保留纸面组合候选"
+        level = "paper_only"
+    else:
+        verdict = "暂无强观察，等待数据"
+        level = "wait"
+    blockers = []
+    if source_score is not None and source_score < 80:
+        blockers.append("数据源稳定性不足")
+    if credibility_score is not None and credibility_score < 65:
+        blockers.append("可信度未到组合门槛")
+    if missing:
+        blockers.append("缺失情报：" + "、".join(str(x) for x in missing[:4]))
+    if combo_gate in {"closed", "restricted"}:
+        blockers.append(gate.get("reason_zh") or "串联纪律未完全打开")
+    for row in [single, *(daily_2x1_display[:1] or []), *(daily_3x1_display[:1] or [])]:
+        if isinstance(row, dict) and row.get("model_disagreement_reason_zh"):
+            blockers.append(row["model_disagreement_reason_zh"])
+            break
+    if not blockers:
+        blockers.append("继续看终盘赔率、首发和赛后学习样本")
+    single_text = _candidate_text(single, "暂无单关强信号")
+    combo_text = _combo_text(daily_2x1_display, daily_3x1_display, best_parlay)
+    return {
+        "level": level,
+        "verdict_zh": verdict,
+        "date": preview.get("selected_date") or preview.get("date"),
+        "provider_used": preview.get("provider_used", "unknown"),
+        "matches_count": preview.get("matches_count", 0),
+        "credibility_score": credibility_score,
+        "professional_score": pro_score,
+        "long_run_score": long_score,
+        "source_reliability_score": source_score,
+        "single_summary_zh": single_text,
+        "combo_summary_zh": combo_text,
+        "main_blockers_zh": blockers[:5],
+        "next_action_zh": _final_next_action(level, blockers),
+        "why_zh": _final_why(level, has_single, combo_gate, credibility_score, pro_score),
+        "disclaimer_zh": "仅用于本地概率研究、纸面观察和赛后复盘。",
+    }
+
+
+def _candidate_text(item: dict, fallback: str) -> str:
+    if not item:
+        return fallback
+    match = item.get("match") or f"{item.get('home_team', '')} vs {item.get('away_team', '')}".strip()
+    direction = item.get("direction") or item.get("outcome_label") or item.get("play_type") or ""
+    ev = item.get("ev")
+    confidence = item.get("confidence") or item.get("confidence_score") or item.get("observation_confidence")
+    parts = [match, direction]
+    if ev is not None:
+        parts.append(f"EV {_pct_text(ev)}")
+    if confidence is not None:
+        parts.append(f"可信度 {_pct_text(confidence)}")
+    return " · ".join(str(x) for x in parts if str(x).strip()) or fallback
+
+
+def _combo_text(parlay2: list[dict], parlay3: list[dict], best_parlay: dict) -> str:
+    if parlay2:
+        return "2串1：" + _candidate_text(parlay2[0], "纸面候选")
+    if parlay3:
+        return "3串1：" + _candidate_text(parlay3[0], "纸面候选")
+    reason = best_parlay.get("no_combo_reason") or best_parlay.get("conclusion_zh")
+    return reason or "暂无优秀串联观察；先保留候选榜用于赛后学习。"
+
+
+def _final_next_action(level: str, blockers: list[str]) -> str:
+    if level == "observe":
+        return "运行赛前优化，逐腿复核赔率、情报和玩法历史表现。"
+    if level == "single_first":
+        return "先看 Top 单关和情报覆盖；组合只保留纸面候选。"
+    if level == "paper_only":
+        return "把每日组合候选保存进赛后学习，等待结果验证。"
+    if blockers:
+        return "优先补齐最弱项：" + blockers[0]
+    return "等待下一可售日或刷新数据源。"
+
+
+def _final_why(level: str, has_single: bool, combo_gate: str, credibility_score: int | None, pro_score: int | None) -> str:
+    if level == "observe":
+        return "已有单关信号且串联门控打开，但仍需临场复核。"
+    if has_single and combo_gate != "open":
+        return "存在单关观察，但可信度、情报或组合纪律不足以支持强行串联。"
+    if credibility_score is not None and credibility_score < 50:
+        return "可信度偏低，本轮更适合做研究记录，不适合升级组合。"
+    if pro_score is not None and pro_score < 70:
+        return "职业模型分仍受数据源、CLV、玩法复盘或情报覆盖限制。"
+    return "当前信号证据不足，系统选择保守等待更多信息。"
+
+
+def _pct_text(value) -> str:
+    try:
+        return f"{float(value) * 100:+.1f}%"
+    except (TypeError, ValueError):
+        return "N/A"
 
 
 def _has_daily_combo_candidate(best: dict) -> bool:
@@ -488,106 +630,7 @@ def _filtered_next_available_warnings(preview: dict, view: dict) -> list[str]:
 
 
 def _source_health(preview: dict, status: dict) -> dict:
-    attempts = preview.get("attempts", []) or []
-    scan_window = preview.get("scan_window") if isinstance(preview.get("scan_window"), dict) else {}
-    matches_count = int(preview.get("matches_count", 0) or 0)
-    provider_used = str(preview.get("provider_used") or "unknown")
-    fallback_used = bool(preview.get("fallback_used"))
-    warnings = list(preview.get("warnings", []) or preview.get("provider_warnings", []) or [])
-    scanned_dates = [item.get("date") for item in attempts if isinstance(item, dict) and item.get("date")]
-    successful_attempts = [
-        item for item in attempts
-        if isinstance(item, dict) and int(item.get("matches_count", 0) or 0) > 0
-    ]
-    attempt_count = len(attempts)
-    sporttery_attempts = 0
-    fallback_attempts = 0
-    empty_attempts = 0
-    warning_attempts = 0
-    degraded_reasons: list[str] = []
-    for item in attempts:
-        if not isinstance(item, dict):
-            continue
-        item_provider = str(item.get("provider_used") or item.get("provider") or "unknown")
-        item_matches = int(item.get("matches_count", 0) or 0)
-        item_status = str(item.get("status") or "")
-        item_warnings = item.get("warnings") or item.get("provider_warnings") or []
-        if item_provider == "sporttery":
-            sporttery_attempts += 1
-        if item_provider == "mock" or item_status in {"fallback", "mock"} or bool(item.get("fallback_used")):
-            fallback_attempts += 1
-        if item_matches == 0:
-            empty_attempts += 1
-        if item_warnings:
-            warning_attempts += 1
-    partial_fallback_used = fallback_used or fallback_attempts > 0
-    all_attempts_stable = (
-        attempt_count > 0
-        and bool(scan_window.get("complete"))
-        and fallback_attempts == 0
-        and warning_attempts == 0
-        and sporttery_attempts == attempt_count
-    )
-    if fallback_attempts:
-        degraded_reasons.append(f"扫描窗口内有 {fallback_attempts} 天使用 mock/fallback。")
-    if warning_attempts:
-        degraded_reasons.append(f"扫描窗口内有 {warning_attempts} 天存在数据源提醒。")
-    if empty_attempts and matches_count == 0:
-        degraded_reasons.append(f"扫描窗口内有 {empty_attempts} 天没有读取到可售比赛。")
-    degraded_reason_zh = " ".join(degraded_reasons) or "扫描窗口未发现回退或异常提醒。"
-    if provider_used == "sporttery" and matches_count > 0 and all_attempts_stable:
-        health = "stable"
-        message = "Sporttery 当前可读取，完整扫描窗口未发现回退或异常提醒。"
-    elif provider_used == "sporttery" and matches_count > 0:
-        health = "degraded"
-        message = "选中日期可读取 Sporttery，但扫描窗口内存在回退、空结果或数据源提醒，请查看扫描日期明细。"
-    elif fallback_used or provider_used == "mock":
-        health = "fallback"
-        message = "Sporttery 当前不可用或未返回可售比赛，已使用本地示例回退。"
-    elif matches_count == 0:
-        health = "empty"
-        message = "扫描范围内暂未读取到可售比赛。"
-    else:
-        health = "unknown"
-        message = "数据源状态不明确，请查看数据源提醒。"
-    reliability = _source_reliability(
-        health=health,
-        attempt_count=attempt_count,
-        sporttery_attempts=sporttery_attempts,
-        fallback_attempts=fallback_attempts,
-        empty_attempts=empty_attempts,
-        warning_attempts=warning_attempts,
-        scan_complete=bool(scan_window.get("complete")),
-    )
-    return {
-        "health": health,
-        "provider_used": provider_used,
-        "selected_date": preview.get("selected_date") or preview.get("date"),
-        "matches_count": matches_count,
-        "scanned_dates": scanned_dates,
-        "scan_window": scan_window,
-        "successful_attempts": len(successful_attempts),
-        "attempt_count": attempt_count,
-        "sporttery_attempts": sporttery_attempts,
-        "fallback_attempts": fallback_attempts,
-        "empty_attempts": empty_attempts,
-        "warning_attempts": warning_attempts,
-        "all_attempts_stable": all_attempts_stable,
-        "partial_fallback_used": partial_fallback_used,
-        "fallback_used": fallback_used,
-        "warning_count": len(warnings),
-        "warnings": warnings,
-        "status": status.get("status", "unknown"),
-        "message_zh": message,
-        "degraded_reason_zh": degraded_reason_zh,
-        "reliability_score": reliability["score"],
-        "reliability_label_zh": reliability["label_zh"],
-        "reliability_reason_zh": reliability["reason_zh"],
-        "decision_guide_zh": reliability["decision_guide_zh"],
-        "source_action_items": reliability["action_items"],
-        "recovery_hint_zh": "如显示 fallback/empty，请稍后刷新，或查看竞彩足球页的数据源提醒；系统不会把回退数据伪装成 Sporttery。",
-        "scan_summary_zh": _scan_summary(scan_window, scanned_dates),
-    }
+    return build_source_reliability(preview, status)
 
 
 def _scan_summary(scan_window: dict, scanned_dates: list[str]) -> str:
@@ -660,7 +703,7 @@ def _top_2x1_empty_explanation(rows: list[dict], workflow: dict) -> str:
     if not rows:
         return prefix + "当前没有可排序的 2串1 候选；系统不会为了凑组合而降低纪律。"
     first_reason = rows[0].get("reject_reason") or "未通过组合纪律。"
-    return f"{prefix}当前没有 2串1 入选；下方展示最接近的候选和被拒原因。首要原因：{first_reason}"
+    return f"{prefix}当前暂无通过门控的2串1；下方展示最接近候选与复盘原因。首要原因：{first_reason}"
 
 
 def _top_3x1_empty_explanation(rows: list[dict], workflow: dict) -> str:
@@ -697,7 +740,7 @@ def _combo_reject_row(item: dict) -> dict:
         "edge": _signed_pct(item.get("edge")),
         **value,
         "risk_level": item.get("risk_level", ""),
-        "status": item.get("status", "未入选"),
+        "status": item.get("status", "待复核"),
         "reject_reason": item.get("reject_reason", "未通过组合纪律。"),
     }
     row.update(explain_combo_discipline(item))

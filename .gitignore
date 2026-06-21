@@ -39,7 +39,9 @@ data/learning_observations/
 data/learning_results/
 data/learning_closing_odds/
 data/learning_clv/
+data/learning_ai_hypotheses/
 data/research_archive/
+data/daily_snapshots/
 
 # Generated artifacts and reports
 artifacts/

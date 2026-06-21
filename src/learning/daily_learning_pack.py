@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.learning.closing_odds_template import save_closing_odds_template_from_observations
+from src.learning.ai_hypothesis_review import save_ai_hypothesis_review
 from src.learning.feedback_builder import save_feedback_from_files
 from src.learning.history import build_learning_history
 from src.learning.observation_snapshot import save_observation_snapshot
@@ -45,6 +46,10 @@ def save_daily_learning_results(
     clv = None
     if closing_odds_csv:
         clv = save_clv_review(observations_json, closing_odds_csv)
+    ai_hypothesis_review = save_ai_hypothesis_review(
+        feedback.get("feedback") or {},
+        (clv or {}).get("review") if clv else None,
+    )
     history = build_learning_history()
     feedback_date = str((feedback.get("feedback") or {}).get("date") or "")
     latest_daily = next((row for row in history.get("daily_metrics", []) or [] if row.get("date") == feedback_date), None)
@@ -52,15 +57,17 @@ def save_daily_learning_results(
         "status": "saved",
         "feedback": feedback,
         "clv": clv,
+        "ai_hypothesis_review": ai_hypothesis_review,
         "feedback_path": feedback.get("path"),
         "clv_path": (clv or {}).get("path"),
+        "ai_hypothesis_review_path": ai_hypothesis_review.get("path"),
         "daily_metrics": latest_daily,
         "window_metrics": history.get("window_metrics", []),
         "daily_digest": history.get("daily_digest", {}),
         "window_digests": history.get("window_digests", []),
         "learning_history_summary": history.get("probability_quality", {}),
-        "summary_zh": "已一键保存赛后学习：赛果反馈已进入本地学习库，CLV 样本已按可用收盘赔率保存。",
-        "next_step_zh": "下次打开 App 时，赔率段、概率段和 CLV 价格学习会自动读取这些本地样本。",
+        "summary_zh": "已一键保存赛后学习：赛果反馈、CLV 样本和 AI 假设复盘都已进入本地学习库。",
+        "next_step_zh": "下次打开 App 时，赔率段、概率段、CLV 价格学习和 AI 假设复盘会自动读取这些本地样本。",
         "privacy_zh": "所有学习样本只保存在本机 data/learning_* 目录，均已加入 gitignore。",
         "disclaimer": "赛后学习只用于模型校准和纸面复盘，不构成任何真实投注建议。",
     }

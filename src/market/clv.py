@@ -131,6 +131,7 @@ def build_clv_history(feedback_dir: str | Path = "data/learning_clv") -> dict:
     negative = [row for row in settled if row.get("clv_pct", 0) < 0]
     avg = round(mean([row["clv_pct"] for row in settled]), 6) if settled else None
     bucket_rows = _clv_bucket_rows(settled)
+    play_type_rows = _clv_play_type_rows(settled)
     return {
         "history_version": "phase2_clv_learning_history_v0",
         "files_loaded": len(reviews),
@@ -143,6 +144,8 @@ def build_clv_history(feedback_dir: str | Path = "data/learning_clv") -> dict:
         "positive_clv_rate": round(len(positive) / len(settled), 6) if settled else None,
         "bucket_rows": bucket_rows,
         "bucket_stats": {row["bucket"]: row for row in bucket_rows},
+        "play_type_rows": play_type_rows,
+        "play_type_stats": {row["play_type"]: row for row in play_type_rows},
         "rows": rows[-30:],
         "summary_zh": _history_summary(len(reviews), settled, positive, avg),
         "next_action_zh": _history_next_action(avg, len(settled)),
@@ -245,11 +248,38 @@ def _clv_bucket_rows(rows: list[dict]) -> list[dict]:
         avg = item["clv_sum"] / attempts if attempts else None
         out.append({
             "bucket": item["bucket"],
+            "signal_bucket": _signal_bucket_from_clv_bucket(item["bucket"]),
+            "bucket_label_zh": _clv_bucket_label(item["bucket"]),
             "attempts": attempts,
             "positive_clv_count": positive,
             "positive_clv_rate": round(positive / attempts, 6) if attempts else None,
             "average_clv_pct": round(avg, 6) if avg is not None else None,
             "message_zh": _clv_bucket_message(attempts, avg),
+        })
+    return out
+
+
+def _clv_play_type_rows(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        play = str(row.get("play") or row.get("play_type") or "unknown")
+        grouped.setdefault(play, {"play_type": play, "attempts": 0, "positive": 0, "clv_sum": 0.0})
+        grouped[play]["attempts"] += 1
+        grouped[play]["positive"] += 1 if float(row.get("clv_pct") or 0.0) > 0 else 0
+        grouped[play]["clv_sum"] += float(row.get("clv_pct") or 0.0)
+    out = []
+    for item in sorted(grouped.values(), key=lambda row: (row["attempts"], row["play_type"]), reverse=True):
+        attempts = int(item["attempts"])
+        positive = int(item["positive"])
+        avg = item["clv_sum"] / attempts if attempts else None
+        out.append({
+            "play_type": item["play_type"],
+            "label_zh": _play_type_label(item["play_type"]),
+            "attempts": attempts,
+            "positive_clv_count": positive,
+            "positive_clv_rate": round(positive / attempts, 6) if attempts else None,
+            "average_clv_pct": round(avg, 6) if avg is not None else None,
+            "message_zh": _clv_play_type_message(item["play_type"], attempts, avg),
         })
     return out
 
@@ -279,6 +309,50 @@ def _clv_bucket_message(attempts: int, avg: float | None) -> str:
     if avg is not None and avg < -0.015:
         return "该赔率段平均 CLV 为负，后续应降低信号自信。"
     return "该赔率段 CLV 接近中性，继续累计样本。"
+
+
+def _signal_bucket_from_clv_bucket(bucket: str) -> str:
+    return {
+        "lt_1_50": "1.01-1.50",
+        "1_50_1_99": "1.50-2.00",
+        "2_00_2_99": "2.00-3.00",
+        "3_00_4_99": "3.00-5.00",
+        "5_00_7_99": "5.00-8.00",
+        "gte_8_00": "8.00+",
+    }.get(str(bucket), "unknown")
+
+
+def _clv_bucket_label(bucket: str) -> str:
+    return {
+        "lt_1_50": "低赔率热门",
+        "1_50_1_99": "中低赔率",
+        "2_00_2_99": "均衡赔率",
+        "3_00_4_99": "中高赔率",
+        "5_00_7_99": "高赔率观察",
+        "gte_8_00": "高赔率冷门",
+    }.get(str(bucket), "未知赔率段")
+
+
+def _play_type_label(play_type: str) -> str:
+    return {
+        "had": "胜平负",
+        "hhad": "让球胜平负",
+        "total_goals": "总进球",
+        "correct_score": "比分",
+        "parlay_2x1": "2串1",
+        "parlay_3x1": "3串1",
+    }.get(str(play_type), str(play_type or "未知玩法"))
+
+
+def _clv_play_type_message(play_type: str, attempts: int, avg: float | None) -> str:
+    label = _play_type_label(play_type)
+    if attempts < 8:
+        return f"{label} CLV 样本很少，只作提示。"
+    if avg is not None and avg > 0.015:
+        return f"{label} 平均 CLV 为正，说明赛前价格暂有市场确认。"
+    if avg is not None and avg < -0.015:
+        return f"{label} 平均 CLV 为负，下一轮应降低该玩法自信。"
+    return f"{label} CLV 接近中性，继续累计样本。"
 
 
 def _pct(value) -> str:
