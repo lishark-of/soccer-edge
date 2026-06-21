@@ -3393,16 +3393,23 @@ async function loadAiComboResearch() {
     external_signals: externalSignalsParam(),
     ai_provider: aiProvider,
     run: runAi,
-  }, runAi ? "自动生成 AI 组合研究摘要" : "生成本地组合研究包");
+    refresh: "1",
+  }, runAi ? "自动生成 AI 组合研究摘要" : "生成本地组合研究包", runAi ? 150000 : 45000);
   if (payload.ok) {
-    renderAiComboResearch(payload.data || {});
-    await autoArchiveResearch(payload.data || {});
+    const data = payload.data || {};
+    renderAiComboResearch(data);
+    await autoArchiveResearch(data);
+    const dsDone = Boolean(data.ds_completed || data.reused_from_cached_ds);
+    if (!dsDone && runAi) {
+      setAiAutoStatus("fallback", "DS 未完成，本地研究已保留", data.display_status_zh || data.fallback_reason || "本轮 DS 没有返回可用摘要，系统已保留本地研究包并进入赛后学习。可稍后重试 DS，不影响候选票展示。");
+    }
+    return;
   }
-  if (!payload.ok) setAiAutoStatus("fallback", "AI 研究未完成", payload.error?.message || "已保留本地研究摘要，可稍后重试。");
-  if (!payload.ok && box) {
+  setAiAutoStatus("fallback", "AI 研究仍在等待，本地结果已保留", payload.error?.message || "AI 长分析本次没有在前台等待时间内完成，候选票和本地研究摘要仍可用。");
+  if (box) {
     box.innerHTML = `
       <div class="emptyState">
-        DeepSeek Pro 自动研究未完成：${C.escapeHtml(payload.error?.message || "已保留本地研究摘要，请稍后重试。")}
+        AI 长分析没有在前台等待时间内完成：${C.escapeHtml(payload.error?.message || "候选票和本地研究摘要仍可用，可稍后重试 DS。")}
       </div>
     `;
   }
@@ -3410,16 +3417,18 @@ async function loadAiComboResearch() {
 
 async function autoArchiveResearch(aiResearchView = {}) {
   const runAi = aiRunParam();
-  setAiAutoStatus("running", "正在保存研究档案", "AI/本地研究摘要已生成，正在写入本地赛前研究档案并准备赛后学习模板。");
+  const dsAlreadyDone = Boolean(aiResearchView.ds_completed || aiResearchView.reused_from_cached_ds);
+  const archiveRunAi = dsAlreadyDone ? runAi : "";
+  setAiAutoStatus("running", "正在保存研究档案", dsAlreadyDone ? "DS 研究摘要已生成，正在复用缓存写入赛前研究档案。" : "本地研究摘要已生成，正在写入赛前研究档案；不重复触发 DS。 ");
   const payload = await request("/api/learning/auto-archive-research", {
     provider: providerParam(),
     date: state.todayView?.selected_date || currentDateParam(),
     bankroll: bankrollParam(),
     risk_profile: riskProfileParam(),
     external_signals: externalSignalsParam(),
-    ai_provider: aiProviderParam(),
-    run_ai: runAi,
-  }, "自动保存赛前研究档案", 90000);
+    ai_provider: dsAlreadyDone ? aiProviderParam() : "local",
+    run_ai: archiveRunAi,
+  }, "自动保存赛前研究档案", 120000);
   if (!payload.ok) {
     renderResearchArchiveStatus({
       status: "error",
@@ -3436,7 +3445,7 @@ async function autoArchiveResearch(aiResearchView = {}) {
   setAiAutoStatus(
     usedDs ? "done" : "fallback",
     usedDs ? "DS 研究已存档" : "本地研究已存档",
-    `${saved.summary_zh || "研究档案已保存。"} ${saved.token_total ? `本次记录 token ${saved.token_total}。` : "未记录外部 token。"}`
+    `${saved.summary_zh || "研究档案已保存。"} ${saved.token_total ? `本次记录 token ${saved.token_total}。` : "本轮未记录外部 token；候选票和本地研究仍已进入学习档案。"}`
   );
 }
 
