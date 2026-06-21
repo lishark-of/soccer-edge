@@ -25,10 +25,14 @@ def build_next_available_view(preview: dict) -> dict:
     ai_layer = _ai_research_layer(best_parlay, llm_status)
     daily_2x1 = best_parlay.get("daily_2x1_candidate") or {}
     daily_3x1 = best_parlay.get("daily_3x1_candidate") or {}
+    daily_single = best_parlay.get("daily_single_candidate") or best_parlay.get("best_single") or {}
     trader_review = build_trader_review(preview, optimizer)
     learning_panel = build_home_learning_panel()
+    top_singles_display = view.get("top_singles") or _candidate_list(daily_single, [])
     daily_2x1_display = top_2x1 if top_2x1 else _candidate_list(daily_2x1, top_rejected_2x1[:3])
     daily_3x1_display = _candidate_list(daily_3x1, top_rejected_3x1[:3])
+    top_total_goals_display = view.get("top_total_goals") or preview.get("top_total_goals_observations", [])
+    top_scores_display = view.get("top_scores") or preview.get("top_score_observations", [])
     long_run_score = _long_run_score(
         preview=preview,
         view=view,
@@ -78,6 +82,9 @@ def build_next_available_view(preview: dict) -> dict:
             "match_coverage_table": view.get("match_coverage_table", []),
             "attempts": preview.get("attempts", []),
             "top_observations": preview.get("top_observations", {}),
+            "top_singles": top_singles_display,
+            "top_total_goals": top_total_goals_display,
+            "top_scores": top_scores_display,
             "top_2x1_display": daily_2x1_display,
             "top_3x1_display": daily_3x1_display,
             "top_2x1_display_mode": "selected" if top_2x1 else "nearest_rejected",

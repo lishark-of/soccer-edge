@@ -440,10 +440,15 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
     if path == "/api/view/optimizer":
         result = _run_optimizer_from_query(query)
         _attach_optimizer_snapshot_status(result)
-        run_ai = _truthy(query.get("run_ai")) if "run_ai" in query else False
+        run_ai = _truthy(query.get("run_ai")) if "run_ai" in query else True
         if run_ai:
             result["ai_combo_research"] = _cached_ai_combo_research(result, query, True)
+        result["llm_status"] = result.get("llm_status") or llm_status_payload()
         view = build_optimizer_view(result)
+        view["candidate_rankings"] = result.get("candidate_rankings", {})
+        view["rejected_candidates"] = result.get("rejected_candidates", [])
+        view["ai_combo_research"] = result.get("ai_combo_research", {})
+        view["llm_status"] = result.get("llm_status", {})
         _attach_research_archive_status(view)
         _attach_daily_snapshot_status(view, query)
         return success_response(view, view.get("warnings", []))
@@ -579,7 +584,7 @@ def dispatch_route(path: str, query: dict[str, str]) -> dict:
         _reject_write_params(query, {"output"})
         payload = import_historical_file(
             input_path=_required(query, "input"),
-            adapter_name=query.get("adapter", "auto"),
+            adapter_name=_normalized_import_adapter(query.get("adapter", "auto")),
             mapping_path=query.get("mapping"),
             dry_run=True,
         )
@@ -796,6 +801,13 @@ def _run_optimizer_from_query(query: dict[str, str]) -> dict:
             return _optimizer_result_from_preview(snapshot_preview, query)
     preview = _run_intelligence_from_query(query)
     return _optimizer_result_from_preview(preview, query)
+
+
+def _normalized_import_adapter(adapter: str | None) -> str:
+    value = str(adapter or "auto").strip().lower()
+    if value in {"", "generic", "csv", "user_csv", "user-csv"}:
+        return "auto"
+    return value
 
 
 def _usable_daily_snapshot_preview(query: dict[str, str]) -> dict | None:
