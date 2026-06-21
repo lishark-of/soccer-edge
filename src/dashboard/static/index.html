@@ -86,14 +86,14 @@
         <div class="sectionHeading">
           <p class="eyebrow">下一可售日</p>
           <h2>今日观察</h2>
-          <p>直接看 Top 结果；如果要完整排序和组合纪律，再运行赛前优化。</p>
+          <p>点一次生成今日观察：自动刷新比赛、赛前优化、组合审核、比分/进球数和研究状态。</p>
         </div>
 	        <div id="todayOneLook" class="worldCupDeskSummary"></div>
         <div class="quickActionRail" role="navigation" aria-label="推荐使用路径">
           <span>下一步</span>
-          <button class="primary isActiveStep" id="todayQuickRefreshBtn" type="button" aria-pressed="true" aria-label="重新读取下一可售日比赛并刷新今日观察">刷新观察</button>
-          <button id="todayOptimizerBtn" class="secondary" type="button" aria-pressed="false" aria-label="运行赛前优化">运行赛前优化</button>
-          <button class="secondary" type="button" data-jump-view="bestparlay" aria-pressed="false" aria-label="查看组合审核和串联纪律">组合审核</button>
+          <button class="primary isActiveStep" id="todayQuickRefreshBtn" type="button" aria-pressed="true" aria-label="一键生成今日观察、赛前优化、组合审核和比分进球数">生成今日观察</button>
+          <button id="todayOptimizerBtn" class="secondary" type="button" hidden aria-hidden="true" tabindex="-1" aria-label="生成今日观察">生成今日观察</button>
+          <button class="secondary" type="button" data-jump-view="bestparlay" aria-pressed="false" aria-label="查看组合审核">组合审核</button>
           <button class="secondary" type="button" data-jump-view="missinginfo" aria-pressed="false" aria-label="查看伤停首发天气新闻等情报覆盖状态">情报覆盖</button>
           <em id="quickActionStatus" aria-live="polite">当前：自动等待下一可售比赛扫描结果</em>
         </div>
@@ -174,7 +174,7 @@
           <article><span>再算组合</span><strong>组合概率能否覆盖赔率</strong><p>2串1/3串1 不是只看赔率高，而要看组合命中概率、相关性和单腿质量。</p></article>
           <article><span>最后纪律</span><strong>不合格也要说明原因</strong><p>若暂不升级为组合，应展示候选榜和改进条件，而不是只给“暂无”。</p></article>
         </div>
-        <button type="button" id="bestParlayBtn" class="secondary">刷新组合审核</button>
+        <button type="button" id="bestParlayBtn" class="secondary">生成今日观察</button>
         <div id="bestParlayCards" class="contentBox"></div>
         <h3>组合候选明细</h3><div id="bestParlayTable"></div>
         <h3>未升级候选</h3><div id="bestParlayRejected"></div>
@@ -261,13 +261,13 @@
       </section>
 
       <section id="view-optimizer" role="tabpanel" aria-labelledby="tab-optimizer" aria-hidden="true" hidden class="view pageLift" tabindex="-1">
-        <div class="sectionHeading"><p class="eyebrow">赛前纪律</p><h2>赛前优化</h2><p>综合赔率、融合概率、理论期望、安全余量、风险等级、命中率纪律和纸面本金约束，生成观察组合；不是操作指令。</p></div>
+        <div class="sectionHeading"><p class="eyebrow">赛前纪律</p><h2>赛前优化</h2><p>综合赔率、融合概率、理论期望、安全余量、风险等级、命中率纪律和纸面本金约束，生成今日观察；不是操作指令。</p></div>
         <div class="reviewGuardPanel preRunGuide optimizerPreRunGuide">
           <article><span>第一步</span><strong>先找单腿质量</strong><p>只看赔率高不够，必须同时看模型概率、市场去水概率、Edge、EV 和冷门惩罚。</p></article>
           <article><span>第二步</span><strong>再审串联资格</strong><p>2串1 / 3串1 只有在每一腿都过纪律、相关性可控、可信度门控允许时才升级。</p></article>
           <article><span>第三步</span><strong>拒绝也是结论</strong><p>如果情报缺失或组合风险大于优势，页面应明确说暂不组合，而不是硬凑。</p></article>
         </div>
-        <div class="inlineActions"><button type="button" id="optimizerBtn">生成观察组合</button><button type="button" id="optimizerCompareBtn" class="secondary">对比风险档位</button></div>
+        <div class="inlineActions"><button type="button" id="optimizerBtn">生成今日观察</button><button type="button" id="optimizerCompareBtn" class="secondary">查看风险档位</button></div>
         <div id="optimizerCards" class="contentBox"></div><div id="optimizerNo2Reason" class="noteBox"></div>
         <h3>收盘赔率复盘</h3><div id="optimizerClvCards" class="contentBox"></div><div id="optimizerClvTable"></div><div id="optimizerClvNotes" class="noteBox"></div>
         <h3>方案对比</h3><div id="optimizerProfileComparison"></div>

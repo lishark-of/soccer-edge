@@ -512,7 +512,7 @@ function professionalScoreTrendPanel(trend = {}) {
 }
 
 function professionalScoreAiQualityPanel(ai = {}) {
-  if (!Object.keys(ai).length) return `<div class="emptyState">暂无 AI 研究质量记录。先运行赛前优化或自动研究。</div>`;
+  if (!Object.keys(ai).length) return `<div class="emptyState">暂无 AI 研究质量记录。先生成今日观察或自动研究。</div>`;
   const cards = [
     { label: "AI研究分", value: ai.score == null ? "N/A" : `${ai.score}/100`, help: ai.summary_zh || "AI 只做解释、质检和复盘，不直接改概率。" },
     { label: "DS状态", value: ai.ds_completed ? "已完成" : "未完成", help: "DS 未完成时自动回退本地摘要。" },
@@ -634,7 +634,7 @@ async function request(path, params = {}, label = "请求", timeoutMs = 20000) {
   } catch (error) {
     const timedOut = error && (error.name === "AbortError" || String(error.message || "").includes("aborted"));
     const payload = timedOut
-      ? { ok: false, error: { code: "request_timeout", message: "完整模型读取较慢，已保留当前可用结果。" }, warnings: ["完整模型超过等待时间。页面会保留最近一次结果；可以稍后重试，或直接运行赛前优化。"] }
+      ? { ok: false, error: { code: "request_timeout", message: "完整模型读取较慢，已保留当前可用结果。" }, warnings: ["完整模型超过等待时间。页面会保留最近一次结果；可以稍后重试，或直接生成今日观察。"] }
       : { ok: false, error: { code: "connection_error", message: "本地 API 连接失败，请确认服务已启动。" }, warnings: ["本地 API 可能尚未启动，或端口被占用。"] };
     state.lastRaw = payload;
     renderRaw(payload);
@@ -2341,9 +2341,9 @@ function workflowActionErrorText(action = "", error = null) {
 }
 
 async function workflowRunQuickAction(action = "") {
-  if (action === "refresh_today") return loadToday({ forceRefresh: true, useFastPreview: true });
+  if (action === "refresh_today") return runOneClickObservation();
   if (action === "run_optimizer") return runOptimizer(true);
-  if (action === "best_parlay") return loadBestParlay();
+  if (action === "best_parlay") return runOneClickObservation();
   if (action === "ai_research") return loadAiComboResearch();
   if (action === "learning_pack") return prepareDailyLearningPack();
   setStatus("Ready", "未识别的瓶颈动作，已保持当前页面。");
@@ -2466,14 +2466,14 @@ function renderTodayTimeoutState(payload = {}) {
   renderScanCalendar(null);
   renderExternalSignalsStrip(null);
   const message = payload.error?.message || "首页预读没有在等待时间内完成。";
-  setAiAutoStatus("fallback", "先进入赛前优化", "首页不再卡死等待数据源；点击“运行赛前优化”会直接生成单关、2串1、3串1纸面候选。");
-  setTodayQuickActionStatus("当前：首页预读未完成，建议直接运行赛前优化");
+  setAiAutoStatus("fallback", "先进入赛前优化", "首页不再卡死等待数据源；点击“生成今日观察”会直接生成单关、2串1、3串1纸面候选。");
+  setTodayQuickActionStatus("当前：首页预读未完成，建议直接生成今日观察");
   setNodeHtml("#todayOneLook", actionableTodayFallback(message));
   const fallbackMap = {
-    "#todaySingles": ["先运行赛前优化", "下一步直接生成每日单关、2串1、3串1纸面候选，不等待首页完整扫描。"],
+    "#todaySingles": ["先生成今日观察", "下一步直接生成每日单关、2串1、3串1纸面候选，不等待首页完整扫描。"],
     "#todayParlay2": ["2串1候选待生成", "赛前优化会给候选榜和拒绝原因，未过门控也会留下赛后复盘样本。"],
     "#todayParlay3": ["3串1候选待生成", "只作为高风险纸面候选，不包装成强观察。"],
-    "#todayTotalGoals": ["进球倾向待生成", "进入比分/进球数页或运行赛前优化后更新。"],
+    "#todayTotalGoals": ["进球倾向待生成", "进入比分/进球数页或生成今日观察后更新。"],
     "#todayScores": ["比分参考待生成", "比分只作倾向参考，等待模型矩阵返回。"],
   };
   Object.entries(fallbackMap).forEach(([selector, [title, body]]) => {
@@ -2495,7 +2495,7 @@ function actionableTodayFallback(message = "") {
         <article><b>2</b><strong>2串1</strong><p>每天给纸面候选，检查同向和相关性。</p></article>
         <article><b>3</b><strong>3串1</strong><p>只作高波动复盘，不包装成强结论。</p></article>
       </div>
-      <button type="button" class="primary" id="todayFallbackOptimizerBtn">运行赛前优化</button>
+      <button type="button" class="primary" id="todayFallbackOptimizerBtn">生成今日观察</button>
     </section>
   `;
 }
@@ -2794,7 +2794,7 @@ function comboUpgradeChecklist(row = {}) {
 }
 
 
-function preflightPromptCard(title, body, action = "运行赛前优化", target = "optimizer") {
+function preflightPromptCard(title, body, action = "生成今日观察", target = "optimizer") {
   const attr = target === "scoregoals"
     ? "data-run-scoregoals=\"1\""
     : target === "optimizer"
@@ -2820,8 +2820,8 @@ function renderTodayTopSections(view) {
   if (view.lightweight_homepage) {
     const matchCount = view.matches_count ?? 0;
     const source = providerName(view.provider_used || view.data_source_status?.provider_used || "auto");
-    const preflightText = `已确认 ${matchCount} 场可售比赛，使用${source}。完整候选需要运行赛前优化。`;
-    if (qs("#todaySingles")) qs("#todaySingles").innerHTML = preflightPromptCard("等待完整模型排序", `${preflightText} 单关要看赔率去水、模型概率、校准概率和冷门惩罚。`, "运行赛前优化", "optimizer");
+    const preflightText = `已确认 ${matchCount} 场可售比赛，使用${source}。完整候选需要生成今日观察。`;
+    if (qs("#todaySingles")) qs("#todaySingles").innerHTML = preflightPromptCard("等待完整模型排序", `${preflightText} 单关要看赔率去水、模型概率、校准概率和冷门惩罚。`, "生成今日观察", "optimizer");
     if (qs("#todayParlay2")) qs("#todayParlay2").innerHTML = preflightPromptCard("先不判断 2串1", `${preflightText} 组合必须等单腿质量、相关性折扣和可信度门控一起返回。`, "查看组合审核", "bestparlay");
     if (qs("#todayParlay3")) qs("#todayParlay3").innerHTML = preflightPromptCard("3串1默认高风险", "完整模型未运行前，不展示高风险组合候选，避免用户把空结果误读成机会。", "查看拒绝原因", "bestparlay");
     if (qs("#todayTotalGoals")) qs("#todayTotalGoals").innerHTML = preflightPromptCard("进球数待比分矩阵", "总进球需要 Poisson/xG 与赔率输入，快速预筛阶段只确认比赛，不给节奏结论。", "分析进球数", "scoregoals");
@@ -3217,6 +3217,34 @@ function mergeTodayWithOptimizer(view = {}) {
   return out;
 }
 
+
+async function runOneClickObservation() {
+  if (state.oneClickObservationRunning) {
+    setTodayQuickActionStatus("当前：已经在生成今日观察，请稍等。");
+    return;
+  }
+  state.oneClickObservationRunning = true;
+  setStatus("Run", "正在生成今日观察：比赛、优化、组合、比分会一起刷新。");
+  setTodayQuickActionStatus("当前：一键生成中，正在读取比赛与候选。");
+  startTodayProgressTicker();
+  try {
+    await loadToday({ forceRefresh: true, useFastPreview: false });
+    await runOptimizerWithProgress(false);
+    await loadBestParlay();
+    await loadScoreGoals();
+    if (state.todayView) renderToday(state.todayView);
+    switchView("today");
+    setStatus("Ready", "今日观察已生成：单关、2串1、3串1、比分/进球数已同步。");
+    setTodayQuickActionStatus("当前：今日观察已生成，候选已同步到各板块。");
+  } catch (error) {
+    setStatus("Check", `一键生成未完整完成：${error && error.message ? error.message : "未知错误"}`);
+    if (state.todayView) renderToday(state.todayView);
+  } finally {
+    state.oneClickObservationRunning = false;
+    stopTodayProgressTicker();
+  }
+}
+
 async function loadToday(options = {}) {
   const forceRefresh = Boolean(options.forceRefresh);
   const useFastPreview = options.useFastPreview !== false;
@@ -3273,7 +3301,7 @@ async function loadToday(options = {}) {
     risk_profile: riskProfileParam(),
     external_signals: externalSignalsParam(),
     refresh: forceRefresh ? "1" : "0",
-  }, forceRefresh ? "重新读取下一可售日观察" : "自动读取下一可售日观察", forceRefresh ? 24000 : 18000);
+  }, forceRefresh ? "生成今日观察" : "读取今日观察", forceRefresh ? 24000 : 18000);
   if (state.todayLoadToken !== requestToken) return;
   settled = true;
   window.clearTimeout(watchdog);
@@ -3957,7 +3985,7 @@ function buildTodaySignalLight(view, single, combo, combo3) {
       title: matches > 0 ? "已找到可售比赛" : "先用赛前优化生成候选",
       body: matches > 0
         ? `已快速确认 ${matches} 场可售比赛，数据源正常；完整概率、组合纪律和情报审计请进入赛前优化或组合审核。`
-        : "数据源本轮较慢或暂未返回完整场次；不要停在这里，直接点【运行赛前优化】生成单关、2串1、3串1纸面候选，完整数据回来后会自动替换。",
+        : "数据源本轮较慢或暂未返回完整场次；不要停在这里，直接点【生成今日观察】生成单关、2串1、3串1纸面候选，完整数据回来后会自动替换。",
     };
   }
   const score = Number(view.credibility_audit?.credibility_score ?? view.credibility_score ?? gate.score ?? 0);
@@ -4055,14 +4083,14 @@ function renderTodayOneLook(view) {
         <div>
           <span>PRE-FLIGHT</span>
           <strong>${matches > 0 ? `已找到 ${matches} 场可售比赛` : "先跑赛前优化"}</strong>
-          <p>${C.escapeHtml(matches > 0 ? "快速预读只确认比赛和数据源。要看真正有用的单关、2串1、3串1，请直接运行赛前优化。" : "下一可售日预读暂未返回完整比赛，直接运行赛前优化会尝试缓存、真实源和回退候选。")}</p>
+          <p>${C.escapeHtml(matches > 0 ? "快速预读只确认比赛和数据源。要看真正有用的单关、2串1、3串1，请直接生成今日观察。" : "下一可售日预读暂未返回完整比赛，直接生成今日观察会尝试缓存、真实源和回退候选。")}</p>
         </div>
         <div class="todayFallbackSteps">
           <article><b>1</b><strong>赔率覆盖</strong><p>模型概率必须覆盖赔率盈亏线。</p></article>
           <article><b>2</b><strong>方向分散</strong><p>避免全是主胜/让胜。</p></article>
           <article><b>3</b><strong>赛后验证</strong><p>候选都进入复盘学习。</p></article>
         </div>
-        <button type="button" class="primary" id="todayFallbackOptimizerBtn">运行赛前优化</button>
+        <button type="button" class="primary" id="todayFallbackOptimizerBtn">生成今日观察</button>
       </section>
     `;
   } else if (finalCard.verdict_zh) {
@@ -4094,7 +4122,7 @@ function renderTodayOneLook(view) {
           ${(blockers.length ? blockers : ["继续等待更可靠数据和赛后学习样本"]).slice(0, 5).map((item) => `<i>${C.escapeHtml(item)}</i>`).join("")}
         </div>
         <div class="finalDecisionAction">
-          <button type="button" class="primary" data-jump-view="optimizer">运行赛前优化</button>
+          <button type="button" class="primary" data-jump-view="optimizer">生成今日观察</button>
           <button type="button" class="secondary" data-jump-view="bestparlay">看组合审核</button>
           <button type="button" class="secondary" data-jump-view="proscore">看模型体检</button>
           <em>${C.escapeHtml(finalCard.next_action_zh || "先刷新今日观察，再看赛前优化。")}</em>
@@ -5277,7 +5305,7 @@ function bestParlayAnalysisDeck(view = {}) {
   const headline = hasAny ? "先看机会面，再看纪律过滤" : "暂无完整候选，先生成分析池";
   const body = hasAny
     ? "这里保留分析能力：赔率、模型概率、市场概率、EV、Edge 和可信度都会先展示；纪律结论只决定是否升级为组合观察。"
-    : "当前轻量结果没有完整候选字段。先运行赛前优化，系统会生成单关、2串1、3串1、比分和总进球候选池。";
+    : "当前轻量结果没有完整候选字段。先生成今日观察，系统会生成单关、2串1、3串1、比分和总进球候选池。";
   return `
     <section class="bestParlayAnalysisDeck">
       <article class="analysisLeadCard">
@@ -5321,11 +5349,11 @@ function candidateHasData(item = {}) {
 function analysisCandidateCard(title, item = {}, kind = "single") {
   const hasData = item && item.hasData;
   const status = hasData ? candidateDisplayStatus(item) : "待生成";
-  const candidate = hasData ? (item.legs || item.match || item.message_zh || "候选方向") : "先运行赛前优化";
+  const candidate = hasData ? (item.legs || item.match || item.message_zh || "候选方向") : "先生成今日观察";
   const reason = hasData
     ? (item.selected_reason_zh || item.reject_reason || item.discipline_summary_zh || item.reason_zh || "已进入候选分析，继续看赔率覆盖和可信度。")
     : "当前没有完整概率字段，不代表没有机会；需要先生成完整候选池。";
-  const next = hasData ? candidateNextStep(item) : "点击“刷新组合审核”或进入“赛前优化”。";
+  const next = hasData ? candidateNextStep(item) : "点击“生成今日观察”或进入“赛前优化”。";
   return `
     <article class="analysisCandidateCard kind-${C.escapeHtml(kind)} ${hasData ? "" : "isEmpty"}">
       <div class="analysisCandidateTop">
@@ -5732,7 +5760,7 @@ async function runOptimizer(compareProfiles = true) {
   }, 18000);
   const payload = await request("/api/view/optimizer", {
     provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam(), show_rejected: "1", compare_profiles: compareProfiles ? "1" : "0", run_ai: "0",
-  }, compareProfiles ? "对比风险档位" : "生成观察组合", 36000);
+  }, compareProfiles ? "对比风险档位" : "生成今日观察", 36000);
   settled = true;
   window.clearTimeout(watchdog);
   stopOptimizerProgressTicker();
@@ -5789,7 +5817,7 @@ function renderOptimizerSlowState(message) {
         <strong>赛前优化后台继续</strong>
         <p>${C.escapeHtml(message || "完整模型较慢，本次不清空页面。先展示最近一次 / 今日观察里的每日候选，等接口恢复后再替换。")}</p>
         <div class="optimizerStateActions">
-          <button type="button" class="primary" id="optimizerRetryInlineBtn">重试生成观察组合</button>
+          <button type="button" class="primary" id="optimizerRetryInlineBtn">重试生成今日观察</button>
           <button type="button" class="secondary" data-jump-view="today">回今日观察</button>
           <button type="button" class="secondary" data-jump-view="missinginfo">先看情报覆盖</button>
         </div>
@@ -6532,19 +6560,19 @@ document.addEventListener("click", (event) => {
   const button = event.target && event.target.closest ? event.target.closest("#optimizerRetryInlineBtn") : null;
   if (!button) return;
   event.preventDefault();
-  runOptimizer(false);
+  runOneClickObservation();
 });
 document.addEventListener("click", (event) => {
   const button = event.target && event.target.closest ? event.target.closest("#todayFallbackOptimizerBtn") : null;
   if (!button) return;
   event.preventDefault();
-  runOptimizerWithProgress(false);
+  runOneClickObservation();
 });
 document.addEventListener("click", (event) => {
   const button = event.target && event.target.closest ? event.target.closest("[data-run-optimizer]") : null;
   if (!button) return;
   event.preventDefault();
-  runOptimizer(button.dataset.runOptimizer !== "single");
+  runOneClickObservation();
 });
 document.addEventListener("click", (event) => {
   const button = event.target && event.target.closest ? event.target.closest("[data-run-scoregoals]") : null;
@@ -6671,11 +6699,11 @@ document.addEventListener("click", (event) => {
       }, 1800);
     });
 });
-bind("#todayRefreshBtn", "click", refreshTodayFromRail);
-bind("#todayQuickRefreshBtn", "click", refreshTodayFromRail);
+bind("#todayRefreshBtn", "click", () => runOneClickObservation());
+bind("#todayQuickRefreshBtn", "click", () => runOneClickObservation());
 bind("#aiComboResearchBtn", "click", loadAiComboResearch);
 bind("#saveDeepSeekTopBtn", "click", saveLocalSecrets);
-bind("#todayOptimizerBtn", "click", () => runOptimizerWithProgress(false));
+bind("#todayOptimizerBtn", "click", () => runOneClickObservation());
 bind("#todayOperationBtn", "click", runOperation);
 bind("#todayImportBtn", "click", previewImport);
 bind("#healthBtn", "click", checkHealth);
@@ -6685,7 +6713,7 @@ bind("#matchesToOptimizerBtn", "click", () => runOptimizer(true));
 bind("#credibilityBtn", "click", loadCredibility);
 bind("#missingInfoBtn", "click", loadMissingInfo);
 bind("#signalsPreviewBtn", "click", previewSignals);
-bind("#bestParlayBtn", "click", loadBestParlay);
+bind("#bestParlayBtn", "click", () => runOneClickObservation());
 bind("#traderReviewBtn", "click", loadTraderReview);
 bind("#learningFeedbackBtn", "click", loadLearningFeedback);
 bind("#learningBuildBtn", "click", buildLearningFeedbackPreview);
@@ -6701,7 +6729,7 @@ bind("#learningClvReviewBtn", "click", reviewLearningClv);
 bind("#learningClvSaveBtn", "click", saveLearningClvReview);
 bind("#dailyPackTodayBtn", "click", prepareDailyLearningPack);
 bind("#dailyReviewTodayBtn", "click", renderLearningQuickForm);
-bind("#optimizerBtn", "click", () => runOptimizer(false));
+bind("#optimizerBtn", "click", () => runOneClickObservation());
 bind("#optimizerCompareBtn", "click", () => runOptimizer(true));
 bind("#scoreGoalsBtn", "click", loadScoreGoals);
 bind("#operationBtn", "click", runOperation);
@@ -7159,7 +7187,7 @@ if (document.readyState === "loading") {
     if (!button) return;
     const text = (button.textContent || "").replace(/\s+/g, "");
     const target = `${button.getAttribute("data-tab") || ""}${button.getAttribute("href") || ""}${button.id || ""}${button.className || ""}`;
-    if (text.includes("组合审核") || text.includes("查看被拒") || text.includes("生成观察组合") || /best-parlay|combo|parlay/i.test(target)) {
+    if (text.includes("组合审核") || text.includes("查看被拒") || text.includes("生成今日观察") || /best-parlay|combo|parlay/i.test(target)) {
       startComboAuditProgress();
     }
   }, true);
@@ -7279,7 +7307,7 @@ if (document.readyState === "loading") {
     const target = event.target && event.target.closest ? event.target.closest("button, a, [role='button'], .pill, .nav-pill") : null;
     if (!target) return;
     const text = (target.textContent || "").replace(/\s+/g, "");
-    if (/组合审核|赛前优化|生成观察组合|刷新观察|模型体检|被拒/.test(text)) {
+    if (/组合审核|赛前优化|生成今日观察|模型体检|被拒/.test(text)) {
       start();
       window.setTimeout(() => finish(true), 2400);
     }
