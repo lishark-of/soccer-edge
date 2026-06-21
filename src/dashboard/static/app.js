@@ -5245,7 +5245,7 @@ function renderSignalsPreview(view) {
 }
 
 async function loadBestParlay(options = {}) {
-  const payload = await request("/api/view/best-parlay", { provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam() }, "刷新优秀串联");
+  const payload = await request("/api/view/best-parlay", { provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam(), refresh: "1" }, "刷新优秀串联");
   if (payload.ok) renderBestParlay(payload.data);
   if (!options.stayOnCurrentView) switchView("bestparlay");
 }
@@ -5763,7 +5763,7 @@ async function runOptimizer(compareProfiles = true, options = {}) {
     renderOptimizerSlowState("完整模型运行超过等待时间。先显示每日候选入口和最近结果；接口回来后会自动替换。");
   }, 18000);
   const payload = await request("/api/view/optimizer", {
-    provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam(), show_rejected: "1", compare_profiles: compareProfiles ? "1" : "0", run_ai: "0",
+    provider: providerParam(), date: state.todayView?.selected_date || currentDateParam(), bankroll: bankrollParam(), risk_profile: riskProfileParam(), show_rejected: "1", compare_profiles: compareProfiles ? "1" : "0", run_ai: "0", refresh: "1",
   }, compareProfiles ? "对比风险档位" : "生成今日观察", 36000);
   settled = true;
   window.clearTimeout(watchdog);
@@ -6022,20 +6022,23 @@ function optimizerChecklistStrip(brief = {}) {
   const post = Array.isArray(brief.post_match_learning_checklist_zh) ? brief.post_match_learning_checklist_zh : [];
   if (!pre.length && !post.length) return "";
   return `
-    <div class="optimizerChecklistStrip">
-      ${pre.length ? `
-        <article>
-          <span>赛前复核</span>
-          <ul>${pre.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}</ul>
-        </article>
-      ` : ""}
-      ${post.length ? `
-        <article>
-          <span>赛后学习</span>
-          <ul>${post.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}</ul>
-        </article>
-      ` : ""}
-    </div>
+    <details class="optimizerChecklistStrip isCollapsed">
+      <summary>查看赛前复核 / 赛后学习清单</summary>
+      <div>
+        ${pre.length ? `
+          <article>
+            <span>赛前复核</span>
+            <ul>${pre.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}</ul>
+          </article>
+        ` : ""}
+        ${post.length ? `
+          <article>
+            <span>赛后学习</span>
+            <ul>${post.slice(0, 4).map((item) => `<li>${C.escapeHtml(item)}</li>`).join("")}</ul>
+          </article>
+        ` : ""}
+      </div>
+    </details>
   `;
 }
 

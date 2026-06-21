@@ -797,7 +797,7 @@ def _cached_next_available_view(query: dict[str, str]) -> dict:
 def _run_optimizer_from_query(query: dict[str, str]) -> dict:
     if not _truthy(query.get("refresh")):
         snapshot_preview = _usable_daily_snapshot_preview(query)
-        if snapshot_preview:
+        if snapshot_preview and not snapshot_preview.get("lightweight_homepage"):
             return _optimizer_result_from_preview(snapshot_preview, query)
     preview = _run_intelligence_from_query(query)
     return _optimizer_result_from_preview(preview, query)
