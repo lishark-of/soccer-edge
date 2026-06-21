@@ -3203,6 +3203,20 @@ const rejectedComboColumns = [
   { key: "discipline_summary_zh", label: "纪律拆解" },
 ];
 
+function mergeTodayWithOptimizer(view = {}) {
+  const out = { ...(view || {}) };
+  const opt = state.optimizerView || {};
+  const optBest = opt.best_parlay_summary || {};
+  const optLanes = opt.daily_output_lanes || optBest.daily_output_lanes || [];
+  const hasOptLanes = Array.isArray(optLanes) && optLanes.some((lane) => lane && lane.status !== "empty" && !String(lane.target_zh || "").includes("暂无可排序"));
+  if (hasOptLanes) {
+    out.best_parlay_summary = { ...(out.best_parlay_summary || {}), ...optBest, daily_output_lanes: optLanes };
+    out.daily_output_lanes = optLanes;
+    out.optimizer = { ...(out.optimizer || {}), ...opt };
+  }
+  return out;
+}
+
 async function loadToday(options = {}) {
   const forceRefresh = Boolean(options.forceRefresh);
   const useFastPreview = options.useFastPreview !== false;
@@ -3258,7 +3272,7 @@ async function loadToday(options = {}) {
     bankroll: bankrollParam(),
     risk_profile: riskProfileParam(),
     external_signals: externalSignalsParam(),
-    refresh: "0",
+    refresh: forceRefresh ? "1" : "0",
   }, forceRefresh ? "重新读取下一可售日观察" : "自动读取下一可售日观察", forceRefresh ? 24000 : 18000);
   if (state.todayLoadToken !== requestToken) return;
   settled = true;
@@ -4098,6 +4112,7 @@ function renderTodayOneLook(view) {
 
 function renderToday(view) {
   stopTodayProgressTicker();
+  view = mergeTodayWithOptimizer(view || {});
   state.todayView = view;
   const workflow = view.prematch_workflow || {};
   const aiStatus = todayAiStatus(view);
@@ -5724,6 +5739,7 @@ async function runOptimizer(compareProfiles = true) {
   if (payload.ok) {
     try {
       renderOptimizer(payload.data);
+      if (state.todayView) renderToday(state.todayView);
     } catch (error) {
       renderOptimizerSlowState(`赛前优化渲染遇到问题：${error && error.message ? error.message : "未知错误"}`);
     }
