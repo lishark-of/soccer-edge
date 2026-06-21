@@ -3889,7 +3889,7 @@ function buildAiBriefCards(view, text) {
   return [
     {
       kicker: "今日结论",
-      title: cleanAiTitle(findLine(["核心结论", "今日不强行组合", "不强行组合", "强观察"], "先看信号，不强行组合")),
+      title: cleanAiTitle(findLine(["核心结论", "今日先给候选，再看等级", "不强行组合", "强观察"], "先看信号，不强行组合")),
       body: noCombo,
     },
     {
@@ -4004,7 +4004,7 @@ function renderTodayOneLook(view) {
   const credibility = view.credibility_audit?.credibility_score ?? view.credibility_score ?? "N/A";
   const missing = view.missing_information || view.missing_signals || view.intelligence_completeness?.missing_items || [];
   const missingText = Array.isArray(missing) ? missing.slice(0, 5).join("、") : String(missing || "伤停、首发、天气、新闻面");
-  const comboLabel = combo.legs || combo.match || gate.label_zh || "暂无合格 2串1";
+  const comboLabel = combo.legs || combo.match || gate.label_zh || "今日相对2串1候选";
   const comboReason = combo.combo_action_zh || combo.reject_reason || gate.reason_zh || "当前不强行组合，先看单关和临场复核。";
   const signalLight = buildTodaySignalLight(view, single, combo, combo3);
   const topTags = reasonTags(`${comboReason} ${combo3.reject_reason || ""} ${gate.reason_zh || ""}`);
@@ -5235,8 +5235,8 @@ function emptyBestParlayState(view = {}) {
   const note = view.risk_note_zh || "组合必须同时命中，缺少完整概率、情报和单腿质量时，不应强行拼接。";
   return `
     <section class="emptyBestParlayPanel">
-      <span>CANDIDATE NOT UPGRADED</span>
-      <strong>候选暂未升级为组合</strong>
+      <span>PAPER CANDIDATE</span>
+      <strong>候选未升级，但保留实操观察</strong>
       <p>${C.escapeHtml(reason)}</p>
       <div class="emptyBestParlaySteps">
         <article><b>1</b><strong>先跑赛前优化</strong><p>生成完整单关、2串1、3串1 候选池。</p></article>
@@ -5950,8 +5950,8 @@ function optimizerExecutiveBoard(view = {}) {
   ], "");
   const cards = [
     optimizerDecisionCard("最先看", topSingle.match || "暂无可用单关", topSingle.decision_label_zh || topSingle.status || "待复核", firstNonEmpty([topSingle.decision_reason_zh, topSingle.reason, "先判断单腿是否真的有赔率价值。"], "")),
-    optimizerDecisionCard("2串1", top2.legs || top2.match || "暂无合格 2串1", top2.status || "纸面/待复核", comboTruth),
-    optimizerDecisionCard("3串1", top3.legs || top3.match || "暂无合格 3串1", top3.status || "高风险", firstNonEmpty([top3.reject_reason, top3.discipline_summary_zh, "3串1 只保留作学习样本，不能用赔率高掩盖低命中概率。"], "")),
+    optimizerDecisionCard("2串1", top2.legs || top2.match || "今日相对2串1候选", top2.status || "纸面/待复核", comboTruth),
+    optimizerDecisionCard("3串1", top3.legs || top3.match || "今日相对3串1候选", top3.status || "高风险", firstNonEmpty([top3.reject_reason, top3.discipline_summary_zh, "3串1 只保留作学习样本，不能用赔率高掩盖低命中概率。"], "")),
     optimizerDecisionCard("为什么方向单一", "玩法同质化审计", (view.play_bias_diagnostics || {}).label_zh || "检查中", homogeneity),
   ];
   return `
@@ -6032,8 +6032,8 @@ function optimizerDecisionBoard(view = {}) {
   ], "用概率区间下沿检查 EV 和 Edge，避免只看点概率造成虚高。");
   const cards = [
     optimizerDecisionCard("单关优先级", topSingle.match || "暂无强单关", topSingle.decision_label_zh || topSingle.status || "待复核", firstNonEmpty([topSingle.decision_reason_zh, topSingle.reason, topSingle.discipline_summary_zh], "先看概率、赔率价值和情报完整度。")),
-    optimizerDecisionCard("2串1纪律", top2.legs || top2.match || "暂无合格 2串1", top2.status || view.no_combo_state?.label_zh || "未过门控", firstNonEmpty([top2.reject_reason, top2.discipline_summary_zh, view.no_2x1_reason, view.no_combo_reason], "2串1 需要两腿同时命中，先看联合概率和相关性。")),
-    optimizerDecisionCard("3串1纪律", top3.legs || top3.match || "暂无合格 3串1", top3.status || "高风险待复核", firstNonEmpty([top3.reject_reason, top3.discipline_summary_zh, "3串1 风险最高，只保留纸面候选用于赛后学习。"], "")),
+    optimizerDecisionCard("2串1纪律", top2.legs || top2.match || "今日相对2串1候选", top2.status || view.no_combo_state?.label_zh || "未过门控", firstNonEmpty([top2.reject_reason, top2.discipline_summary_zh, view.no_2x1_reason, view.no_combo_reason], "2串1 需要两腿同时命中，先看联合概率和相关性。")),
+    optimizerDecisionCard("3串1纪律", top3.legs || top3.match || "今日相对3串1候选", top3.status || "高风险待复核", firstNonEmpty([top3.reject_reason, top3.discipline_summary_zh, "3串1 风险最高，只保留纸面候选用于赛后学习。"], "")),
     optimizerDecisionCard("玩法偏置", bias.label_zh || "玩法分布待检查", biasGap.score == null ? "待检查" : `${biasGap.score}/${biasGap.target_score || 84}`, firstNonEmpty([bias.summary_zh, biasGap.next_step_zh], "如果让球胜平负或同方向刷屏，系统会降权并等待赛后验证。")),
     optimizerDecisionCard("组合同质化", firstNonEmpty([top2.combo_homogeneity_reason_zh, top3.combo_homogeneity_reason_zh], "组合结构相对分散"), top2.combo_homogeneity?.level || top3.combo_homogeneity?.level || "audit", "不是不同比赛就一定分散；同玩法、同方向、同赔率段、同AI因子会被额外审计。"),
     optimizerDecisionCard("模型-市场一致性", marketGap, "分歧审计", "模型看好但市场不支持时，不直接升级为强组合；先降权、再看 CLV 和赛后样本。"),

@@ -974,11 +974,129 @@ def _optimizer_result_from_preview(preview: dict, query: dict[str, str]) -> dict
         "llm_status": llm_status_payload(),
         "warnings": list(dict.fromkeys(list(result.get("warnings", []) or []) + list(preview.get("warnings", []) or []))),
     })
+    _ensure_daily_practical_candidates(result, preview)
+    result["best_parlay_summary"] = build_best_parlay_summary(result)
     result["trader_review"] = build_trader_review(preview, result)
     result["snapshot_status"] = _safe_save_daily_snapshot(preview, result, prepare_learning=False)
     result["post_match_review_status"] = _latest_post_match_status(result.get("selected_date") or result.get("date"))
     result["strategy_adjustments_applied"] = _optimizer_strategy_adjustments(result)
     return result
+
+
+def _ensure_daily_practical_candidates(result: dict, preview: dict) -> None:
+    rankings = result.get("candidate_rankings") if isinstance(result.get("candidate_rankings"), dict) else {}
+    singles = list(rankings.get("singles") or [])
+    if singles:
+        return
+    source_rows = list(preview.get("optimizer_candidates") or [])
+    if not source_rows:
+        source_rows = list(preview.get("top_single_observations") or [])
+    practical = []
+    for row in source_rows:
+        item = _practical_single_from_preview(row)
+        if item:
+            practical.append(item)
+    practical = sorted(practical, key=lambda item: float(item.get("risk_adjusted_score") or -999), reverse=True)
+    if not practical:
+        return
+    rankings = {
+        **rankings,
+        "singles": practical[:30],
+        "parlay_2x1": rankings.get("parlay_2x1") or [],
+        "parlay_3x1": rankings.get("parlay_3x1") or [],
+    }
+    result["candidate_rankings"] = rankings
+    result["practical_observation_mode"] = {
+        "status": "enabled",
+        "status_zh": "已启用实操观察榜",
+        "summary_zh": "严格候选池为空时，系统仍会从可售比赛里输出相对最优单关、2串1、3串1纸面候选，用于 T+1 复盘。",
+        "candidate_count": len(practical),
+    }
+
+
+def _practical_single_from_preview(row: dict) -> dict:
+    odds = _safe_float(row.get("odds") or row.get("official_odds") or 0.0)
+    model_prob = _safe_float(row.get("model_prob") or row.get("probability") or row.get("calibrated_prob") or 0.0)
+    market_prob = _safe_float(row.get("market_prob") or 0.0)
+    if odds <= 1.01 or model_prob <= 0:
+        return {}
+    if market_prob <= 0:
+        market_prob = 1.0 / odds
+    ev = _safe_float(row.get("ev"), model_prob * odds - 1.0)
+    edge = _safe_float(row.get("edge"), model_prob - market_prob)
+    confidence = _safe_float(row.get("confidence_score") or row.get("observation_confidence") or 0.45)
+    risk = str(row.get("risk_level") or ("high" if odds >= 5.0 else "medium"))
+    score = ev + max(edge, -0.08) + confidence * 0.35 - (0.18 if risk in {"high", "very_high"} else 0.06)
+    home = row.get("home_team") or ""
+    away = row.get("away_team") or ""
+    play_type = row.get("play_type") or ""
+    play_type_zh = row.get("play_type_zh") or _play_type_label(play_type)
+    direction = row.get("direction") or row.get("outcome_label") or row.get("outcome_key") or ""
+    match = row.get("match") or f"{home} vs {away}｜{play_type_zh}·{direction}".strip("｜·")
+    reason = (
+        row.get("recommended_action_zh")
+        or row.get("selection_reason")
+        or row.get("decision_reason_zh")
+        or "实操观察榜兜底候选：严格门控未通过时仍保留相对排序，用于赛后验证。"
+    )
+    return {
+        "type": "single",
+        "candidate_type": "single",
+        "label_zh": "每日实操单关候选",
+        "match": match,
+        "legs": "",
+        "play_type": play_type,
+        "play_type_zh": play_type_zh,
+        "direction": direction,
+        "direction_family_zh": _direction_family(direction),
+        "odds": round(odds, 4),
+        "model_prob": round(model_prob, 6),
+        "market_prob": round(market_prob, 6),
+        "ev": round(ev, 6),
+        "edge": round(edge, 6),
+        "confidence_score": round(confidence, 4),
+        "risk_level": risk,
+        "selected": False,
+        "status": "纸面候选",
+        "risk_adjusted_score": round(score, 6),
+        "combo_score": round(score, 6),
+        "daily_diversity_score": round(score, 6),
+        "paper_stake": 0.0,
+        "selected_reason_zh": f"实操观察榜：{reason}",
+        "reject_reason": row.get("selection_reason") or row.get("decision_label_zh") or "未过严格门控，保留为纸面候选。",
+        "paper_candidate_warning_zh": "这是相对最优纸面候选，不代表强信号；赛后会进入复盘。",
+    }
+
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+def _play_type_label(play_type: str) -> str:
+    return {
+        "had": "胜平负",
+        "hhad": "让球胜平负",
+        "total_goals": "总进球",
+        "correct_score": "比分",
+    }.get(str(play_type or ""), str(play_type or "玩法"))
+
+
+def _direction_family(direction: object) -> str:
+    text = str(direction or "")
+    if "主" in text or text in {"win", "home"}:
+        return "主队方向"
+    if "客" in text or text in {"lose", "away"}:
+        return "客队方向"
+    if "平" in text or text == "draw":
+        return "平局方向"
+    if "大" in text or "Over" in text:
+        return "大球方向"
+    if "小" in text or "Under" in text:
+        return "小球方向"
+    return "其他方向"
 
 
 def _safe_save_daily_snapshot(preview: dict, optimizer: dict, *, prepare_learning: bool = False) -> dict:
