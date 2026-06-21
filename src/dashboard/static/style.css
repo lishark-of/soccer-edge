@@ -7502,3 +7502,128 @@ th, td {
 @media (max-width: 860px) {
   .playBiasGrid { grid-template-columns: 1fr; }
 }
+
+/* Phase 2-S UX hotfix: combo audit progress */
+.comboAuditProgressHost {
+  position: sticky;
+  top: 12px;
+  z-index: 30;
+  margin: 0 0 14px;
+}
+
+.comboAuditProgress {
+  overflow: hidden;
+  border: 1px solid rgba(0, 113, 227, 0.18);
+  border-radius: 22px;
+  padding: 16px 18px 14px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(236,246,255,0.78));
+  box-shadow: 0 18px 50px rgba(0, 65, 145, 0.12);
+  backdrop-filter: blur(18px);
+  animation: comboAuditEnter 360ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+.comboAuditProgress__top {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+  color: #1d1d1f;
+}
+
+.comboAuditProgress__top span {
+  color: #0071e3;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.comboAuditProgress__top strong {
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+
+.comboAuditProgress__top em {
+  color: #6e6e73;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.comboAuditProgress__rail {
+  position: relative;
+  height: 14px;
+  margin: 14px 0 12px;
+  border-radius: 999px;
+  background: rgba(0, 113, 227, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(0, 113, 227, 0.1);
+}
+
+.comboAuditProgress__rail i,
+.comboAuditProgress__rail b,
+.comboAuditProgress__rail u {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  border-radius: inherit;
+  width: var(--combo-progress, 0%);
+}
+
+.comboAuditProgress__rail i {
+  background: linear-gradient(90deg, #0071e3, #34c759, #ffcc00);
+  transition: width 360ms cubic-bezier(.2,.8,.2,1);
+}
+
+.comboAuditProgress__rail b {
+  width: 42%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.75), transparent);
+  animation: comboAuditShimmer 1.25s linear infinite;
+}
+
+.comboAuditProgress__rail u {
+  left: calc(var(--combo-progress, 0%) - 7px);
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  box-shadow: 0 0 0 5px rgba(0,113,227,.12), 0 6px 16px rgba(0,113,227,.28);
+  transition: left 360ms cubic-bezier(.2,.8,.2,1);
+}
+
+.comboAuditProgress__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.comboAuditProgress__steps span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(29,29,31,.06);
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.comboAuditProgress__steps span.isDone,
+.comboAuditProgress__steps span.isActive {
+  background: rgba(0,113,227,.12);
+  color: #0057b8;
+}
+
+@keyframes comboAuditEnter {
+  from { opacity: 0; transform: translateY(-10px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes comboAuditShimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(260%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comboAuditProgress,
+  .comboAuditProgress__rail i,
+  .comboAuditProgress__rail u,
+  .comboAuditProgress__rail b {
+    animation: none !important;
+    transition: none !important;
+  }
+}

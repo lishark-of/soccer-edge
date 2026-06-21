@@ -7067,3 +7067,84 @@ if (document.readyState === "loading") {
 } else {
   installFinalUsabilityPass();
 }
+
+// Phase 2-S UX hotfix: show progress while refreshing combo audit.
+(function comboAuditProgressEnhancement() {
+  if (window.__jcEdgeComboAuditProgressInstalled) return;
+  window.__jcEdgeComboAuditProgressInstalled = true;
+  const STEPS = [
+    "读取组合候选",
+    "检查相关性",
+    "审查同方向集中",
+    "套用可信度门控",
+    "生成组合结论",
+  ];
+
+  function ensureHost() {
+    let host = document.querySelector("#comboAuditProgressHost");
+    if (host) return host;
+    host = document.createElement("div");
+    host.id = "comboAuditProgressHost";
+    host.className = "comboAuditProgressHost";
+    const anchor = document.querySelector("#main") || document.querySelector("main") || document.body;
+    anchor.prepend(host);
+    return host;
+  }
+
+  function render(stepIndex, percent) {
+    const safeStep = Math.max(0, Math.min(stepIndex, STEPS.length - 1));
+    const host = ensureHost();
+    host.innerHTML = `
+      <section class="comboAuditProgress" style="--combo-progress:${percent}%">
+        <div class="comboAuditProgress__top">
+          <span>组合审核</span>
+          <strong>${STEPS[safeStep]}</strong>
+          <em>${Math.round(percent)}%</em>
+        </div>
+        <div class="comboAuditProgress__rail" aria-hidden="true">
+          <i></i><b></b><u></u>
+        </div>
+        <div class="comboAuditProgress__steps">
+          ${STEPS.map((label, index) => `<span class="${index < safeStep ? "isDone" : index === safeStep ? "isActive" : ""}">${index + 1}. ${label}</span>`).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function hideSoon(delay = 650) {
+    window.setTimeout(() => {
+      const host = document.querySelector("#comboAuditProgressHost");
+      if (host) host.innerHTML = "";
+    }, delay);
+  }
+
+  function startComboAuditProgress() {
+    if (window.__jcEdgeComboAuditProgressTimer) {
+      window.clearInterval(window.__jcEdgeComboAuditProgressTimer);
+    }
+    let tick = 0;
+    render(0, 8);
+    window.__jcEdgeComboAuditProgressTimer = window.setInterval(() => {
+      tick += 1;
+      const percent = Math.min(96, 8 + tick * 13);
+      const stepIndex = Math.min(STEPS.length - 1, Math.floor((percent / 100) * STEPS.length));
+      render(stepIndex, percent);
+      if (percent >= 96) {
+        window.clearInterval(window.__jcEdgeComboAuditProgressTimer);
+        window.__jcEdgeComboAuditProgressTimer = null;
+        render(STEPS.length - 1, 100);
+        hideSoon(900);
+      }
+    }, 420);
+  }
+
+  document.addEventListener("click", (event) => {
+    const button = event.target && event.target.closest ? event.target.closest("button, a, [role='button']") : null;
+    if (!button) return;
+    const text = (button.textContent || "").replace(/\s+/g, "");
+    const target = `${button.getAttribute("data-tab") || ""}${button.getAttribute("href") || ""}${button.id || ""}${button.className || ""}`;
+    if (text.includes("组合审核") || text.includes("查看被拒") || text.includes("生成观察组合") || /best-parlay|combo|parlay/i.test(target)) {
+      startComboAuditProgress();
+    }
+  }, true);
+})();
