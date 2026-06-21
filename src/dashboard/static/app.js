@@ -5263,14 +5263,14 @@ function renderBestParlay(view) {
   if (!qs("#bestParlayCards")) return;
   qs("#bestParlayCards").innerHTML = bestParlayAnalysisDeck(view);
   const rows = [
-    rowCandidate("最佳单关", view.best_single),
-    rowCandidate("最佳2串1", view.best_2x1),
-    rowCandidate("最佳3串1", view.best_3x1_if_allowed),
+    rowCandidate("每日单关", view.daily_single_candidate || view.best_single),
+    rowCandidate("每日2串1", view.daily_2x1_candidate || view.best_2x1),
+    rowCandidate("每日3串1", view.daily_3x1_candidate || view.best_3x1_if_allowed),
     rowCandidate("最稳组合", view.safest_combo),
     rowCandidate("最高EV组合", view.highest_ev_combo),
     rowCandidate("风险调整最佳", view.best_risk_adjusted_combo),
   ];
-  const usefulRows = rows.filter((row) => row && row.status && row.status !== "empty" && row.candidate !== "当前没有可排序候选。" && row.candidate !== "暂无");
+  const usefulRows = rows.filter((row) => row && row.status && row.status !== "empty" && row.status !== "no_combo" && row.candidate !== "当前没有可排序候选。" && row.candidate !== "暂无" && row.odds !== "N/A");
   const rejectedRows = (view.rejected_combos || []).slice(0, 10).map((item) => rowCandidate(item.label_zh || item.type || "被拒", item));
   qs("#bestParlayTable").innerHTML = usefulRows.length
     ? C.table(usefulRows, bestParlayColumns())
@@ -5309,10 +5309,10 @@ function emptyBestParlayState(view = {}) {
 
 function bestParlayAnalysisDeck(view = {}) {
   const rejected = Array.isArray(view.rejected_combos) ? view.rejected_combos : [];
-  const single = displayCandidate(view.best_single, rejected, "single");
-  const parlay2 = displayCandidate(view.best_2x1, rejected, "2");
-  const parlay3 = displayCandidate(view.best_3x1_if_allowed, rejected, "3");
-  const adjusted = displayCandidate(view.best_risk_adjusted_combo || view.highest_ev_combo || view.safest_combo, rejected, "risk");
+  const single = displayCandidate(view.daily_single_candidate || view.best_single, rejected, "single");
+  const parlay2 = displayCandidate(view.daily_2x1_candidate || view.best_2x1, rejected, "2");
+  const parlay3 = displayCandidate(view.daily_3x1_candidate || view.best_3x1_if_allowed, rejected, "3");
+  const adjusted = displayCandidate(view.best_risk_adjusted_combo || view.daily_2x1_candidate || view.highest_ev_combo || view.safest_combo, rejected, "risk");
   const hasAny = [single, parlay2, parlay3, adjusted].some((item) => item && item.hasData);
   const headline = hasAny ? "先看机会面，再看纪律过滤" : "暂无完整候选，先生成分析池";
   const body = hasAny
@@ -5355,7 +5355,11 @@ function displayCandidate(primary = {}, rejectedRows = [], target = "") {
 
 function candidateHasData(item = {}) {
   if (!item || item.status === "empty") return false;
-  return Boolean(item.legs || item.match || item.direction || item.message_zh || Number.isFinite(Number(item.odds || item.official_odds)));
+  const status = String(item.status || "").toLowerCase();
+  const hasNumericOdds = Number.isFinite(Number(item.odds || item.official_odds));
+  const hasCandidateTarget = Boolean(item.legs || item.match || item.direction);
+  if ((status === "no_combo" || status.includes("no_combo")) && !hasNumericOdds && !hasCandidateTarget) return false;
+  return Boolean(hasCandidateTarget || hasNumericOdds || (item.message_zh && item.status !== "no_combo"));
 }
 
 function analysisCandidateCard(title, item = {}, kind = "single") {
