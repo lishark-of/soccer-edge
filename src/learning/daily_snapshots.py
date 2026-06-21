@@ -216,7 +216,7 @@ def build_daily_decision_board(date: str | None = None) -> dict:
     latest = load_latest_snapshot(date)
     snapshot = latest.get("snapshot") or {}
     pre = snapshot.get("preview") or {}
-    best = snapshot.get("best_parlay_summary") or {}
+    best = _best_summary_from_snapshot(snapshot, latest)
     review = _load_post_match_review(snapshot.get("selected_date") or date)
     return {
         "status": "available" if snapshot else "missing",
@@ -236,6 +236,61 @@ def build_daily_decision_board(date: str | None = None) -> dict:
         "summary_zh": "先看今日三条纸面候选，再看昨日是否打脸模型；这是 T+1 学习闭环主屏。",
         "disclaimer": DISCLAIMER,
     }
+
+
+def _best_summary_from_snapshot(snapshot: dict, latest: dict | None = None) -> dict:
+    best = snapshot.get("best_parlay_summary") or {}
+    if _has_any_daily_candidate(best):
+        return best
+    preview = snapshot.get("preview") or {}
+    optimizer = preview.get("optimizer") or {}
+    for candidate in (
+        optimizer.get("best_parlay_summary"),
+        preview.get("best_parlay_summary"),
+        snapshot.get("optimizer", {}).get("best_parlay_summary") if isinstance(snapshot.get("optimizer"), dict) else {},
+    ):
+        if isinstance(candidate, dict) and _has_any_daily_candidate(candidate):
+            return candidate
+    disk_optimizer = _load_latest_optimizer_from_snapshot(latest or {})
+    disk_best = disk_optimizer.get("best_parlay_summary") if isinstance(disk_optimizer, dict) else {}
+    if isinstance(disk_best, dict) and _has_any_daily_candidate(disk_best):
+        return disk_best
+    source_optimizer = disk_optimizer if isinstance(disk_optimizer, dict) and disk_optimizer else optimizer
+    rebuilt = build_best_parlay_summary(source_optimizer or preview or {})
+    if isinstance(rebuilt, dict):
+        return rebuilt
+    return best or {}
+
+
+def _has_any_daily_candidate(best: dict) -> bool:
+    if not isinstance(best, dict):
+        return False
+    for key in (
+        "daily_single_candidate",
+        "daily_2x1_candidate",
+        "daily_3x1_candidate",
+        "best_single",
+        "best_2x1",
+        "best_3x1_if_allowed",
+    ):
+        value = best.get(key)
+        if isinstance(value, dict) and (value.get("match") or value.get("legs") or value.get("label_zh")):
+            return True
+    return False
+
+
+def _load_latest_optimizer_from_snapshot(latest: dict) -> dict:
+    directory = latest.get("snapshot_dir")
+    if not directory:
+        return {}
+    path = Path(directory) / "latest_optimizer.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _snapshot_observations(snapshot: dict) -> list[dict]:
